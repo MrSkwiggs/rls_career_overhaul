@@ -1832,6 +1832,115 @@
       "iconOffsetHeight": 0.24,
       "iconLift": 0.24,
       "playModeIconName": "poi_entrance_round"
+    },
+    {
+      "id": "importDealer",
+      "name": "Import Dealership",
+      "description": "All thing Imported",
+      "preview": "JDM_Port_Dealer_TB.png",
+      "stock": 10,
+      "range": [
+        0.8,
+        0.9,
+        1.2000000476837,
+        1.3
+      ],
+      "doors": [
+        [
+          "importDealer_area_1",
+          "importDealer_icon_95",
+          30
+        ]
+      ],
+      "parkingSpotNames": [
+        "importDealerParking1"
+      ],
+      "filter": {
+        "whiteList": {},
+        "blackList": {
+          "Configuration": [
+            "Drag",
+            "Race",
+            "Rally"
+          ],
+          "Type": [
+            "Trailer"
+          ]
+        }
+      },
+      "subFilters": [
+        {
+          "probability": 5,
+          "whiteList": {
+            "Mileage": {
+              "min": 16000,
+              "max": 241401600
+            },
+            "Brand": [
+              "AW",
+              "Arima",
+              "Autobello",
+              "Cherrier",
+              "Civetta",
+              "ETK",
+              "Ibishu",
+              "Hirochi",
+              "Satsuma",
+              "Bock"
+            ],
+            "Config Type": [
+              "factory",
+              "Factory"
+            ]
+          }
+        },
+        {
+          "probability": 2,
+          "whiteList": {
+            "Mileage": {
+              "min": 160934400,
+              "max": 482803200
+            },
+            "Config Type": [
+              "Custom",
+              "Ibishu Plus",
+              "Used",
+              "Aftermarket"
+            ],
+            "Brand": [
+              "AW",
+              "Arima",
+              "Autobello",
+              "Bock",
+              "Cherrier",
+              "Civetta",
+              "ETK",
+              "Hirochi",
+              "Ibishu",
+              "Satsuma"
+            ]
+          }
+        }
+      ],
+      "subFilterNames": [
+        "Sub-Filter 1",
+        "Sub-Filter 2"
+      ],
+      "fees": 1500,
+      "containsStarterVehicles": false,
+      "testDrive": {
+        "abandonFees": 250,
+        "timeLimit": 120,
+        "licencePlate": ""
+      },
+      "ui": {
+        "showMatchingConfigs": [
+          false,
+          true
+        ],
+        "configSearchText": {}
+      },
+      "salesTax": 0.15
     }
   ],
   "privateSellers": [
