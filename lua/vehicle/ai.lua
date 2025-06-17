@@ -2,6 +2,19 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+local M = {}
+local E = setmetatable({}, {__newindex = function(t, key, val) log('E', 'ai.lua', 'Tried to insert new elements into token empty table') end})
+
+M.mode = 'disabled' -- this is the main mode
+M.manualTargetName = nil
+M.debugMode = 'off'
+M.speedMode = nil
+M.routeSpeed = nil
+M.extAggression = 0.3
+M.cutOffDrivability = 0
+M.driveInLaneFlag = 'off'
+M.extAvoidCars = 'auto'
+
 -- [[ STORE FREQUENTLY USED FUNCTIONS IN UPVALUES ]] --
 local buffer = require("string.buffer")
 local max = math.max
@@ -16,22 +29,10 @@ local tableInsert = table.insert
 local tableRemove = table.remove
 local tableConcat = table.concat
 local strFormat = string.format
----------------------------------
-local scriptai = nil
 
-local M = {}
-local E = setmetatable({}, {__newindex = function(t, key, val) log('E', 'ai.lua', 'Tried to insert new elements into token empty table') end})
-
-local racing = false
-local raceMode = false -- new aggressive race mode for maximum speed
-M.mode = 'disabled' -- this is the main mode
-M.manualTargetName = nil
-M.debugMode = 'off'
-M.speedMode = nil
-M.routeSpeed = nil
-M.extAggression = 0.3
-M.cutOffDrivability = 0
-M.driveInLaneFlag = 'off'
+-- [[ HEAVY DEBUG MODE ]] --
+local visDebug = {trajecRec = {last = 0}, routeRec = {last = 0}, labelRenderDistance = 10, debugSpots = {}, candidatePaths = nil}
+--local newPositionsDebug = {} -- for debug purposes
 
 -- [[ Simulation time step]] --
 local dt
@@ -40,14 +41,9 @@ local dt
 local g = obj:getGravity() -- standard gravity is negative
 local gravityDir = vec3(0, 0, sign2(g))
 g = max(1e-30, abs(g)) -- prevent divivion by 0 gravity
-local gravityVec = gravityDir * g
-----------------------------------
 
 -- [[ PERFORMANCE RELATED ]] --
 local aggression = 1
-local aggressionMode
-local trajMethod = 'spring' --('spring' for default spring method or 'springDampers' for new physical system with springs and dampers)
---------------------------------------------------------------------------
 
 -- [[ AI DATA: POSITION, CONTROL, STATE ]] --
 local ai = {
@@ -67,12 +63,20 @@ local ai = {
   ghostL = nil,
 }
 
-local targetSpeedDifSmoother = nil
+local targetSpeedDifSmoother = newTemporalSmoothingNonLinear(1e300, 4, 0)
+local targetSpeedSmoother = newTemporalSmoothingNonLinear(10, 10, ai.speed)
 local aiDeviationSmoother = newTemporalSmoothing(1)
 local smoothTcs = newTemporalSmoothingNonLinear(0.1, 0.9)
 local throttleSmoother = newTemporalSmoothing(1e30, 0.2)
-local aiCannotMoveTime = 0
-local aiForceGoFrontTime = 0
+
+local internalState = {
+  changePlanTimer = 0,
+  aiCannotMoveTime = 0,
+  aiForceGoFrontTime = 0,
+  road = 'onroad',
+  crash = {time = 0, manoeuvre = 0, dir = nil, pos = nil},
+  chaseData = {playerState = nil, playerStoppedTimer = 0, playerRoad = nil, driveAhead = false, targetSpeed = nil}
+}
 
 local twt = {
   state = 0,
@@ -109,50 +113,12 @@ local forces = {}
 local velocities = {}
 local lastCommand = {steering = 0, throttle = 0, brake = 0, parkingbrake = 0}
 
-local driveInLaneFlag = false
-local internalState = 'onroad'
-
-local restoreGearboxMode = false
-local validateInput = nop
-------------------------------
-
--- [[ CRASH DETECTION ]] --
-local crash = {time = 0, manoeuvre = 0, dir = nil, pos = {}}
-
-local recover = {
-  recoverOnCrash = false,
-  recoverTimer = 0,
-  _recoverOnCrash = false
-}
-
--- [[ OPPONENT DATA ]] --
-local player
-local chaseData
-
--- [[ SETTINGS, PARAMETERS, AUXILIARY DATA ]] --
-local mapData -- map data including node connections (edges and edge data), node positions and node radii
-local signalsData -- traffic intersection and signals data
-local currentRoute
-local MIN_PLAN_COUNT = 3
-local targetWPName
-
-local wpList
-local manualPath
-local speedProfile
-local race, noOfLaps
-local parameters
-
-local targetObjectSelectionMode
-
-local edgeDict
-
-local scriptData
-
-
-------------------------------
+local opt = {driveInLaneFlag = false, racing = false, trajMethod = nil, aggressionMode = nil, avoidCars = 'on'}
 
 -- [[ TRAFFIC ]] --
 local trafficStates = {}
+local trafficPathState = {}
+
 local traffic = {
   trafficTable = {},
   trafficFilterQue = {array = {}, dict = {}},
@@ -169,25 +135,29 @@ local traffic = {
   distAhead = 40     -- minimum Ahead distance for searching traffic vehicle
 }
 
+-- [[ OPPONENT DATA ]] --
+local player
 
-local avoidCars = 'on'
-
-M.extAvoidCars = 'auto'
-
-local changePlanTimer = 0
-
------------------------
-
--- [[ HEAVY DEBUG MODE ]] --
-local trajecRec = {last = 0}
-local routeRec = {last = 0}
-local labelRenderDistance = 10
--- local newPositionsDebug = {} -- for debug purposes
-local debugSpots = {}
-local candidatePaths
-
-local trafficPathState = {}
+-- [[ SETTINGS, PARAMETERS, AUXILIARY DATA ]] --
+local mapData -- map data including node connections (edges and edge data), node positions and node radii
+local signalsData -- traffic intersection and signals data
+local currentRoute
+local MIN_PLAN_COUNT = 3
+local targetWPName
+local edgeDict
+local wpList
+local manualPath
+local validateInput = nop
+local speedProfile
+local loopPath, noOfLaps
+local parameters
+local restoreGearboxMode = false
+local targetObjectSelectionMode
+local scriptData
+local scriptai = nil
+local recover = {recoverOnCrash = false, recoverTimer = 0, _recoverOnCrash = false}
 ------------------------------
+
 -- For Debugging (useful function to print a numbered list of upvalues of a specific function)
 local function inspect_upvalues(func)
   local i = 1
@@ -349,9 +319,9 @@ end
 
 local function setAggressionMode(aggrmode)
   if aggrmode == 'rubberBand' then
-    aggressionMode = aggrmode
+    opt.aggressionMode = aggrmode
   else
-    aggressionMode = nil
+    opt.aggressionMode = nil
     setAggressionInternal()
   end
 end
@@ -366,7 +336,16 @@ local function resetInternalStates()
   trafficStates.action = {hornTimer = -1, hornTimerLimit = 1, forcedStop = false}
   trafficStates.intersection = {timer = 0, turn = 0, block = false}
 
-  chaseData = {playerState = nil, playerStoppedTimer = 0, playerRoad = nil}
+  internalState.chaseData.playerState = nil
+  internalState.chaseData.playerStoppedTimer = 0
+  internalState.chaseData.playerRoad = nil
+  internalState.chaseData.driveAhead = false
+  internalState.chaseData.targetSpeed = nil
+
+  internalState.crash.time = 0
+  internalState.crash.manoeuvre = 0
+  internalState.crash.dir = nil
+  internalState.crash.pos = nil
 
   if electrics.values.horn == 1 then electrics.horn(false) end
   if electrics.values.signal_left_input or electrics.values.signal_right_input then electrics.set_warn_signal(false) end
@@ -378,22 +357,25 @@ resetInternalStates()
 local function resetParameters()
   -- parameters are used for finer AI control
   parameters = {
-    turnForceCoef = 1.2, -- coefficient for curve spring forces (reduced from 2 for smoother steering)
-    awarenessForceCoef = 0.08, -- coefficient for vehicle awareness displacement (reduced from 0.15 for very smooth lane keeping)
+    turnForceCoef = 2, -- coefficient for curve spring forces
+    awarenessForceCoef = 0.25, -- coefficient for vehicle awareness displacement
     edgeDist = 0, -- minimum distance from the edge of the road
     trafficWaitTime = 2, -- traffic delay after stopping at intersection
+    delayFactorWaitTime = {0.55 + (0.95 - 0.55) * math.random() , 0.05 + (0.45 - 0.05) * math.random()},
     enableElectrics = true, -- allows the ai to automatically use electrics such as hazard lights (especially for traffic)
     driveStyle = 'default',
     staticFrictionCoefMult = 0.95,
     lookAheadKv = 0.6,
     applyWidthMarginOffset = true,
     planErrorSmoothing = true,
-    springForceIntegratorDispLim = 0.03, -- node displacement force magnitude limit (reduced from 0.05 for very smooth movement)
+    springForceIntegratorDispLim = 0.1, -- node displacement force magnitude limit
     understeerThrottleControl = 'on', -- anything other than an 'off' value will keep this active
     oversteerThrottleControl = 'on', -- anything other than an 'off' value will keep this active
     throttleTcs = 'on', -- anything other than an 'off' value will keep this active
     abBrakeControl = 'on',
-    underSteerBrakeControl = 'on'
+    underSteerBrakeControl = 'on',
+    throttleKp = 0.5,
+    targetSpeedSmootherRate = 10,
   }
 end
 resetParameters()
@@ -446,6 +428,8 @@ end
 
 local function updatePlayerData()
   mapmgr.getObjects()
+  if not next(mapmgr.objects) then return end -- prevents changes if table is empty
+
   if mapmgr.objects[M.targetObjectID] and targetObjectSelectionMode == 'manual' then
     player = mapmgr.objects[M.targetObjectID]
   elseif tableSize(mapmgr.objects) == 2 then
@@ -634,11 +618,11 @@ local function driveToTarget(targetPos, throttle, brake, targetSpeed)
   local dirTarget = ai.dirVec:dot(targetVec)
   local dirTargetAxis = ai.rightVec:dot(targetVec)
 
-  if crash.manoeuvre == 1 and dirTarget < ai.dirVec:dot(crash.dir) then
+  if internalState.crash.manoeuvre == 1 and dirTarget < ai.dirVec:dot(internalState.crash.dir) then
     driveCar(-sign(dirAngle), brake * brakeCoef, throttle * throttleCoef, 0)
     return
   else
-    crash.manoeuvre = 0
+    internalState.crash.manoeuvre = 0
   end
 
   if parameters.driveStyle == 'offRoad' then
@@ -646,14 +630,14 @@ local function driveToTarget(targetPos, throttle, brake, targetSpeed)
     throttleCoef = sqrt(throttleCoef)
   end
 
-  aiForceGoFrontTime = max(0, aiForceGoFrontTime - dt)
-  if twt.state == 1 and aiCannotMoveTime > 1 and aiForceGoFrontTime == 0 then
+  internalState.aiForceGoFrontTime = max(0, internalState.aiForceGoFrontTime - dt)
+  if twt.state == 1 and internalState.aiCannotMoveTime > 1 and internalState.aiForceGoFrontTime == 0 then
     twt.state = 0
-    aiCannotMoveTime = 0
-    aiForceGoFrontTime = 2
+    internalState.aiCannotMoveTime = 0
+    internalState.aiForceGoFrontTime = 2
   end
 
-  if aiForceGoFrontTime > 0 and dirTarget < 0 then
+  if internalState.aiForceGoFrontTime > 0 and dirTarget < 0 then
     dirTarget = -dirTarget
     dirAngle = -dirAngle
   end
@@ -823,6 +807,9 @@ local function driveToTarget(targetPos, throttle, brake, targetSpeed)
 
     local pbrake
     if ai.vel:dot(ai.dirVec) < 0 and ai.speed > 0.1 then
+      -- TODO: handbrake when stoped or moving backward
+      -- apply brake (in arcade mode throttle input when moving backwards activates the brakes) and or parkingbrake
+      -- when vehicle is moving backwards but the target speed is effectively zero
       if ai.speed < 0.15 and targetSpeed <= 1e-5 then
         pbrake = 1
       else
@@ -832,6 +819,10 @@ local function driveToTarget(targetPos, throttle, brake, targetSpeed)
       brake = 0
     else
       if (ai.speed > 4 and ai.speed < 30 and abs(dirAngle) > 0.97 and brake == 0) or (ai.speed < 0.15 and targetSpeed <= 1e-5) then
+        -- The first condition was supposed to help the vehicles turn in tight corners by applying handbrake. This is very old logic. It might
+        -- no longer be needed. Revise.
+        -- The second condition is supposed to apply handbrake when the vehicle is at a stop but it looks to be unstable
+        -- TODO: handbrake when turning
         pbrake = 1
       else
         pbrake = 0
@@ -1128,6 +1119,7 @@ local function abortUpcommingLaneChange()
 end
 
 local function updatePlanLen(plan, j, k)
+  --profilerPushEvent("ai_update_planLen")
   -- bulk recalculation of plan edge lengths and length of entire plan
   -- j: index of earliest node position that has changed
   -- k: index of latest node position that has changed
@@ -1141,11 +1133,12 @@ local function updatePlanLen(plan, j, k)
     plan[i].length = edgeLen
   end
   plan.planLen = planLen
+  --profilerPopEvent("ai_update_planLen")
 end
 
 -- expand lane lateral limits of this plan node to the lane range limits
 local function openLaneToLaneRange(planNode)
-  local roadHalfWidth = planNode.radiusOrig * planNode.chordLength
+  local roadHalfWidth = planNode.halfWidth
   planNode.laneLimLeft = linearScale(planNode.rangeLeft, 0, 1, -roadHalfWidth, roadHalfWidth)
   planNode.laneLimRight = linearScale(planNode.rangeRight, 0, 1, -roadHalfWidth, roadHalfWidth)
   planNode.lanesOpen = true
@@ -1385,7 +1378,7 @@ local function processNodeIncommingLanes(newNode, planNode)
   local latXnorm = planNode.lateralXnorm
   local laneLimLeft = planNode.laneLimLeft
   local laneLimRight = planNode.laneLimRight
-  local halfWidth = planNode.radiusOrig * planNode.chordLength
+  local halfWidth = planNode.halfWidth
   local numOfOutLanes = numOfLanesInDirection(newNode.outEdgeLanes, "+")
   local numOfInLanes = numOfLanesInDirection(newNode.inEdgeLanes, "+")
   local defaultLaneWidth = min(2 * halfWidth / (#newNode.inEdgeLanes), 3.45)
@@ -1453,14 +1446,14 @@ local function getBestLane(laneConfig, nodeLatPos, laneLeftLimLatPos, laneRightL
     newNode = {}
     newNode.posOrig = planPos
     newNode.radiusOrig = 0
-    newNode.chordLength = 0
+    newNode.halfWidth = 0
     newNode.normal = planPos
     newNode.outEdgeLanes = laneConfig
   end
   if #newNode.outEdgeLanes == #laneConfig then -- TODO: this might not be correct
     dirVec:set(0, 0, 0)
   end
-  local newNodeWidthVec = newNode.radiusOrig * newNode.chordLength * newNode.normal
+  local newNodeWidthVec = newNode.halfWidth * newNode.normal
   for i = 1, numOfLanes do -- traverse lanes in laneConfig
     local thisLaneLimLeft, thisLaneLimRight = (i - 1) / numOfLanes, i / numOfLanes
     local thisLaneLatPos = (thisLaneLimRight + thisLaneLimLeft) * 0.5
@@ -1581,7 +1574,7 @@ local function buildNextRoute(route)
   local planCount = plan.planCount
   local nextPathIdx = (plan[planCount].pathidx or 0) + 1 -- if the first plan node is the ai.pos it does not have a pathidx value yet
 
-  if race == true and noOfLaps and noOfLaps > 1 and not path[nextPathIdx] then -- in case the path loops
+  if loopPath == true and noOfLaps and noOfLaps > 1 and not path[nextPathIdx] then -- in case the path loops
     local loopPathId
     local pathCount = #path
     local lastWayPoint = path[pathCount]
@@ -1684,7 +1677,8 @@ local function buildNextRoute(route)
       plan[planCount].normal:setAdd2(norm1, norm2)
       local tmp = plan[planCount].normal:length()
       plan[planCount].normal:setScaled(1 / (tmp + 1e-30))
-      plan[planCount].chordLength = min(2 / tmp, (1 - norm1:dot(norm2) * 0.5) * tmp) -- 2 / tmp == cos(x/2) : x is angle between norm1, norm2
+      local chordLength = min(2 / tmp, (1 - norm1:dot(norm2) * 0.5) * tmp) -- 2 / tmp == cos(x/2) : x is angle between norm1, norm2
+      plan[planCount].halfWidth = plan[planCount].radiusOrig * chordLength
     end
   else
     plan[planCount].normal:setSub2(newNode.posOrig, plan[planCount].posOrig)
@@ -1714,6 +1708,7 @@ local function buildNextRoute(route)
   local tmp = newNode.normal:length()
   newNode.normal:setScaled(1 / (tmp + 1e-30))
   newNode.chordLength = min(2 / tmp, (1 - newNode.inEdgeNormal:dot(newNode.outEdgeNormal) * 0.5) * tmp) -- new node road width multiplier
+  newNode.halfWidth = newNode.radiusOrig * newNode.chordLength
 
   local newNodeLaneLimLeft = 0
   local newNodeLaneLimRight = 1
@@ -1726,7 +1721,7 @@ local function buildNextRoute(route)
   local newNodeRangeLeftIdx -- index of left most lane in range
   local newNodeRangeRightIdx -- index of right most lane in range
 
-  if driveInLaneFlag and newNode.inEdgeLanes then
+  if opt.driveInLaneFlag and newNode.inEdgeLanes then
     -- Consider lanes comming into newNode, scale/translate planNode lateral position and lane limits and add them to the in lane configuration as appropriate
     local inLaneConfig, planNodeLatPos, planNodelaneLimLeft, planNodelaneLimRight, planNodeRangeLeft, planNodeRangeRight, planNodeHalfWidth = processNodeIncommingLanes(newNode, plan[planCount]) -- lateral coordinates in [-r, r]
 
@@ -1763,7 +1758,7 @@ local function buildNextRoute(route)
     newNodeLaneLimRight = linearScale(newNodeLaneLimRight, rangeLeft, rangeRight, rangeLeftOrig, rangeRightOrig)
   end
 
-  newNode.pos:setAdd(((newNodeLaneLimLeft + newNodeLaneLimRight) - 1) * newNode.radiusOrig * newNode.chordLength * newNode.normal)
+  newNode.pos:setAdd(((newNodeLaneLimLeft + newNodeLaneLimRight) - 1) * newNode.halfWidth * newNode.normal)
 
   newNode.inEdgeNormal:setSub2(newNode.pos, plan[planCount].pos)
   newNode.inEdgeNormal:setCross(newNode.biNormal, newNode.inEdgeNormal)
@@ -1773,7 +1768,7 @@ local function buildNextRoute(route)
   local tmp = newNode.normal:length()
   newNode.normal:setScaled(1 / (tmp + 1e-30))
   newNode.chordLength = min(2 / tmp, (1 - newNode.inEdgeNormal:dot(newNode.outEdgeNormal) * 0.5) * tmp)
-  local newNodeHalfWidth = newNode.radiusOrig * newNode.chordLength
+  newNode.halfWidth = newNode.radiusOrig * newNode.chordLength
 
   local newNodeLatPos
   if newNodeLaneConfig and #newNodeLaneConfig > 1 and newNode.nextNodeInPath and newNode.prevNodeInPath then -- TODO: error hits if the nextNode/prevNode conditions are not here
@@ -1781,35 +1776,34 @@ local function buildNextRoute(route)
     local turnDir = (mapData.positions[newNode.nextNodeInPath] - newNode.posOrig) + (mapData.positions[newNode.prevNodeInPath] - newNode.posOrig)
     -- keep inside lanes narrower
     if turnDir:dot(newNode.normal) < 0 then
-      newNodeLaneLimLeft = linearScale(newNodeRangeLeft, 0, 1, -newNodeHalfWidth, newNodeHalfWidth) + (bestLane - newNodeRangeLeftIdx) * laneWidth
+      newNodeLaneLimLeft = linearScale(newNodeRangeLeft, 0, 1, -newNode.halfWidth, newNode.halfWidth) + (bestLane - newNodeRangeLeftIdx) * laneWidth
       --[[ tighter outside left turns
       newNodeLaneLimLeft = -newNodeHalfWidth + (bestLane - 1) * laneWidth
       newNodeRangeLeft = min(newNodeRangeLeft, linearScale(-newNodeHalfWidth + (newNodeRangeLeftIdx - 1) * laneWidth, -newNodeHalfWidth, newNodeHalfWidth, 0, 1))
       --]]
       newNodeLaneLimRight = newNodeLaneLimLeft + laneWidth
       newNodeLatPos = (newNodeLaneLimLeft + newNodeLaneLimRight) * 0.5
-      if bestLane == #newNodeLaneConfig then newNodeLaneLimRight = newNodeHalfWidth end -- give remaining space on the right to the right most lane
+      if bestLane == #newNodeLaneConfig then newNodeLaneLimRight = newNode.halfWidth end -- give remaining space on the right to the right most lane
     else
-      newNodeLaneLimRight = linearScale(newNodeRangeRight, 0, 1, -newNodeHalfWidth, newNodeHalfWidth) - (newNodeRangeRightIdx - bestLane) * laneWidth
+      newNodeLaneLimRight = linearScale(newNodeRangeRight, 0, 1, -newNode.halfWidth, newNode.halfWidth) - (newNodeRangeRightIdx - bestLane) * laneWidth
       newNodeLaneLimLeft = newNodeLaneLimRight - laneWidth
       newNodeLatPos = (newNodeLaneLimLeft + newNodeLaneLimRight) * 0.5
-      if bestLane == 1 then newNodeLaneLimLeft = -newNodeHalfWidth end -- give remaining space on the left to left most lane
+      if bestLane == 1 then newNodeLaneLimLeft = -newNode.halfWidth end -- give remaining space on the left to left most lane
     end
   else
     -- Transform newNode lateral position and lane limits from [0, 1] to [-r, r] using the recalculated newNodeHalfWidth
-    newNodeLaneLimLeft = linearScale(newNodeLaneLimLeft, 0, 1, -newNodeHalfWidth, newNodeHalfWidth)
-    newNodeLaneLimRight = linearScale(newNodeLaneLimRight, 0, 1, -newNodeHalfWidth, newNodeHalfWidth)
+    newNodeLaneLimLeft = linearScale(newNodeLaneLimLeft, 0, 1, -newNode.halfWidth, newNode.halfWidth)
+    newNodeLaneLimRight = linearScale(newNodeLaneLimRight, 0, 1, -newNode.halfWidth, newNode.halfWidth)
     newNodeLatPos = (newNodeLaneLimLeft + newNodeLaneLimRight) * 0.5
   end
 
   -- plan converges gradually towards the center of the road
-  if not driveInLaneFlag then
+  if not opt.driveInLaneFlag then
     -- normalized lateral xnorm of the last node on the plan
-    local normalizedPrevLatXnorm = plan[plan.planCount].lateralXnorm / (plan[plan.planCount].radiusOrig * plan[plan.planCount].chordLength)
+    local normalizedPrevLatXnorm = plan[plan.planCount].lateralXnorm / (plan[plan.planCount].halfWidth)
 
-    local newNodeHalfWidth = newNode.radiusOrig * newNode.chordLength
     -- last plan node lateral xnorm scaled to the width of the new node
-    local lateralXnorm = max(min(normalizedPrevLatXnorm * newNodeHalfWidth, newNodeHalfWidth), -newNodeHalfWidth)
+    local lateralXnorm = max(min(normalizedPrevLatXnorm * newNode.halfWidth, newNode.halfWidth), -newNode.halfWidth)
 
     -- calculate smoothing parameter
     local t = min(1, max(0, plan.planLen / 100)) -- currently converges to the center of the road at 100m
@@ -1833,8 +1827,9 @@ local function buildNextRoute(route)
     normal = newNode.normal,
     radiusOrig = newNode.radiusOrig,
     manSpeed = speedProfile and speedProfile[newNode.name],
+    roadSpeedLimit = newNode.prevNodeInPath and mapData.graph[newNode.prevNodeInPath][newNode.name].speedLimit,
     pathidx = nextPathIdx,
-    chordLength = newNode.chordLength,
+    halfWidth = newNode.halfWidth,
     widthMarginOffset = 0,
     wayPointAhead = newNode.nextNodeInPath,
     laneLimLeft = newNodeLaneLimLeft, -- lateral coordinate of current lane left limit [-hW, hW]
@@ -1849,7 +1844,8 @@ local function buildNextRoute(route)
     rangeRight = newNodeRangeRight, -- lateral coordinate [0, 1] of the right hand side limit of the right most lane in the direction of travel
     rangeLaneCount = newNodeRangeLaneCount, -- number of contiguous lanes in the direction of travel counting from the current lane
     rangeBestLane = bestLane and newNodeRangeLeftIdx and (bestLane - newNodeRangeLeftIdx) or rangeBestLane, -- 0 indexed
-    trafficSqVel = math.huge
+    trafficSqVel = math.huge,
+    dispDir = 0
   }
 end
 
@@ -1967,7 +1963,7 @@ local function inCurvature(v1, v2)
   local dot12 = v1x * v2x + v1y * v2y + v1z * v2z
   local cosSq = min(1, dot12 * dot12 / max(1e-30, v1Sqlen * v2Sqlen))
 
-  if dot12 < 0 then -- angle between the two segments is > 180 deg
+  if dot12 < 0 then -- angle between the two segments is > 90 deg
     local minDsq = min(v1Sqlen, v2Sqlen)
     local maxDsq = minDsq / max(1e-30, cosSq)
     if max(v1Sqlen, v2Sqlen) > (minDsq + maxDsq) * 0.5 then
@@ -1981,8 +1977,7 @@ local function inCurvature(v1, v2)
     end
   end
 
-  v2x, v2y, v2z = -v2x, -v2y, -v2z
-  return 2 * sqrt((1 - cosSq) / max(1e-30, square(v1x - v2x) + square(v1y - v2y) + square(v1z - v2z)))
+  return 2 * sqrt((1 - cosSq) / max(1e-30, square(v1x + v2x) + square(v1y + v2y) + square(v1z + v2z))) -- the denominator is v1:squaredLength(-v2)
 end
 
 -- ********* FUNCTIONS FOR SPEED PROFILE GENERATION ********* --
@@ -2070,15 +2065,12 @@ local function solver_f_acc_profile(plan, speed0)
     if plan.stopSeg <= i+1 then
       vx_possible_next = 0
     else
-      -- In race mode, ignore traffic speed limits and prioritize maximum speed
-      local effectiveTrafficSpeed = (raceMode or not driveInLaneFlag) and math.huge or n2.trafficSqVel
-      
-      if min(n2.speed, effectiveTrafficSpeed) < n1.speed then -- max velocity at i-1 is less than velocity at i (not a deceleration phase)
-        vx_possible_next = min(n2.speed, effectiveTrafficSpeed)
+      if min(n2.speed, n2.trafficSqVel) < n1.speed then -- max velocity at i-1 is less than velocity at i (not a deceleration phase)
+        vx_possible_next = min(n2.speed, n2.trafficSqVel)
       else
-        local ax_final = acc_eval(n1.speed, n1.acc_max, n1.curvature)
+        local ax_final = acc_eval(n1.speed, n1.acc_max, abs(n1.curvature))
         vx_possible_next = n1.speed + 2 * ax_final * n1.length -- speed squared
-        vx_possible_next = min(n2.speed, min(effectiveTrafficSpeed, vx_possible_next))
+        vx_possible_next = min(n2.speed, min(n2.trafficSqVel, vx_possible_next))
       end
     end
 
@@ -2098,32 +2090,29 @@ local function solver_b_acc_profile(plan)
       vx_possible_next = 0
     else
       local n2SpeedSq = n2.speed * n2.speed
-      -- In race mode, ignore traffic speed limits and prioritize maximum speed
-      local effectiveTrafficSpeed = (raceMode or not driveInLaneFlag) and math.huge or n1.trafficSqVel
-      
-      if min(n1.speed, effectiveTrafficSpeed) < n2SpeedSq then -- max velocity at i-1 is less than velocity at i (not a deceleration phase)
-        vx_possible_next = sqrt(min(n1.speed, effectiveTrafficSpeed))
+      if min(n1.speed, n1.trafficSqVel) < n2SpeedSq then -- max velocity at i-1 is less than velocity at i (not a deceleration phase)
+        vx_possible_next = sqrt(min(n1.speed, n1.trafficSqVel))
       else
         -- available longitudinal acceleration at node i
-        local ax_possible_current = acc_eval(n2SpeedSq, n2.acc_max, n2.curvature)
+        local ax_possible_current = acc_eval(n2SpeedSq, n2.acc_max, abs(n2.curvature))
         -- possible velocity at node i-1 given available longitudinal acceleration at node i
         vx_possible_next = n2SpeedSq + 2 * n1.length * ax_possible_current
 
         -- available longitudinal acceleration at node i-1 given velocity estimate at node i-1
-        local ax_possible_next = acc_eval(vx_possible_next, n1.acc_max, n1.curvature)
+        local ax_possible_next = acc_eval(vx_possible_next, n1.acc_max, abs(n1.curvature))
         -- possible velocity at i-1 given available longitudinal acceleration at node i-1
         local vx_tmp = n2SpeedSq + 2 * n1.length * ax_possible_next
 
         if vx_possible_next > vx_tmp then
           -- available longitudinal acceleration at node i-1 given new velocity estimate at node i-1
-          ax_possible_next = acc_eval(vx_tmp, n1.acc_max, n1.curvature)
+          ax_possible_next = acc_eval(vx_tmp, n1.acc_max, abs(n1.curvature))
           -- improve velocity estimate at i-1 given available longitudinal acceleration at node i-1
           vx_tmp = n2SpeedSq + 2 * n1.length * ax_possible_next
           -- keep the velocity that satisfies longitudinal acceleration constraints at node i-1 and node i
           vx_possible_next = min(vx_possible_next, vx_tmp)
         end
 
-        vx_possible_next = sqrt(min(n1.speed, min(effectiveTrafficSpeed, vx_possible_next))) -- respect traffic speed (unless in race mode)
+        vx_possible_next = sqrt(min(n1.speed, min(n1.trafficSqVel, vx_possible_next))) -- respect traffic speed
       end
     end
 
@@ -2143,35 +2132,13 @@ end
 
 local function setRacing(v)
   if v == true then
-    racing = true
+    opt.racing = true
     traffic.filtered = false
   else
-    racing = false
+    opt.racing = false
   end
 end
-
-local function setRaceMode(v)
-  if v then
-    raceMode = true
-    racing = true -- race mode implies racing is also on
-    traffic.filtered = false
-    -- Set aggressive parameters for race mode
-    if parameters then
-      parameters.awarenessForceCoef = 0.05 -- even less sensitivity to other vehicles
-      parameters.turnForceCoef = 1.5 -- more aggressive steering
-    end
-  else
-    raceMode = false
-    -- Restore normal parameters
-    if parameters then
-      parameters.awarenessForceCoef = 0.08
-      parameters.turnForceCoef = 1.2
-    end
-  end
-end
-
 M.setRacing = setRacing
-M.setRaceMode = setRaceMode
 
 local function setTrafficFilter(v)
   if v == true then
@@ -2255,7 +2222,7 @@ local function trafficFilter(index, route, v, draw)
     local ai2v = vPmiddle:squaredDistance(ai.pos - 0.5 * ai.length * ai.dirVec)
     local xnormV = vPmiddle:xnormOnLine(plan1.posOrig - roadHalfWidth1 * plan1.normal, plan1.posOrig + roadHalfWidth1 * plan1.normal)
     local lanew = (plan1.rangeRight - plan1.rangeLeft)/plan1.rangeLaneCount
-    if plan1.rangeLaneCount > 1 and ai.dirVec:dot(vdirVec) > 0.7 and ai2v < square((0.6*ai.length + 0.6*v.length)) and (xnormV > plan1.rangeLeft and xnormV < plan1.rangeRight) and (not (xnormV > (plan1.rangeLeft + lanew*plan1.rangeBestLane) and xnormV < (plan1.rangeLeft + lanew*(plan1.rangeBestLane+1)))) then
+    if plan1.rangeLaneCount > 1 and ai.dirVec:dot(vdirVec) > 0.7 and ai2v < square((1.2*ai.length + 1.2*v.length)) and (xnormV > plan1.rangeLeft and xnormV < plan1.rangeRight) and (not (xnormV > (plan1.rangeLeft + lanew*plan1.rangeBestLane) and xnormV < (plan1.rangeLeft + lanew*(plan1.rangeBestLane+1)))) then
       if draw then obj.debugDrawProxy:drawSphere(2, vPfront, color(0,0,0,160)) end
       if ai2PlVec:dot(ai.rightVec) > 0 then
         ai.ghostR = true
@@ -2373,9 +2340,9 @@ end
 local function updatePlanbestRange(plan)
   for i = 1, plan.planCount do
     local n = plan[i]
-    local roadHalfWidth = n.radiusOrig * n.chordLength
+    local roadHalfWidth = n.halfWidth
     local laneWidth = 2 * roadHalfWidth * (n.rangeRight - n.rangeLeft) / n.rangeLaneCount
-    plan[i].rangeBestLane = clamp((n.laneLimLeft - ((2 * n.rangeLeft - 1) * roadHalfWidth))/laneWidth,0,n.rangeLaneCount-1)
+    plan[i].rangeBestLane = clamp((n.laneLimLeft - ((2 * n.rangeLeft - 1) * roadHalfWidth)) / laneWidth, 0, n.rangeLaneCount-1)
     --print(plan[i].rangeBestLane)
   end
 end
@@ -2409,14 +2376,26 @@ local function calculateTrafficTargetSpeed(plan, trafficTable, trafficTableLen)
         if overlapsOBB_OBB(v.posMiddle, v.vx, v.vy, v.vz, segC, segVx, segVy, segVz) then
           local vRearXnorm, vFrontXnorm = v.posRear:xnormOnLine(n1.pos, n2.pos), v.posFront:xnormOnLine(n1.pos, n2.pos)
           -- if the vehicle overlaps the first segment check if its xnorm is greater than the xnorm of the ai vehicle
-          if i > 1 or i == 1 and max(vRearXnorm, vFrontXnorm) > plan.aiXnormOnSeg then
+          if i > 1 or max(vRearXnorm, vFrontXnorm) > plan.aiXnormOnSeg then
             local vXnorm = clamp(min(vRearXnorm, vFrontXnorm), 0, 1)
+
             --local ai2PlDist = max(0, distOnPlan - plan[1].length * plan.aiXnormOnSeg + clamp(vXnorm, 0, 1) * n1.length) -- if current segment length is added after the traffic table loop
-            local ai2PlDist = max(0, distOnPlan - (1 - vXnorm) * n1.length)
-            ai2PlDist = max(0, ai2PlDist - (2 + ai.speed * 1)) -- minimum distance is 2m and speed dependent distance ratio is 1s
-            local velProjOnSeg = max(0, v.vel:dot(segDirVec))
-            dump('dist and vel on seg', ai2PlDist, velProjOnSeg)
+
+            -- the ai.speed term creates a feedback loop
+            -- lowering the coefficient of that term mitigates the effect of the feedback loop
+            -- parts of the throttle/brake/handbrake control logic at the end of driveToTarget also seem to be creating issues when at low targetSpeed
+            -- see function driveToTarget: TODO: handbrake when stoped or moving backward and TODO: handbrake when turning
+            local ai2PlDist = max(0, distOnPlan - (1 - vXnorm) * n1.length) - max(2.5, ai.speed * 1)
+
+            local velProjOnSeg = v.vel:dot(segDirVec) -- max(0, v.vel:dot(segDirVec))
+
+            --dump('dist and vel on seg', ai2PlDist, velProjOnSeg)
+
             local targetSpeed = max(0, abs(velProjOnSeg) * velProjOnSeg + 2 * g * min(aggression, ai.staticFrictionCoef) * ai2PlDist)
+
+            -- might help improve the throttle/brake input stability caused by the feedback loop of the ai.speed term in ai2PlDist
+            --if plan.trafficTargetSpeed < 0.25 then plan.trafficTargetSpeed = 0 end
+
             plan.trafficTargetSpeed = min(targetSpeed, plan.trafficTargetSpeed)
             plan.trafficMinProjSpeed = min(plan.trafficMinProjSpeed, velProjOnSeg)
           end
@@ -2435,7 +2414,8 @@ local function calculateTrafficTargetSpeed(plan, trafficTable, trafficTableLen)
       end
     end
   end
-  plan.trafficTargetSpeed = plan.trafficTargetSpeedSmoother:get(sqrt(plan.trafficTargetSpeed), dt)
+
+  plan.trafficTargetSpeed = sqrt(plan.trafficTargetSpeed) -- plan.trafficTargetSpeedSmoother:get(sqrt(plan.trafficTargetSpeed), dt)
 end
 
 
@@ -2477,7 +2457,7 @@ local function planAhead(route, baseRoute)
             radiusOrig = n.radiusOrig,
             pathidx = max(1, n.pathidx-refpathidx),
             roadSpeedLimit = n.roadSpeedLimit,
-            chordLength = n.chordLength,
+            halfWidth = n.halfWidth,
             widthMarginOffset = n.widthMarginOffset,
             wayPointAhead = n.wayPointAhead,
             length = n.length,
@@ -2492,7 +2472,8 @@ local function planAhead(route, baseRoute)
             rangeRight = n.rangeRight,
             rangeLaneCount = n.rangeLaneCount,
             rangeBestLane = n.rangeBestLane,
-            trafficSqVel = math.huge
+            trafficSqVel = math.huge,
+            dispDir = n.dispDir
           }
         end
         plan.planLen = planLen
@@ -2541,7 +2522,7 @@ local function planAhead(route, baseRoute)
           latXnorm = ai.pos:xnormOnLine(posOrig, posOrig + normal)
           laneLimLeft = latXnorm - ai.width * 0.5 -- TODO: rethink the limits here
           laneLimRight = latXnorm + ai.width * 0.5
-          if driveInLaneFlag then
+          if opt.driveInLaneFlag then
             lanes = getEdgeLaneConfig(wp2, wp1)
             rangeLeft, rangeRight = laneRange(lanes)
 
@@ -2579,7 +2560,7 @@ local function planAhead(route, baseRoute)
       length = 0,
       curvature = 0,
       curvatureZ = 0,
-      chordLength = 1,
+      halfWidth = radiusOrig,
       lateralXnorm = latXnorm,
       laneLimLeft = laneLimLeft,
       laneLimRight = laneLimRight,
@@ -2592,7 +2573,8 @@ local function planAhead(route, baseRoute)
       legalSpeed = nil,
       speed = nil,
       wp = wp,
-      trafficSqVel = math.huge
+      trafficSqVel = math.huge,
+      dispDir = 0
     }
 
     plan.planCount = 1
@@ -2608,6 +2590,7 @@ local function planAhead(route, baseRoute)
     minPlanLen = getMinPlanLen(40)
   end
 
+  --profilerPushEvent("ai_buildPlan")
   while not plan[MIN_PLAN_COUNT] or (plan.planLen - (plan.aiXnormOnSeg or 0) * plan[1].length) < minPlanLen do -- TODO: (plan.planLen < minPlanLen and plan.stopSeg + 1 == plan.planCount)
     local n = buildNextRoute(route)
     if not n then break end
@@ -2616,6 +2599,7 @@ local function planAhead(route, baseRoute)
     plan[plan.planCount-1].length = n.pos:distance(plan[plan.planCount-1].pos)
     plan.planLen = plan.planLen + plan[plan.planCount-1].length
   end
+  --profilerPopEvent("ai_buildPlan")
 
   if not plan[2] then return end
   if not plan[1].pathidx then
@@ -2633,6 +2617,7 @@ local function planAhead(route, baseRoute)
   end
 
   -- check path node at lastLaneChangeIdx for a possible lane change
+  --profilerPushEvent("ai_find_LaneChanges")
   if route.lastLaneChangeIdx < #route.path then
     local wp1, wp2
     if route.lastLaneChangeIdx == 1 then
@@ -2667,8 +2652,10 @@ local function planAhead(route, baseRoute)
       route.lastLaneChangeIdx = route.lastLaneChangeIdx + 1
     end
   end
+  --profilerPopEvent("ai_find_LaneChanges")
 
   local distOnPlan = 0
+  --profilerPushEvent("ai_trajectory_splitting")
   for i = 1, plan.planCount-1 do
     local segLenSq = plan[i].posOrig:squaredDistance(plan[i+1].posOrig)
     local xSq = square(distOnPlan)
@@ -2708,7 +2695,6 @@ local function planAhead(route, baseRoute)
       local limPos = linePointFromXnorm(plan[i].posOrig + plan[i].radiusOrig * edgeNormal, plan[i+1].posOrig + plan[i+1].radiusOrig * edgeNormal, max(0, min(1, t2)))
       local roadHalfWidth = posOrig:distance(limPos)
       local lateralXnorm = pos:xnormOnLine(posOrig, limPos) * roadHalfWidth -- [-r, r]
-      local chordLength = roadHalfWidth / radiusOrig
 
       n1.length = n1.length * 0.5
 
@@ -2755,7 +2741,7 @@ local function planAhead(route, baseRoute)
         radiusOrig = radiusOrig,
         pathidx = n2.pathidx,
         roadSpeedLimit = roadSpeedLimit,
-        chordLength = chordLength,
+        halfWidth = roadHalfWidth,
         widthMarginOffset = (n1.widthMarginOffset + n2.widthMarginOffset) * 0.5,
         laneLimLeft = laneLimLeft,
         laneLimRight = laneLimRight,
@@ -2764,13 +2750,14 @@ local function planAhead(route, baseRoute)
         rangeLaneCount = rangeLaneCount,
         rangeBestLane = rangeBestLane, -- 0 Indexed
         length = n1.length,
-        curvature = 0,
+        curvature = (n1.curvature + n2.curvature) * 0.5,
         curvatureZ = 0,
         lateralXnorm = lateralXnorm,
         legalSpeed = nil,
         manSpeed = manSpeed,
         speed = nil,
-        trafficSqVel = math.huge
+        trafficSqVel = math.huge,
+        dispDir = 0
       })
 
       if n1.lanesOpen and n2.lanesOpen then
@@ -2782,25 +2769,25 @@ local function planAhead(route, baseRoute)
     end
     distOnPlan = distOnPlan + sqrt(segLenSq)
   end
+  --profilerPopEvent("ai_trajectory_splitting")
   distOnPlan = nil
 
   if plan.targetSeg == nil then
     calculateTarget(plan)
   end
 
-  for i = 0, plan.planCount do
-    if forces[i] then
-      forces[i]:set(0,0,0)
-    else
-      forces[i] = vec3(0,0,0)
-      velocities[i] = vec3(0,0,0)
-    end
-  end
-
+  --profilerPushEvent("ai_calculate_smoothing")
   -- calculate spring forces
   local nforce = vec3()
+  if opt.trajMethod ~= 'springDampers' then
+    for i = 0, plan.planCount do
+      if forces[i] then
+        forces[i]:set(0, 0, 0)
+      else
+        forces[i] = vec3()
+      end
+    end
 
-  if trajMethod == 'spring' then
     for i = 1, plan.planCount-1 do
       local n1 = plan[i]
       local v1 = n1.dirVec
@@ -2814,7 +2801,16 @@ local function planAhead(route, baseRoute)
       nforce:setScaled(2)
       forces[i]:setAdd(nforce)
     end
-  elseif trajMethod == 'springDampers' then
+  else
+    for i = 0, plan.planCount do
+      if forces[i] then
+        forces[i]:set(0, 0, 0)
+      else
+        forces[i] = vec3()
+        velocities[i] = vec3()
+      end
+    end
+
     local dforce = vec3()
     local stiff = 400
     local damper = 2
@@ -2827,7 +2823,7 @@ local function planAhead(route, baseRoute)
       nforce:setScaled2(n1.turnDir, (1-twt.state) * max(1 - v1:dot(v2), 0) * parameters.turnForceCoef)
 
       nforce:setScaled2(n1.turnDir, (1-twt.state) * max(1 - v1:dot(v2), 0) * parameters.turnForceCoef * stiff)
-      dforce = -1*(((1*velocities[i]-velocities[i-1]) - (velocities[i+1]-velocities[i]))* parameters.turnForceCoef * damper/4)
+      dforce:setScaled2((velocities[i+1] - velocities[i]) - (velocities[i] - velocities[i-1]), parameters.turnForceCoef * damper * 0.25)
       dforce:setScaled2(n1.turnDir, n1.turnDir:dot(dforce))
       nforce:setAdd(dforce)
 
@@ -2839,14 +2835,16 @@ local function planAhead(route, baseRoute)
 
     for i = 1, plan.planCount-1 do
       forces[i] = forces[i] - velocities[i] * parameters.turnForceCoef * damper
-      velocities[i] = velocities[i] + forces[i]*dt
-      forces[i] = velocities[i]*dt
+      velocities[i] = velocities[i] + forces[i] * dt
+      forces[i] = velocities[i] * dt
     end
   end
+  --profilerPopEvent("ai_calculate_smoothing")
 
   -- other vehicle awareness --
   -- computing path indexes (start/final) for trafficFilter
   -- and computing filter radius
+  --profilerPushEvent("ai_awareness")
   local indexes = {start = plan[1].pathidx , final = plan[plan.planCount].pathidx}
   if traffic.filtered then
     traffic.Rfs = traffic.Rfs_fun(ai.speed)
@@ -2866,9 +2864,9 @@ local function planAhead(route, baseRoute)
   ai.ghostR, ai.ghostL = nil, nil
 
   for plID, v in pairs(mapmgr.getObjects()) do
-    if plID ~= objectId and (M.mode ~= 'chase' or plID ~= player.id or chaseData.playerState == 'stopped') then
+    if plID ~= objectId and (M.mode ~= 'chase' or plID ~= player.id or internalState.chaseData.playerState == 'stopped') then
       v.targetType = (player and plID == player.id) and M.mode
-      if avoidCars == 'on' or v.targetType == 'follow' then
+      if opt.avoidCars == 'on' or v.targetType == 'follow' then
         v.length = obj:getObjectInitialLength(plID) + 0.3
         v.width = obj:getObjectInitialWidth(plID)
         local posFront = obj:getObjectFrontPosition(plID)
@@ -2956,7 +2954,7 @@ local function planAhead(route, baseRoute)
   plan.trafficMinProjSpeed = math.huge
 
 
-
+  local newOvertake = false
   local openPlanLanesIdx = 0
   if trafficTableLen > 0 then
     local fl, rl, fr, rr
@@ -2966,10 +2964,11 @@ local function planAhead(route, baseRoute)
     --midPos = linePointFromXnorm(planPos, planPos - lenVec, midPos:xnormOnLine(planPos, planPos - lenVec)) -- offset as next plan node
     local dispLeft, dispRight = 0, 0
 
-    if racing then
+    if opt.racing then
       for _, v in ipairs(traffic.trafficTable) do -- side avoidance loop
-        local xnormF = v.posFront:xnormOnLine(midPos + lenVec, midPos - 0.6 * lenVec)
-        local xnormR = v.posRear:xnormOnLine(midPos + lenVec, midPos - lenVec)
+        local backAwereness = 0 --0.25 -- must be between 0 and 1
+        local xnormF = v.posFront:xnormOnLine(midPos + lenVec, midPos - backAwereness * lenVec)
+        local xnormR = v.posRear:xnormOnLine(midPos + lenVec, midPos - backAwereness * lenVec)
         local xnormL = xnormF > 0 and xnormF or xnormR
         if ai.speed > 1 and v.vel:dot(ai.dirVec) > 0 and xnormL > 0 and xnormL < 1 and abs(v.posFront.z - ai.pos.z) < 4 then
           -- distance from ai.pos to v.posFront or v.posRear
@@ -2987,12 +2986,12 @@ local function planAhead(route, baseRoute)
           local TTC = dist * sign2(rsLat) / (abs(rsLat) + 1e-30)
           -- relative longitudinal speed of v w.r.t. ai (rsLong > 0 means ai is moving faster than v)
           local rsLong = vRel:dot(ai.dirVec)
-          -- time to overtake v
+
           local TTO
-          if rsLong > 0 then
-            TTO = 2 * ai.length * (1 - xnormF) * sign2(rsLong) / (abs(rsLong) + 1e-30)
-          else
-            TTO = 2 * ai.length * xnormR / (abs(rsLong) + 1e-30)
+          if rsLong > 0 then -- time to overtake v
+            TTO = (2 * ai.length * lerp(1, lerp(0.5, 0, backAwereness), xnormL) + (xnormF < 0 and v.length or 0)) / (rsLong + 1e-30)
+          else -- time to be overtaken by v
+            TTO = (2 * ai.length * lerp(0.5, 1, backAwereness)*xnormL + (xnormF > 0 and v.length or 0))/ (-rsLong + 1e-30)
           end
 
           -- if TTC is less than TTO or if is greater but vehicles are close to each other: ACTIVATE SIDE AVOIDANCE
@@ -3004,15 +3003,15 @@ local function planAhead(route, baseRoute)
                 dispRight = max(dispRight, square(clamp(0.1 / TTC, 0, 1)))
               end
               --obj.debugDrawProxy:drawSphere(0.2, ai.pos + 0.5 * ai.dirVec * ai.length, color(255, 128, 0, 160))
-              --obj.debugDrawProxy:drawSphere(0.2, ai.pos - 1.5 * ai.dirVec * ai.length, color(255, 128, 0, 160))
+              --obj.debugDrawProxy:drawSphere(0.2, midPos, color(255, 128, 0, 160))
             elseif dist < 0.5 * (ai.width + v.width + 0.2) and TTC > -0.1 then
               if side < 0 then -- v-vehicle is on our left side
-                dispLeft = max(dispLeft, 0.01)
+                dispLeft = max(dispLeft, 0.1)
               elseif side > 0 then -- v-vehicle is on our right side  --(and (xnormF < 0.5 or v.vel:dot(ai.dirVec) > ai.speed))
-                dispRight = max(dispRight, 0.01)
+                dispRight = max(dispRight, 0.1)
               end
-              --obj.debugDrawProxy:drawSphere(0.2, ai.pos + 0.5 * ai.dirVec * ai.length, color(255, 128, 0, 160))
-              --obj.debugDrawProxy:drawSphere(0.2, ai.pos - 1.5 * ai.dirVec * ai.length, color(255, 128, 0, 160))
+              --obj.debugDrawProxy:drawSphere(0.2, ai.pos + 0.5 * ai.dirVec * ai.length, color(0, 0, 0, 160))
+              --obj.debugDrawProxy:drawSphere(0.2, midPos, color(0, 0, 0, 160))
             end
           end
         end
@@ -3061,7 +3060,7 @@ local function planAhead(route, baseRoute)
       -- maybe needs some smoother to prevent left / right "bouncing"
       local curDist = 0
       local lastPlanIdx = 2
-      local targetDist = square(ai.speed) / (2 * g * aggression) + max(racing and 100 or 30, ai.speed * 3) -- longer adjustment at higher speeds
+      local targetDist = square(ai.speed) / (2 * g * aggression) + max(opt.racing and 100 or 30, ai.speed * 3) -- longer adjustment at higher speeds
 
       local tmpVec = vec3()
       for i = 2, plan.planCount - 1 do
@@ -3105,7 +3104,7 @@ local function planAhead(route, baseRoute)
 
         if ai2PlDir > 0 then
           local velDisp = arrivalT * v.vel
-          if v.vel:length() < ai.speed and (v.noproj or racing) then
+          if v.vel:length() < ai.speed and (v.noproj or opt.racing) then
             velDisp = velDisp * min(1,square(square(square(max(0,arrivalT/4)))))
           end
           plPosFront = plPosFront + velDisp
@@ -3150,7 +3149,7 @@ local function planAhead(route, baseRoute)
 
         local limWidth = v.targetType == 'follow' and 2 * max(n1.radiusOrig, n2.radiusOrig) or plWidth
 
-        if minSqDist < square((ai.width + limWidth) * 0.6) then
+        if minSqDist < square((ai.width + limWidth) * 0.8) then
           local velProjOnSeg = max(0, v.vel:dot(nDir))
 
           local vehicleIsStopped = isVehicleStopped(v)
@@ -3165,29 +3164,60 @@ local function planAhead(route, baseRoute)
             end
           end
 
-          if plan.stopSeg == math.huge and v.targetType ~= 'follow' then -- apply side forces to avoid vehicles
-            local side1 = sign(n1.normal:dot(v.posMiddle) - n1.normal:dot(n1.pos))
-            local side2 = sign(n2.normal:dot(v.posMiddle) - n2.normal:dot(n2.pos))
+          if not newOvertake then
+            if plan.stopSeg == math.huge and v.targetType ~= 'follow' then -- apply side forces to avoid vehicles
+              local side1 = sign(n1.normal:dot(v.posMiddle) - n1.normal:dot(n1.pos))
+              local side2 = sign(n2.normal:dot(v.posMiddle) - n2.normal:dot(n2.pos))
 
-            if not v.sideDir then
-              v.sideDir = side1 -- save the avoidance direction once to compare it with all of the subsequent plan nodes
-            end
-
-            if v.sideDir == side1 and inMultipleLanes then -- calculate force coef only if the avoidance side matches the initial value
-
-              local forceCoef = trafficStates.side.side *
-                                parameters.awarenessForceCoef *
-                                max(0, velProjOnSeg > 10 and ai.speed - velProjOnSeg or 0, -sign(nDir:dot(v.dirVec)) * trafficStates.side.cTimer) /
-                                ((1 + minSqDist) * (1 + distanceT * min(0.1, 1 / (2 * max(0, aiPathVel - v.vel:dot(nDir)) + 1e-30))))
-
-              if racing then
-                forceCoef = forceCoef * 0.25
+              if not v.sideDir then
+                v.sideDir = side1 -- save the avoidance direction once to compare it with all of the subsequent plan nodes
               end
-              forceVec:setScaled2(n1.normal, side1 * forceCoef)
-              forces[i]:setSub(forceVec)
 
-              forceVec:setScaled2(n1.normal, side2 * forceCoef)
-              forces[i+1]:setSub(forceVec)
+              if v.sideDir == side1 and inMultipleLanes then -- calculate force coef only if the avoidance side matches the initial value
+
+                local forceCoef = trafficStates.side.side *
+                                  parameters.awarenessForceCoef *
+                                  max(0, ai.speed - velProjOnSeg, -sign(nDir:dot(v.dirVec)) * trafficStates.side.cTimer) /
+                                  ((1 + minSqDist) * (1 + distanceT * min(0.1, 1 / (2 * max(0, aiPathVel - v.vel:dot(nDir)) + 1e-30))))
+
+                if opt.racing then
+                  forceCoef = forceCoef * 0.25
+                end
+                forceVec:setScaled2(n1.normal, side1 * forceCoef)
+                forces[i]:setSub(forceVec)
+
+                forceVec:setScaled2(n1.normal, side2 * forceCoef)
+                forces[i+1]:setSub(forceVec)
+              end
+            end
+          else
+            if plan.stopSeg == math.huge and v.targetType ~= 'follow' and not v.overtaken then
+              v.overtaken = true
+              if inMultipleLanes then
+                local Deltax = distanceT
+                local factor1 = clamp(ai.vel:dot(nDir) - velProjOnSeg, 0, 4)
+                local factor2 = max(0,-sign(nDir:dot(v.dirVec)) * trafficStates.side.cTimer)
+                for ii = 2, plan.planCount-1 do
+                  -- Logic for performing the overtake manouver
+                  local n1i = plan[ii]
+                  --local n2i = plan[ii + 1]
+                  local distY = n1i.normal:dot(v.posMiddle) - n1i.normal:dot(n1i.pos)
+                  --local distY = plan[1].normal:dot(v.posMiddle) - plan[1].normal:dot(ai.pos)
+                  --local Deltax = -n2i.dirVec:dot(v.posMiddle - n1i.pos) --Need to be improved
+                  if ii > 2 then
+                    Deltax = Deltax - plan[ii-1].length
+                  end
+                  if not v.sideDir then
+                    v.sideDir = sign(distY) -- save the avoidance direction once to compare it with all of the subsequent plan nodes
+                  end
+                  if v.sideDir == sign(distY) then
+                    local forceCoef = sign(distY)*max(0, ((n1i.radiusOrig) - abs(distY))*math.exp(-0.001*square(Deltax)))*(1*parameters.awarenessForceCoef*dt)
+                    forceCoef = forceCoef*max(factor1, factor2)*trafficStates.side.side
+                    forceVec:setScaled2(n1i.normal, forceCoef)
+                    forces[ii]:setSub(forceVec)
+                  end
+                end
+              end
             end
           end
 
@@ -3195,16 +3225,7 @@ local function planAhead(route, baseRoute)
             -- sets a minimum speed due to other vehicle velocity projection on plan segment
             -- only sets it if ai mode is valid; or if mode is "manual" but there is not enough space to pass
 
-            -- Improved lane detection: only slow down for vehicles in our lane
-            local aiToVehicle = v.posMiddle - ai.pos
-            local lateralDistance = abs(ai.rightVec:dot(aiToVehicle))
-            
-            -- Calculate lane width for better lane detection
-            local roadHalfWidth = n1.radiusOrig * n1.chordLength
-            local laneWidth = 2 * roadHalfWidth * (n1.rangeRight - n1.rangeLeft) / n1.rangeLaneCount
-            local isInSameLane = lateralDistance < laneWidth * 0.4 -- vehicle must be in same lane (40% of lane width tolerance)
-            
-            if minSqDist < square((ai.width + limWidth) * 0.35) and isInSameLane then
+            if minSqDist < square((ai.width + limWidth) * 0.51)  then
               -- obj.debugDrawProxy:drawSphere(0.25, v.posFront, color(0,0,255,255))
               -- obj.debugDrawProxy:drawSphere(0.25, plPosFront, color(0,0,255,255))
               if not vehicleIsStopped then
@@ -3213,71 +3234,13 @@ local function planAhead(route, baseRoute)
               end
               plan.trafficMinProjSpeed = min(plan.trafficMinProjSpeed, velProjOnSeg)
 
-              -- Check if AI wants to go faster than traffic and can change lanes to pass
-              local desiredSpeedSq = n1.speed or (plan.targetSpeed and plan.targetSpeed * plan.targetSpeed) or ai.speed * ai.speed
-              local trafficSpeedSq = velProjOnSeg * velProjOnSeg
-              local canChangeLanes = math.floor(n1.rangeLaneCount + 0.5) > 1
-              local noActiveChange = not (route.laneChanges[1] and route.laneChanges[1].side ~= 0)
-              local canMultiLaneChange = false
-              
-              -- Allow multiple lane changes if current one is not committed yet or we want to go in different direction
-              if route.laneChanges[1] and route.laneChanges[1].side ~= 0 and not route.laneChanges[1].commit then
-                -- Allow new lane change if it's to a different side (indicates finding better lane)
-                local currentSide = route.laneChanges[1].side
-                local preferredSide = mapmgr.rules.rightHandDrive and 1 or -1 -- prefer left lane for passing in RHD, right lane in LHD
-                
-                -- Allow if going to opposite side OR if we have more than 2 lanes available
-                if currentSide ~= preferredSide or canChangeLanes and math.floor(n1.rangeLaneCount + 0.5) > 2 then
-                  canMultiLaneChange = true
-                end
-              end
-              
-              -- Normal overtaking: if AI wants to go faster than slow traffic, trigger a smooth lane change
-              local aiDesiredSpeed = sqrt(desiredSpeedSq)
-              local trafficSpeed = sqrt(trafficSpeedSq)
-              local speedDifference = aiDesiredSpeed - trafficSpeed
-              
-              -- Trigger normal overtaking for significant speed differences (more conservative than before)
-              -- Only consider actual vehicles (not static objects) for overtaking decisions
-              local isActualVehicle = v.vel and (v.vel:length() > 0.1 or (v.vel:length() <= 0.1 and v.dirVec))
-              if isActualVehicle and speedDifference > 3 and trafficSpeed < aiDesiredSpeed * 0.85 and canChangeLanes and (noActiveChange or canMultiLaneChange) and M.mode ~= 'flee' and M.mode ~= 'random' then
-                -- Determine which side to change to (prefer left/right based on traffic rules)
-                local preferredSide = mapmgr.rules.rightHandDrive and 1 or -1 -- prefer left lane for passing in RHD, right lane in LHD
-                local changeSide = preferredSide
-                
-                -- Check if preferred side is blocked by ghost vehicle
-                if (changeSide < 0 and ai.ghostL) or (changeSide > 0 and ai.ghostR) then
-                  changeSide = -changeSide -- try the other side
-                end
-                
-                -- Only proceed if the chosen side is not blocked
-                if not ((changeSide < 0 and ai.ghostL) or (changeSide > 0 and ai.ghostR)) then
-                  -- Trigger a normal lane change to avoid slowing down
-                  if i >= 2 and i <= plan.planCount then
-                    if canMultiLaneChange then
-                      -- Replace existing uncommitted lane change with new one
-                      route.laneChanges[1] = {pathIdx = n1.pathidx or plan[i].pathidx, side = changeSide, alternate = nil, emergency = false}
-                    else
-                      -- Add new lane change normally
-                      table.insert(route.laneChanges, {pathIdx = n1.pathidx or plan[i].pathidx, side = changeSide, alternate = nil, emergency = false})
-                    end
-                  end
-                end
-              end
-
-              -- In race mode or when drive in lane is off, don't reduce speed for traffic - prioritize lane changes instead
-              if not raceMode and driveInLaneFlag then
-                n1.trafficSqVel = min(n1.trafficSqVel, velProjOnSeg * velProjOnSeg)
-              end
+              n1.trafficSqVel = min(n1.trafficSqVel, velProjOnSeg * velProjOnSeg)
               trafficMinSpeedSq = min(trafficMinSpeedSq, v.vel:squaredLength())
               minTrafficDir = min(minTrafficDir, v.dirVec:dot(nDir))
             end
 
-            if i == 2 and minSqDist < square((ai.width + limWidth) * 0.6) and ai2PlDir > 0 and v.vel:dot(ai.rightVec) * ai2PlVec:dot(ai.rightVec) < 0 and isInSameLane then
-              -- In race mode or when drive in lane is off, don't reduce speed for traffic - prioritize lane changes instead
-              if not raceMode and driveInLaneFlag then
-                n1.trafficSqVel = max(0, n1.trafficSqVel - abs(1 - v.vel:dot(ai.dirVec)) * (v.vel:length()))
-              end
+            if i == 2 and minSqDist < square((ai.width + limWidth) * 0.6) and ai2PlDir > 0 and v.vel:dot(ai.rightVec) * ai2PlVec:dot(ai.rightVec) < 0 then
+              n1.trafficSqVel = max(0, n1.trafficSqVel - abs(1 - v.vel:dot(ai.dirVec)) * (v.vel:length()))
             end
           end
         end
@@ -3297,379 +3260,28 @@ local function planAhead(route, baseRoute)
     --end
 
     trafficStates.block.block = max(trafficMinSpeedSq, ai.speed*ai.speed) < 1 and (minTrafficDir < -0.7 or trafficStates.intersection.block)
-
-    plan[1].trafficSqVel = plan[2].trafficSqVel
+    if not opt.racing then
+      plan[1].trafficSqVel = plan[2].trafficSqVel
+    end
 
     if openPlanLanesIdx > 0 and plan[openPlanLanesIdx].length < ai.length * 1.5 then openPlanLanesIdx = openPlanLanesIdx + 1 end
 
     openPlanLanesToLaneRange(plan, openPlanLanesIdx)
   end
+  --profilerPopEvent("ai_awareness")
 
-  -- Passing behavior that works both with and without driveInLane enabled
-  -- More conservative check: only change lanes if significantly slower and actual traffic is blocking us
-  -- This helps prevent getting "locked into following" slower traffic, but is less aggressive
-  if not (route.laneChanges[1] and route.laneChanges[1].side ~= 0) and math.floor(plan[2].rangeLaneCount + 0.5) > 1 and M.mode ~= 'flee' and M.mode ~= 'random' and (ai.laneChangeStabilityTimer or 0) <= 0 then
-    local currentSpeed = ai.speed
-    local desiredSpeed = plan.targetSpeed or currentSpeed
-    local speedRatio = currentSpeed / (desiredSpeed + 1e-30)
-    
-    -- Adjust thresholds based on mode: more aggressive in race mode or when driveInLane is off
-    local speedThreshold = raceMode and 0.85 or (not driveInLaneFlag and 0.80 or 0.70)
-    local minSpeedRequired = raceMode and 3 or (not driveInLaneFlag and 4 or 5)
-    local speedDifferenceRequired = raceMode and 1 or (not driveInLaneFlag and 2 or 3)
-    
-    if speedRatio < speedThreshold and currentSpeed > minSpeedRequired and desiredSpeed > currentSpeed + speedDifferenceRequired then
-      -- Verify there's actually a vehicle ahead causing the slowdown
-      local vehicleBlockingUs = false
-      for _, v in ipairs(traffic.trafficTable) do
-        local isActualVehicle = v.vel and (v.vel:length() > 0.1 or (v.vel:length() <= 0.1 and v.dirVec))
-        if isActualVehicle then
-                  local aiToVehicle = v.posMiddle - ai.pos
-        -- Increase detection range for race mode
-        local detectionRange = raceMode and 100 or (not driveInLaneFlag and 75 or 50)
-        local vehicleAhead = ai.dirVec:dot(aiToVehicle) > 0 and ai.dirVec:dot(aiToVehicle) < detectionRange
-        local lateralDistance = abs(ai.rightVec:dot(aiToVehicle))
-        local isInOurLane = lateralDistance < (ai.width + v.width) * 0.9
-        
-        if vehicleAhead and isInOurLane then
-          local theirSpeed = v.vel:dot(ai.dirVec)
-          -- More aggressive speed comparison for race mode
-          local speedThreshold = raceMode and 0.98 or (not driveInLaneFlag and 0.95 or 0.9)
-          if theirSpeed < currentSpeed * speedThreshold then -- they're going slower than us
-              vehicleBlockingUs = true
-              break
-            end
-          end
-        end
-      end
-      
-      -- Only change lanes if there's actually a vehicle blocking us
-      if vehicleBlockingUs then
-        -- Try to change lanes to find a faster path
-        local preferredSide = mapmgr.rules.rightHandDrive and 1 or -1 -- prefer left lane for passing in RHD, right lane in LHD
-        local changeSide = preferredSide
-        
-        -- Check if preferred side is blocked by ghost vehicle
-        if (changeSide < 0 and ai.ghostL) or (changeSide > 0 and ai.ghostR) then
-          changeSide = -changeSide -- try the other side
-        end
-        
-        -- Only proceed if the chosen side is not blocked
-        if not ((changeSide < 0 and ai.ghostL) or (changeSide > 0 and ai.ghostR)) then
-          -- Add a lane change to find faster traffic
-          table.insert(route.laneChanges, {pathIdx = plan[2].pathidx or (plan[1].pathidx and plan[1].pathidx + 1), side = changeSide, alternate = nil, emergency = false})
-          -- Adjust stability timer based on mode: shorter for more aggressive behavior
-          local stabilityTime = 15
-          ai.laneChangeStabilityTimer = stabilityTime
-        end
-      end
-    end
-  end
-
-  -- More conservative overtaking check: only for actual vehicles going significantly slower
-  if not (route.laneChanges[1] and route.laneChanges[1].side ~= 0) and math.floor(plan[2].rangeLaneCount + 0.5) > 1 and M.mode ~= 'flee' and M.mode ~= 'random' and trafficTableLen > 0 and (ai.laneChangeStabilityTimer or 0) <= 0 then
-    local shouldOvertake = false
-    local slowCarAhead = false
-    
-    -- Look for actual vehicles (not static objects) ahead that are going significantly slower than our desired speed
-    for _, v in ipairs(traffic.trafficTable) do
-      -- Only consider actual vehicles (BeamNG vehicles have velocity and are moving objects)
-      local isActualVehicle = v.vel and (v.vel:length() > 0.1 or (v.vel:length() <= 0.1 and v.dirVec))
-      
-      if isActualVehicle then
-        local aiToVehicle = v.posMiddle - ai.pos
-        -- Increase detection range for race mode
-        local detectionRange = raceMode and 150 or (not driveInLaneFlag and 100 or 80)
-        local vehicleAhead = ai.dirVec:dot(aiToVehicle) > 0 and ai.dirVec:dot(aiToVehicle) < detectionRange
-        local lateralDistance = abs(ai.rightVec:dot(aiToVehicle))
-        local isInOurLane = lateralDistance < (ai.width + v.width) * 0.8
-        
-        if vehicleAhead and isInOurLane then
-          local theirSpeed = v.vel:dot(ai.dirVec)
-          local ourDesiredSpeed = plan.targetSpeed or ai.speed
-          
-          -- Adjust overtaking aggressiveness based on mode
-          local speedDifferenceThreshold = raceMode and 2 or (not driveInLaneFlag and 3 or 5)
-          
-          -- If they're going slower than our desired speed by the threshold
-          if theirSpeed < ourDesiredSpeed - speedDifferenceThreshold then
-            slowCarAhead = true
-            shouldOvertake = true
-            break
-          end
-        end
-      end
-    end
-    
-    if shouldOvertake then
-      -- Try to overtake the slow car
-      local preferredSide = mapmgr.rules.rightHandDrive and 1 or -1 -- prefer left lane for passing
-      local changeSide = preferredSide
-      
-      -- Check if preferred side is blocked by ghost vehicle
-      if (changeSide < 0 and ai.ghostL) or (changeSide > 0 and ai.ghostR) then
-        changeSide = -changeSide -- try the other side
-      end
-      
-      -- Only proceed if the chosen side is not blocked
-      if not ((changeSide < 0 and ai.ghostL) or (changeSide > 0 and ai.ghostR)) then
-        -- Add overtaking lane change
-        table.insert(route.laneChanges, {pathIdx = plan[2].pathidx or (plan[1].pathidx and plan[1].pathidx + 1), side = changeSide, alternate = nil, emergency = false})
-        -- Adjust stability timer based on mode: shorter for more aggressive behavior
-        local stabilityTime = 10
-        ai.laneChangeStabilityTimer = stabilityTime
-      end
-    end
-  end
-
-  -- Emergency defensive behavior: detect fast approaching vehicles from behind and force immediate evasive action
-  if trafficTableLen > 0 then
-    for _, v in ipairs(traffic.trafficTable) do
-      -- Check if this vehicle is behind us and approaching fast
-      local aiToVehicle = v.posMiddle - ai.pos
-      local vehicleBehind = ai.dirVec:dot(aiToVehicle) < 0 -- vehicle is behind us
-      
-      if vehicleBehind then
-        -- Calculate relative velocity and approach speed
-        local relVel = v.vel - ai.vel
-        local approachSpeed = relVel:dot(ai.dirVec) -- positive means they're catching up
-        local distanceBehind = abs(aiToVehicle:dot(ai.dirVec))
-        
-                 -- Last-minute emergency evasion thresholds - only for actual vehicles
-         local isActualVehicle = v.vel and (v.vel:length() > 0.1 or (v.vel:length() <= 0.1 and v.dirVec))
-         if isActualVehicle and approachSpeed > 3 and distanceBehind < 15 then -- approaching 3+ m/s faster within 15m (more conservative)
-           local timeToCollision = distanceBehind / (approachSpeed + 1e-30)
-           local lateralDistance = abs(aiToVehicle:dot(ai.rightVec))
-           local isInOurLane = lateralDistance < (ai.width + v.width) * 0.7
-           
-           -- Emergency evasion within 3 seconds (giving more time to react)
-           if timeToCollision > 0 and timeToCollision < 3.0 and isInOurLane then
-            -- Force immediate side displacement for emergency evasion
-            local emergencyDispSide = mapmgr.rules.rightHandDrive and 1 or -1 -- move right in RHD, left in LHD
-            
-            -- Check if we can move to that side, if not try the other side
-            if (emergencyDispSide < 0 and ai.ghostL) or (emergencyDispSide > 0 and ai.ghostR) then
-              emergencyDispSide = -emergencyDispSide
-            end
-            
-            -- Only proceed if the chosen side is clear
-            if not ((emergencyDispSide < 0 and ai.ghostL) or (emergencyDispSide > 0 and ai.ghostR)) then
-                             -- Force immediate side displacement with high urgency
-               local emergencyDisp = emergencyDispSide * min(2.0, 5.0 / timeToCollision) -- more urgent = larger displacement
-               plan.sideDisp = true
-               
-               -- Emergency speed boost to get out of danger quickly
-               local emergencySpeedBoost = 1.5 + (2.0 / timeToCollision) -- more urgent = faster escape
-               plan.targetSpeed = (plan.targetSpeed or ai.speed) * min(emergencySpeedBoost, 2.5) -- cap at 2.5x speed
-              
-              -- Apply emergency displacement to plan nodes
-              local tmpVec = vec3()
-              for i = 2, min(plan.planCount - 1, 8) do -- affect next several nodes
-                if plan[i].rangeLaneCount and plan[i].rangeLaneCount > 1 then
-                  openLaneToLaneRange(plan[i])
-                  local roadHalfWidth = plan[i].radiusOrig * plan[i].chordLength
-                  local newLateralPos = clamp(plan[i].lateralXnorm + emergencyDisp * (1.0 - (i-2)/6.0), 
-                                            max(plan[i].laneLimLeft, -roadHalfWidth + ai.width * 0.6), 
-                                            min(plan[i].laneLimRight, roadHalfWidth - ai.width * 0.6))
-                  
-                  plan[i].lateralXnorm = newLateralPos
-                  tmpVec:setScaled2(plan[i].normal, plan[i].lateralXnorm)
-                  plan[i].pos:setAdd2(plan[i].posOrig, tmpVec)
-                  
-                  plan[i].vec:setSub2(plan[i-1].pos, plan[i].pos); plan[i].vec.z = 0
-                  plan[i].dirVec:set(plan[i].vec); plan[i].dirVec:normalize()
-                end
-              end
-              
-              -- Also trigger a formal lane change for longer-term path planning
-              if math.floor(plan[2].rangeLaneCount + 0.5) > 1 and not (route.laneChanges[1] and route.laneChanges[1].side ~= 0) then
-                local laneChangePathIdx = plan[2].pathidx or (plan[1].pathidx and plan[1].pathidx + 1)
-                if laneChangePathIdx then
-                  table.insert(route.laneChanges, {pathIdx = laneChangePathIdx, side = emergencyDispSide, alternate = nil, emergency = true})
-                  -- Turn on appropriate signal
-                  if emergencyDispSide < 0 then
-                    if (electrics.values.turnsignal or -1) >= 0 then electrics.toggle_left_signal() end
-                  else
-                    if (electrics.values.turnsignal or 1) <= 0 then electrics.toggle_right_signal() end
-                  end
-                end
-              end
-              
-              updatePlanLen(plan, 2, min(plan.planCount, 8))
-              break -- only process one emergency maneuver at a time
-            end
-          end
-        end
-      end
-    end
-  end
-
-  -- Lane clearance analysis: choose the lane with the farthest car ahead for optimal positioning
-  -- Add stability timer to prevent rapid lane switching
-  if not ai.laneChangeStabilityTimer then ai.laneChangeStabilityTimer = 0 end
-  ai.laneChangeStabilityTimer = max(0, ai.laneChangeStabilityTimer - dt)
-  
-  if not (route.laneChanges[1] and route.laneChanges[1].side ~= 0) and math.floor(plan[2].rangeLaneCount + 0.5) > 1 and M.mode ~= 'flee' and M.mode ~= 'random' and trafficTableLen > 0 and (ai.laneChangeStabilityTimer or 0) <= 0 then
-    local currentLaneClearance = math.huge -- distance to nearest car in current lane
-    local leftLaneClearance = math.huge   -- distance to nearest car in left lane
-    local rightLaneClearance = math.huge  -- distance to nearest car in right lane
-    
-    -- Calculate current lane position
-    local roadHalfWidth = plan[2].radiusOrig * plan[2].chordLength
-    local laneWidth = 2 * roadHalfWidth * (plan[2].rangeRight - plan[2].rangeLeft) / plan[2].rangeLaneCount
-    local currentLaneCenter = plan[2].lateralXnorm
-    
-    -- Analyze traffic ahead in each lane - ONLY CHECK VEHICLES, NOT STATIC OBJECTS
-    for _, v in ipairs(traffic.trafficTable) do
-      -- Only consider actual vehicles (BeamNG vehicles have velocity and are moving objects)
-      local isActualVehicle = v.vel and (v.vel:length() > 0.1 or (v.vel:length() <= 0.1 and v.dirVec)) -- vehicle is either moving or is a proper vehicle object
-      
-      if isActualVehicle then
-        local aiToVehicle = v.posMiddle - ai.pos
-        local vehicleAhead = ai.dirVec:dot(aiToVehicle) > 0 -- vehicle is ahead of us
-        
-        if vehicleAhead then
-          local distanceAhead = ai.dirVec:dot(aiToVehicle)
-          local lateralDistance = ai.rightVec:dot(aiToVehicle)
-          
-          -- Determine which lane this vehicle is in relative to us
-          local vehicleLaneOffset = lateralDistance / laneWidth -- roughly which lane relative to current
-          
-          -- Current lane (within 0.6 lane widths of our position)
-          if abs(lateralDistance) < laneWidth * 0.6 then
-            currentLaneClearance = min(currentLaneClearance, distanceAhead)
-          -- Left lane (roughly 1 lane width to the left)
-          elseif lateralDistance < -laneWidth * 0.4 and lateralDistance > -laneWidth * 1.6 then
-            leftLaneClearance = min(leftLaneClearance, distanceAhead)
-          -- Right lane (roughly 1 lane width to the right)
-          elseif lateralDistance > laneWidth * 0.4 and lateralDistance < laneWidth * 1.6 then
-            rightLaneClearance = min(rightLaneClearance, distanceAhead)
-          end
-        end
-      end
-    end
-    
-    -- Find the lane with the most clearance (farthest car ahead)
-    local bestClearance = currentLaneClearance
-    local bestLaneSide = 0 -- 0 = stay, -1 = go left, 1 = go right
-    
-    -- Only consider changing if there's a significant advantage (increased to 15m for more conservative changes)
-    local clearanceAdvantage = 15
-    
-    -- Check upcoming road curvature to avoid lane changes before turns
-    local upcomingCurvature = 0
-    local curvatureCheckDistance = 0
-    for i = 2, min(plan.planCount, 6) do
-      if plan[i].radiusOrig and plan[i].radiusOrig > 0 then
-        local segmentCurvature = 1 / plan[i].radiusOrig
-        upcomingCurvature = max(upcomingCurvature, segmentCurvature)
-        curvatureCheckDistance = curvatureCheckDistance + (plan[i].length or 0)
-        if curvatureCheckDistance > 50 then break end -- check up to 50m ahead
-      end
-    end
-    
-    -- Avoid lane changes if there's a significant turn ahead (curvature > 0.02 = radius < 50m)
-    local avoidLaneChangeForTurn = upcomingCurvature > 0.02
-    
-    -- Check if left lane is significantly better and available
-    if not ai.ghostL and not avoidLaneChangeForTurn and leftLaneClearance > bestClearance + clearanceAdvantage then
-      bestClearance = leftLaneClearance
-      bestLaneSide = -1
-    end
-    
-    -- Check if right lane is significantly better and available
-    if not ai.ghostR and not avoidLaneChangeForTurn and rightLaneClearance > bestClearance + clearanceAdvantage then
-      bestClearance = rightLaneClearance
-      bestLaneSide = 1
-    end
-    
-    -- Check if we need to be in a specific lane soon for route planning (within 200m)
-    local needSpecificLane = false
-    local upcomingExitDistance = math.huge
-    if route.laneChanges[1] then
-      -- Calculate distance to upcoming lane change requirement
-      upcomingExitDistance = 0
-      for i = 2, plan.planCount do
-        upcomingExitDistance = upcomingExitDistance + plan[i].length
-        if plan[i].pathidx and plan[i].pathidx >= route.laneChanges[1].pathIdx then
-          break
-        end
-      end
-      
-      if upcomingExitDistance < 200 then
-        needSpecificLane = true
-        -- Don't move away from the direction we need to go
-        if route.laneChanges[1].side > 0 and bestLaneSide < 0 then
-          bestLaneSide = 0 -- don't go left if we need to go right soon
-        elseif route.laneChanges[1].side < 0 and bestLaneSide > 0 then
-          bestLaneSide = 0 -- don't go right if we need to go left soon
-        end
-      end
-    end
-    
-    -- Execute lane change if we found a significantly better lane
-    if bestLaneSide ~= 0 and bestClearance > currentLaneClearance + clearanceAdvantage then
-      -- Add lane change to move to the clearest lane
-      table.insert(route.laneChanges, {pathIdx = plan[2].pathidx or (plan[1].pathidx and plan[1].pathidx + 1), side = bestLaneSide, alternate = nil, emergency = false})
-      -- Set stability timer to prevent rapid changes (increased to 12 seconds for more stability)
-      ai.laneChangeStabilityTimer = 12.0
-    end
-  end
-
-  -- spring force integrator
-
-  --local aiWidthMargin
-  --if trafficStates.action.forcedStop then
-    --aiWidthMargin = ai.width * 0.35
-  --else
-    --aiWidthMargin = ai.width * (0.35 + 0.3 / (1 + trafficStates.side.cTimer * 0.1)) + parameters.edgeDist
-  --end
-  local aiWidthMargin = ai.width * 0.5 -- TODO
-
-  -- remove lane change only if vehicle has gone past it AND pass is completed
+  -- remove lane change if vehicle has gone past it
+  --profilerPushEvent("ai_remove_laneChange")
   while route.laneChanges[1] and plan[2].pathidx > route.laneChanges[1].pathIdx do
-    local laneChangeComplete = true
-    
-    -- Check if there are still vehicles nearby that we're trying to pass
-    if trafficTableLen > 0 then
-      for _, v in ipairs(traffic.trafficTable) do
-        local aiToVehicle = v.posMiddle - ai.pos
-        local vehicleAhead = ai.dirVec:dot(aiToVehicle) > -ai.length -- vehicle is ahead or alongside
-        local vehicleBehindClose = ai.dirVec:dot(aiToVehicle) < 0 and abs(aiToVehicle:dot(ai.dirVec)) < ai.length * 2 -- vehicle close behind
-        
-        if vehicleAhead or vehicleBehindClose then
-          local lateralDistance = abs(aiToVehicle:dot(ai.rightVec))
-          local isNearOurLane = lateralDistance < (ai.width + v.width) * 1.5 -- wider detection for completion check
-          local relativeSpeed = (ai.vel - v.vel):dot(ai.dirVec)
-          
-          -- Don't complete lane change if we're still alongside or too close to vehicles we're passing
-          if isNearOurLane then
-            if vehicleAhead and relativeSpeed < 3 then -- if vehicle ahead and we're not going much faster
-              laneChangeComplete = false
-              break
-            elseif vehicleBehindClose and relativeSpeed > -2 then -- if vehicle close behind and they're not much faster
-              laneChangeComplete = false 
-              break
-            end
-          end
-        end
-      end
-    end
-    
-    -- Only remove lane change if pass is truly complete
-    if laneChangeComplete then
-      electrics.stop_turn_signal()
-      table.remove(route.laneChanges, 1)
-    else
-      -- Keep the lane change active but mark it as an extended pass
-      route.laneChanges[1].extendedPass = true
-      break
-    end
+    electrics.stop_turn_signal()
+    table.remove(route.laneChanges, 1)
   end
+  --profilerPopEvent("ai_remove_laneChange")
 
   local skipLast = 1
   local lastNodeLatXnorm, lastNodeLimLeft, lastNodeLimRight
 
+  --profilerPushEvent("ai_process_laneChange")
   if route.laneChanges[1] and math.floor(plan[2].rangeLaneCount + 0.5) > 1 and route.laneChanges[1].side ~= 0 then
     local exitNodeIdx = route.laneChanges[1].pathIdx
     local distToExit
@@ -3686,12 +3298,7 @@ local function planAhead(route, baseRoute)
       distToExit = plan.planLen + max(0, route.pathLength[route.laneChanges[1].pathIdx] - route.pathLength[plan[plan.planCount].pathidx])
     end
 
-    -- Adjust lane change distance based on mode: closer for race mode and driveInLane off
-    local distanceMultiplier = raceMode and 0.02 or (not driveInLaneFlag and 0.025 or 0.035)
-    local maxDistance = raceMode and 20 or (not driveInLaneFlag and 25 or 30)
-    local minDistance = raceMode and 5 or (not driveInLaneFlag and 6 or 8)
-    
-    if (distToExit < min(maxDistance, max(minDistance, ai.speed * ai.speed * distanceMultiplier)) or route.laneChanges[1].commit) then --and not plan.noExit
+    if (distToExit < min(600, max(15, ai.speed * ai.speed * 0.7)) or route.laneChanges[1].commit) then --and not plan.noExit
       local side = route.laneChanges[1].side
       -- check if the exit is blocked by a vehicle
       if (side < 0 and ai.ghostL) or (side > 0 and ai.ghostR) then
@@ -3715,7 +3322,7 @@ local function planAhead(route, baseRoute)
         lastNodeLimLeft = plan[plan.planCount].laneLimLeft
         lastNodeLimRight = plan[plan.planCount].laneLimRight
         local planDist = 0
-        local sideForceCoeff = 0.3 * side * dt / distToExit -- reduced from 0.8 to 0.3 for much smoother lane changes
+        local sideForceCoeff = 2.5 * side * dt / distToExit
         local planExitIdx = plan.planCount
         if plan[plan.planCount].pathidx >= exitNodeIdx then -- if last plan node is at or past the path exit node
           planExitIdx = 1
@@ -3736,16 +3343,16 @@ local function planAhead(route, baseRoute)
         for i = 3, planExitIdx do
           planDist = planDist + plan[i-1].length
           local n = plan[i]
-          local roadHalfWidth = n.radiusOrig * n.chordLength
+          local roadHalfWidth = n.halfWidth
           local laneHalfWidth = roadHalfWidth * (n.rangeRight - n.rangeLeft) / n.rangeLaneCount
           if side < 0 then
             n.laneLimLeft = (2 * n.rangeLeft - 1) * roadHalfWidth -- open left lane limit to left range limit
             n.laneLimRight = max(n.laneLimLeft + ai.width, min(n.laneLimRight, n.lateralXnorm + laneHalfWidth))
-            forces[i]:setAdd(planDist * sideForceCoeff * square(min(1, 0.12 * abs(n.lateralXnorm - n.laneLimLeft))) * n.normal)
+            forces[i]:setAdd(planDist * sideForceCoeff * square(min(1, 0.25 * abs(n.lateralXnorm - n.laneLimLeft))) * n.normal)
           else
             n.laneLimRight = (2 * n.rangeRight - 1) * roadHalfWidth -- open right lane limit to right range limit
             n.laneLimLeft = min(n.laneLimRight - ai.width, max(n.laneLimLeft, n.lateralXnorm - laneHalfWidth))
-            forces[i]:setAdd(planDist * sideForceCoeff * square(min(1, 0.12 * abs(n.laneLimRight - n.lateralXnorm))) * n.normal)
+            forces[i]:setAdd(planDist * sideForceCoeff * square(min(1, 0.25 * abs(n.laneLimRight - n.lateralXnorm))) * n.normal)
           end
         end
         for i = planExitIdx + 1, plan.planCount do
@@ -3753,9 +3360,9 @@ local function planAhead(route, baseRoute)
           if planDist == 0 then break end
           local n = plan[i]
           if side < 0 then
-            forces[i]:setAdd(planDist * sideForceCoeff * square(min(1, 0.12 * abs(n.lateralXnorm - n.laneLimLeft))) * n.normal)
+            forces[i]:setAdd(planDist * sideForceCoeff * square(min(1, 0.25 * abs(n.lateralXnorm - n.laneLimLeft))) * n.normal)
           else
-            forces[i]:setAdd(planDist * sideForceCoeff * square(min(1, 0.12 * abs(n.laneLimRight - n.lateralXnorm))) * n.normal)
+            forces[i]:setAdd(planDist * sideForceCoeff * square(min(1, 0.25 * abs(n.laneLimRight - n.lateralXnorm))) * n.normal)
           end
         end
         updatePlanbestRange(plan)
@@ -3796,33 +3403,38 @@ local function planAhead(route, baseRoute)
       end
     end
   end
+  --profilerPopEvent("ai_process_laneChange")
 
+  --profilerPushEvent("ai_smoothness_integration")
   local tmpVec = vec3()
+  local roadWidthMargin = ai.width * 0.5
+  local laneWidthMargin = ai.width * 0.4
+  local forceMagLim = parameters.springForceIntegratorDispLim
   for i = 2, plan.planCount-skipLast do
     local n = plan[i]
-    local roadHalfWidth = n.radiusOrig * n.chordLength
+    local roadHalfWidth = n.halfWidth
 
     -- Apply a force towards the center of the lane when driving in lane
-    local dispToLeftRange, dispToRightRange = 0, 0
-    if driveInLaneFlag and (not n.lanesOpen) then --
+    local forceToLaneCenter = 0
+    if opt.driveInLaneFlag and not n.lanesOpen then
       local rangeLeft = (2 * n.rangeLeft - 1) * roadHalfWidth
       local rangeRight = (2 * n.rangeRight - 1) * roadHalfWidth
       local b = 0.5 * (n.laneLimRight - n.laneLimLeft) + 1e-30
-      dispToLeftRange = 0.15 * min(1, max(0, b - (n.lateralXnorm - rangeLeft)) / b)
-      dispToRightRange = 0.15 * min(1, max(0, b - (rangeRight - n.lateralXnorm)) / b)
+      local dispToLeftRange = min(1, max(0, b - (n.lateralXnorm - rangeLeft)) / b)
+      local dispToRightRange = min(1, max(0, b - (rangeRight - n.lateralXnorm)) / b)
+      forceToLaneCenter = 0.15 * (dispToLeftRange - dispToRightRange)
     end
 
-    local k = n.normal:dot(forces[i])
-    local displacement = dispToLeftRange - dispToRightRange + sign(k) * min(abs(k), parameters.springForceIntegratorDispLim) -- displacement distance per frame (lower value means better stability)
-    -- Prevents node displacement direction switching, improves on instabilities.
-    displacement = displacement * max(0, sign2(displacement * (n.dispDir or 0)))
+    -- Calculate node displacement: avoids switching displacement direction (sign) in concecutive frames
+    local displacement = forceToLaneCenter + max(min(n.normal:dot(forces[i]), forceMagLim), -forceMagLim)
+    displacement = displacement * max(min((displacement * n.dispDir) * math.huge, 1), 0) -- second term returns 0 if (displacement * n.dispDir) is negative, 1 otherwise.
     n.dispDir = sign(displacement)
 
-    local roadLimLeft = min(0, -roadHalfWidth + aiWidthMargin) -- should be non-positive
-    local roadLimRight = max(0, roadHalfWidth - aiWidthMargin) -- should be non-negative
+    local roadLimRight = max(0, roadHalfWidth - roadWidthMargin) -- should be non-negative (zero or positive)
 
     local newLateralXnorm = clamp(n.lateralXnorm + displacement,
-      max(n.laneLimLeft + ai.width * 0.4, roadLimLeft), min(n.laneLimRight - ai.width * 0.4, roadLimRight))
+      max(n.laneLimLeft + laneWidthMargin, -roadLimRight),
+      min(n.laneLimRight - laneWidthMargin, roadLimRight))
 
     tmpVec:setScaled2(n.normal, newLateralXnorm - n.lateralXnorm)
     n.pos:setAdd(tmpVec) -- remember that posOrig and pos are not alligned along the normal
@@ -3831,9 +3443,10 @@ local function planAhead(route, baseRoute)
 
     n.lateralXnorm = newLateralXnorm
   end
+  --profilerPopEvent("ai_smoothness_integration")
 
   if lastNodeLatXnorm then
-    local roadHalfWidth = plan[plan.planCount].radiusOrig * plan[plan.planCount].chordLength
+    local roadHalfWidth = plan[plan.planCount].halfWidth
     local rangeLeft, rangeRight = (2 * plan[plan.planCount].rangeLeft - 1) * roadHalfWidth, (2 * plan[plan.planCount].rangeRight - 1) * roadHalfWidth
     local latXnorm = clamp(plan[plan.planCount].lateralXnorm, rangeLeft, rangeRight)
     local disp = latXnorm - lastNodeLatXnorm
@@ -3844,6 +3457,7 @@ local function planAhead(route, baseRoute)
   updatePlanLen(plan, 2, plan.planCount)
 
   -- smoothly distribute error from planline onto the front segments
+  --profilerPushEvent("ai_error_smoother")
   if parameters.planErrorSmoothing and plan.targetPos and plan.targetSeg and plan.planCount > plan.targetSeg and twt.state == 0 then
     local dTotal = 0
     local sumLen = table.new(plan.targetSeg-1, 0)
@@ -3868,7 +3482,7 @@ local function planAhead(route, baseRoute)
       dispVec:setSub(dispVec:dot(n.biNormal) * n.biNormal)
       n.pos:setAdd(dispVec)
 
-      local halfWidth = n.radiusOrig * n.chordLength
+      local halfWidth = n.halfWidth
       tmpVec:setAdd2(n.posOrig, n.normal)
       n.lateralXnorm = clamp(n.pos:xnormOnLine(n.posOrig, tmpVec), -halfWidth, halfWidth)
 
@@ -3878,32 +3492,44 @@ local function planAhead(route, baseRoute)
 
     updatePlanLen(plan, 1, plan.targetSeg-1)
   end
+  --profilerPopEvent("ai_error_smoother")
 
   -- TODO: This error smoother looks to behave better for race driving. It could replace the above.
   -- uniformPlanErrorDistribution(plan)
 
+  --profilerPushEvent("ai_calculate_target")
   calculateTarget(plan)
+  --profilerPopEvent("ai_calculate_target")
 
   -- calculate node horizontal curvature
+  --profilerPushEvent("ai_calculate_curvature")
   local len, n3vec = 0, vec3()
   plan[1].curvature = plan[1].curvature or inCurvature(plan[1].vec, plan[2].vec)
   for i = 2, plan.planCount - 1 do
     local n1, n2 = plan[i], plan[i+1]
 
-    n3vec:setSub2(n1.pos, plan[min(plan.planCount, i + 2)].pos); n3vec.z = 0
+    n3vec:setSub2(n1.pos, plan[min(plan.planCount, i+2)].pos); n3vec.z = 0
 
-    local curvature = min(inCurvature(n1.vec, n2.vec), inCurvature(n1.vec, n3vec))
+    local c1 = inCurvature(n1.vec, n2.vec)
+    local c2 = inCurvature(n1.vec, n3vec)
 
-    -- calculate curvature temporal smoothing parameter (fast reacting, time dependent)
-    local curvatureRateDt = min(25 + 0.000045 * len * len * len * len, 1000) * dt
+    local curvature
+    if c1 <= c2 then
+      curvature = sign2(n1.turnDir:dot(n1.normal)) * c1
+    else
+      curvature = sign2((n1.vec):dot(n1.normal) - n3vec:dot(n1.normal)) * c2
+    end
 
-    n1.curvature = max(0, curvature + (curvatureRateDt / (1 + curvatureRateDt)) * (n1.curvature - curvature))
+    -- calculate curvature temporal smoothing parameter as a function of the trajectory length distance
+    local curvatureRateDt = min(5 + 0.005 * len * len, 100) * dt
+    n1.curvature = n1.curvature + (curvature - n1.curvature) * curvatureRateDt / (1 + curvatureRateDt)
 
     len = len + n1.length
   end
+  --profilerPopEvent("ai_calculate_curvature")
 
   -- calculate node vertical curvature
-  if not racing then
+  if not opt.racing then
     len = 0
     local v1z, v2z, v3z = vec3(), vec3(), vec3()
     for i = 2, plan.planCount - 1 do
@@ -3928,7 +3554,7 @@ local function planAhead(route, baseRoute)
   local totalAccel = min(aggression, ai.staticFrictionCoef) * g
 
   local lastNode = plan[plan.planCount]
-  if route.path[lastNode.pathidx+1] or (race and noOfLaps and noOfLaps > 1) then
+  if route.path[lastNode.pathidx+1] or (loopPath and noOfLaps and noOfLaps > 1) then
     if plan.stopSeg <= plan.planCount then
       lastNode.speed = 0
     else
@@ -3941,6 +3567,7 @@ local function planAhead(route, baseRoute)
   lastNode.legalSpeed = min(lastNode.roadSpeedLimit or math.huge, lastNode.speed)
 
   -- Use Backward or Forward + Backward algorithm
+  --profilerPushEvent('ai_speedProfile')
   if speedProfileMode then
     local gT = vec3()
     for i = 1, plan.planCount-1 do -- curvature is not defined on the last plan node
@@ -3949,7 +3576,7 @@ local function planAhead(route, baseRoute)
       gT:setSub2(n2.pos, n1.pos); gT:setScaled(gravityDir:dot(gT) / max(square(n1.length), 1e-30)) -- gravity vec parallel to road segment: positive when downhill
       local gN = gravityDir:distance(gT) -- gravity component normal to road segment
       n1.acc_max = totalAccel * gN
-      n1.speed = min(n1.acc_max / max(n1.curvature, 1e-30), gN * g / max(n1.curvatureZ, 1e-30)) -- available centripetal acceleration * radius
+      n1.speed = min(n1.acc_max / max(abs(n1.curvature), 1e-30), gN * g / max(n1.curvatureZ, 1e-30)) -- available centripetal acceleration * radius
     end
     plan[plan.planCount].acc_max = plan[plan.planCount-1].acc_max
 
@@ -3967,7 +3594,7 @@ local function planAhead(route, baseRoute)
       gT:setSub2(n2.pos, n1.pos); gT:setScaled(gravityDir:dot(gT) / max(square(n1.length), 1e-30)) -- gravity vec parallel to road segment: positive when downhill
       local gN = gravityDir:distance(gT) -- gravity component normal to road segment
 
-      local curvature = max(n1.curvature, 1e-5)
+      local curvature = max(abs(n1.curvature), 1e-5)
       local turnSpeedSq = totalAccel * gN / curvature -- available centripetal acceleration * radius
 
       local n1SpeedSq
@@ -4002,25 +3629,10 @@ local function planAhead(route, baseRoute)
       n1.trafficSqVel = math.huge
     end
   end
+  --profilerPopEvent('ai_speedProfile')
 
   plan.targetSpeed = plan[1].speed + max(0, plan.aiXnormOnSeg) * (plan[2].speed - plan[1].speed)
-  
-  -- Speed boost during lane changes for smoother and faster lane changes
-  if route.laneChanges[1] and route.laneChanges[1].side ~= 0 then
-    -- Adjust speed boost based on mode: more aggressive in race mode
-    local baseBoost = route.laneChanges[1].emergency and 1.4 or 1.15
-    local raceBoost = raceMode and 1.3 or (not driveInLaneFlag and 1.2 or 1.0)
-    local laneChangeSpeedBoost = baseBoost * raceBoost
-    plan.targetSpeed = plan.targetSpeed * laneChangeSpeedBoost
-  end
-  
-  -- Race mode: overall speed boost for maximum performance
-  if raceMode then
-    plan.targetSpeed = plan.targetSpeed * 1.25 -- 25% speed boost in race mode
-  elseif not driveInLaneFlag then
-    plan.targetSpeed = plan.targetSpeed * 1.1 -- 10% speed boost when drive in lane is off
-  end
-  
+  plan.targetSpeed = targetSpeedSmoother:get(plan.targetSpeed, dt)
   if M.speedMode == 'legal' then
     plan.targetSpeedLegal = plan[1].legalSpeed + max(0, plan.aiXnormOnSeg) * (plan[2].legalSpeed - plan[1].legalSpeed)
   else
@@ -4038,10 +3650,10 @@ local function resetMapAndRoute()
   mapData = nil
   signalsData = nil
   currentRoute = nil
-  race = nil
+  loopPath = nil
   noOfLaps = nil
-  internalState = 'onroad'
-  changePlanTimer = 0
+  internalState.road = 'onroad'
+  internalState.changePlanTimer = 0
   resetAggression()
   resetInternalStates()
   resetParameters()
@@ -4068,15 +3680,15 @@ local function getMapEdges(cutOffDrivability, node)
 
     edgeDict = {}
     for nid, n in pairs(mapData.graph) do
-      if currentSCC[nid] or not driveInLaneFlag then
+      if currentSCC[nid] or not opt.driveInLaneFlag then
         for lid, data in pairs(n) do
-          if (currentSCC[lid] or not driveInLaneFlag) and (data.drivability > cutOffDrivability) then
+          if (currentSCC[lid] or not opt.driveInLaneFlag) and (data.drivability > cutOffDrivability) then
             local inNode = data.inNode or nid
             local outNode = inNode == nid and lid or nid
             keySetLen = keySetLen + 1
             keySet[keySetLen] = {inNode, outNode}
             edgeDict[inNode..'\0'..outNode] = 1
-            if not data.inNode or not driveInLaneFlag then
+            if not data.inNode or not opt.driveInLaneFlag then
               edgeDict[outNode..'\0'..inNode] = 1
             end
           end
@@ -4146,7 +3758,7 @@ local function newManualPath()
     for i = 0, #wpList-1 do
       local wp1 = wpList[i] or newRoute.path[#newRoute.path]
       local wp2 = wpList[i+1]
-      local route = mapData:getPath(wp1, wp2, driveInLaneFlag and 1e4 or 1)
+      local route = mapData:getPath(wp1, wp2, opt.driveInLaneFlag and 1e4 or 1)
       local routeLen = #route
       if routeLen == 0 or (routeLen == 1 and wp2 ~= wp1) then
         guihooks.message("Path between waypoints '".. wp1 .."' - '".. wp2 .."' Not Found", 7, "AI debug")
@@ -4181,7 +3793,7 @@ local function setScriptedPath(arg)
                 springForceIntegratorDispLim = 0,
                 turnForceCoef = 2})
 
-  avoidCars = arg.avoidCars or 'off'
+  opt.avoidCars = arg.avoidCars or 'off'
 
   setSpeed(arg.routeSpeed)
   setSpeedMode(arg.routeSpeedMode)
@@ -4221,14 +3833,14 @@ local function validateUserInput(list)
 end
 
 local function fleePlan()
-  if aggressionMode == 'rubberBand' then
+  if opt.aggressionMode == 'rubberBand' then
     setAggressionInternal(max(0.3, 0.95 - 0.0015 * player.pos:distance(ai.pos)))
   end
 
   -- extend the plan if possible and desirable
   if currentRoute and not currentRoute.plan.reRoute then
     local plan = currentRoute.plan
-    if (ai.pos - player.pos):dot(ai.dirVec) >= 0 and not targetWPName and internalState ~= 'offroad' and plan.trafficMinProjSpeed > 3 then
+    if (ai.pos - player.pos):dot(ai.dirVec) >= 0 and not targetWPName and internalState.road ~= 'offroad' and plan.trafficMinProjSpeed > 3 then
       local path = currentRoute.path
       local pathCount = #path
       if pathCount >= 3 and plan[2].pathidx > pathCount * 0.7 then
@@ -4243,13 +3855,13 @@ local function fleePlan()
     end
   end
 
-  if not currentRoute or changePlanTimer == 0 or currentRoute.plan.reRoute then
+  if not currentRoute or internalState.changePlanTimer == 0 or currentRoute.plan.reRoute then
     local wp1, wp2 = mapmgr.findClosestRoad(ai.pos)
     if wp1 == nil or wp2 == nil then
-      internalState = 'offroad'
+      internalState.road = 'offroad'
       return
     else
-      internalState = 'onroad'
+      internalState.road = 'onroad'
     end
 
     ai.currentSegment[1] = wp1
@@ -4257,7 +3869,7 @@ local function fleePlan()
 
     local dirVec
     if currentRoute and currentRoute.plan.trafficMinProjSpeed < 3 then
-      changePlanTimer = 5
+      internalState.changePlanTimer = 5
       dirVec = -ai.dirVec
     else
       dirVec = ai.dirVec
@@ -4275,22 +3887,22 @@ local function fleePlan()
     end
 
     if not path[1] then
-      internalState = 'offroad'
+      internalState.road = 'offroad'
       return
     else
-      internalState = 'onroad'
+      internalState.road = 'onroad'
     end
 
     local route = planAhead(path, currentRoute)
     if route and route.plan then
       local tempPlan = route.plan
-      if not currentRoute or changePlanTimer > 0 or tempPlan.targetSpeed >= min(ai.speed, currentRoute.plan.targetSpeed) and targetsCompatible(currentRoute, route) then
+      if not currentRoute or internalState.changePlanTimer > 0 or tempPlan.targetSpeed >= min(ai.speed, currentRoute.plan.targetSpeed) and targetsCompatible(currentRoute, route) then
         currentRoute = route
-        changePlanTimer = max(1, changePlanTimer)
+        internalState.changePlanTimer = max(1, internalState.changePlanTimer)
         return
       elseif currentRoute.plan.reRoute then
         currentRoute = route
-        changePlanTimer = max(1, changePlanTimer)
+        internalState.changePlanTimer = max(1, internalState.changePlanTimer)
         return
       end
     end
@@ -4303,11 +3915,11 @@ local function chasePlan()
   local positions = mapData.positions
   local radii = mapData.radius
 
-  chaseData.targetSpeed = nil
+  internalState.chaseData.targetSpeed = nil
 
   local wp1, wp2, dist1 = mapmgr.findBestRoad(ai.pos, ai.dirVec)
   if wp1 == nil or wp2 == nil then
-    internalState = 'offroad'
+    internalState.road = 'offroad'
     return
   end
 
@@ -4316,7 +3928,7 @@ local function chasePlan()
 
   local plwp1, plwp2, dist2 = mapmgr.findBestRoad(player.pos, playerVel)
   if plwp1 == nil or plwp2 == nil then
-    internalState = 'offroad'
+    internalState.road = 'offroad'
     return
   end
 
@@ -4330,17 +3942,17 @@ local function chasePlan()
   -- plwp2 is next node that player is driving to
 
   if dist1 > max(radii[wp1], radii[wp2]) + ai.width and dist2 > max(radii[plwp1], radii[plwp2]) + obj:getObjectInitialWidth(player.id) then
-    internalState = 'offroad'
+    internalState.road = 'offroad'
     return
   end
 
   local playerNode = plwp2
   local aiPlDist = ai.pos:distance(player.pos) -- should this be a signed distance?
   local aiPosRear = ai.pos - ai.dirVec * ai.length
-  local nearDist = max(ai.length + 8, chaseData.playerStoppedTimer) -- larger if player stopped for longer (anti softlock)
+  local nearDist = max(ai.length + 8, internalState.chaseData.playerStoppedTimer) -- larger if player stopped for longer (anti softlock)
   local isAtPlayerSeg = (wp1 == playerNode or wp2 == playerNode)
 
-  if aggressionMode == 'rubberBand' then
+  if opt.aggressionMode == 'rubberBand' then
     if M.mode == 'follow' then
       setAggressionInternal(min(0.75, 0.3 + 0.0025 * aiPlDist))
     else
@@ -4351,32 +3963,32 @@ local function chasePlan()
   -- consider calculating the aggression value but then passing it through a smoother so that transitions between chase mode and follow mode are smooth
 
   if playerSpeed < 1 then
-    chaseData.playerStoppedTimer = chaseData.playerStoppedTimer + dt
+    internalState.chaseData.playerStoppedTimer = internalState.chaseData.playerStoppedTimer + dt
   else
-    chaseData.playerStoppedTimer = 0
+    internalState.chaseData.playerStoppedTimer = 0
   end
 
-  if chaseData.playerStoppedTimer > 5 and aiPlDist < max(nearDist, square(ai.speed) / (2 * g * aggression)) then -- within braking distance to player
-    chaseData.playerState = 'stopped'
+  if internalState.chaseData.playerStoppedTimer > 5 and aiPlDist < max(nearDist, square(ai.speed) / (2 * g * aggression)) then -- within braking distance to player
+    internalState.chaseData.playerState = 'stopped'
 
     if ai.speed < 0.3 and aiPlDist < nearDist then
       -- do not plan new route if stopped near player
       currentRoute = nil
-      internalState = 'onroad'
+      internalState.road = 'onroad'
       return
     end
   else
-    chaseData.playerState = nil
+    internalState.chaseData.playerState = nil
   end
 
-  if chaseData.driveAhead and ai.speed >= 10 then -- unset this flag if the ai reached a minimum speed
-    chaseData.driveAhead = false
+  if internalState.chaseData.driveAhead and ai.speed >= 10 then -- unset this flag if the ai reached a minimum speed
+    internalState.chaseData.driveAhead = false
   end
 
   if M.mode == 'follow' and ai.speed < 0.3 and isAtPlayerSeg and aiPlDist < nearDist then
     -- do not plan new route if ai reached player
     currentRoute = nil
-    internalState = 'onroad'
+    internalState.road = 'onroad'
     return
   end
 
@@ -4390,8 +4002,8 @@ local function chasePlan()
     local playerOtherWay = not playerNodeInPath and planVec:dot(positions[playerNode] - ai.pos) < 0 and (playerSpeed < 3 or playerVel:dot(player.pos - ai.pos) > 0) -- player is driving other way from ai
 
     local route
-    if not playerNodeInPath and not chaseData.driveAhead and (ai.speed < 3 or ai.dirVec:dot(player.pos - ai.pos) > 0) then -- prevents ai from cancelling its current route if it should slow down to turn around
-      local path = mapData:getChasePath(wp1, wp2, plwp1, plwp2, ai.pos, ai.vel, player.pos, player.vel, driveInLaneFlag and 1e4 or 1)
+    if not playerNodeInPath and not internalState.chaseData.driveAhead and (ai.speed < 3 or ai.dirVec:dot(player.pos - ai.pos) > 0) then -- prevents ai from cancelling its current route if it should slow down to turn around
+      local path = mapData:getChasePath(wp1, wp2, plwp1, plwp2, ai.pos, ai.vel, player.pos, player.vel, opt.driveInLaneFlag and 1e4 or 1)
 
       route = planAhead(path, currentRoute) -- ignore current route if path should go other way
       if route and route.plan then --and tempPlan.targetSpeed >= min(ai.speed, curPlan.targetSpeed) and (tempPlan.targetPos-curPlan.targetPos):dot(ai.dirVec) >= 0 then
@@ -4421,11 +4033,11 @@ local function chasePlan()
       local crashSpeed = 10 -- minimum relative crash speed
       if aiPlDist < max(brakeDist, nearDist) and ai.dirVec:dot(aiPosRear - player.pos) < 0 then
         targetSpeed = max(crashSpeed, relSpeed + crashSpeed)
-        chaseData.targetSpeed = targetSpeed
+        internalState.chaseData.targetSpeed = targetSpeed
       end
     end
 
-    if not chaseData.driveAhead then
+    if not internalState.chaseData.driveAhead then
       if playerIncoming or playerOtherWay then -- come to a stop, then plan to turn around
         targetSpeed = 0
       elseif playerBehind then -- match the player speed based on distance
@@ -4435,10 +4047,10 @@ local function chasePlan()
     curPlan.targetSpeed = targetSpeed or curPlan.targetSpeed
 
     if M.mode == 'chase' then
-      internalState = 'onroad'
+      internalState.road = 'onroad'
 
       if playerIncoming then -- player is head on versus ai
-        internalState = 'tail'
+        internalState.road = 'tail'
       elseif aiPlDist < 25 and ai.dirVec:dot((ai.pos - ai.dirVec * ai.length) - player.pos) < 0 then -- player is near ai, but ai path does a u-turn
         local uTurn = false
         for i, p in ipairs(currentRoute.path) do -- detect path u-turn
@@ -4451,7 +4063,7 @@ local function chasePlan()
         if uTurn then
           -- cast a ray to see if ai can directly attack player without hitting a barrier
           if obj:castRayStatic(ai.pos + ai.upVec * 0.5, (ai.pos - player.pos) / (aiPlDist + 1e-30), aiPlDist) >= aiPlDist then
-            internalState = 'tail'
+            internalState.road = 'tail'
             if isAtPlayerSeg then -- important to reset the route here
               currentRoute = nil
               return
@@ -4476,22 +4088,22 @@ local function chasePlan()
         local aiTimeToTarget = tarPos:distance(ai.pos) / (aiVel2Target + 1e-30)
 
         if aiTimeToTarget < plTimeToTarget and not playerBehind then
-          internalState = 'tail'
+          internalState.road = 'tail'
         end
       end
     end
 
-    if chaseData.playerState == 'stopped' then
+    if internalState.chaseData.playerState == 'stopped' then
       currentRoute.plan.targetSpeed = 0
     end
   else
     local path
     if M.mode == 'chase' and ai.dirVec:dot(playerVel) > 0 and ai.dirVec:dot(aiPosRear - player.pos) > 0 then
       path = mapData:getFleePath(wp2, playerVel, player.pos, getMinPlanLen(100, ai.speed), 0, 0)
-      chaseData.driveAhead = true
+      internalState.chaseData.driveAhead = true
     else
-      path = mapData:getChasePath(wp1, wp2, plwp1, plwp2, ai.pos, ai.vel, player.pos, player.vel, driveInLaneFlag and 1e4 or 1)
-      chaseData.driveAhead = false
+      path = mapData:getChasePath(wp1, wp2, plwp1, plwp2, ai.pos, ai.vel, player.pos, player.vel, opt.driveInLaneFlag and 1e4 or 1)
+      internalState.chaseData.driveAhead = false
     end
 
     local route = planAhead(path)
@@ -4572,7 +4184,7 @@ local function trafficActions()
     local idx = getLastNodeWithinDistance(plan, dist)
     local n = plan[idx]
     local side = mapmgr.rules.rightHandDrive and -1 or 1
-    local disp = n.pos:distance(n.posOrig + n.normal * side * (n.radiusOrig * n.chordLength - ai.width * 0.5))
+    local disp = n.pos:distance(n.posOrig + n.normal * side * (n.halfWidth - ai.width * 0.5))
     trafficStates.side.displacement = disp
     --dist = dist + disp * 4 -- arbitrary extra distance?
 
@@ -4610,7 +4222,7 @@ local function trafficActions()
 
         local n1Pos, n2Pos = mapData.positions[nid1], mapData.positions[nid2]
 
-        -- Controlled intersection (traffic light or stop sign)
+        -- *****Controlled intersection (traffic light or stop sign)******
         if signalsData and signalsData[nid1] and signalsData[nid1][nid2] then -- nodes from current path match the signals dict
             -- TODO: check the array for the ideal signal to use
             -- lane check as well, if applicable
@@ -4619,7 +4231,6 @@ local function trafficActions()
           local nDir = n2Pos - n1Pos
           nDir.z = 0
           nDir:normalize()
-
           table.clear(tSi)
           tSi.node = nid1
           tSi.nextNode = nid2
@@ -4628,10 +4239,30 @@ local function trafficActions()
           tSi.dir = nDir
           tSi.action = bestSignal.action
           tSi.block = false
+          tSi.controlled = true
+
+          -- adding turnDir
+          if path[i + 2] then
+            local n3Pos = mapData.positions[path[i + 2]]
+            if tableSize(mapData.graph[nid2]) > 2 then -- if next path node is not in the middle of the junction
+              tSi.turnDir = n3Pos - n2Pos
+              tSi.turnDir.z = 0
+              tSi.turnDir:normalize()
+              tSi.turnNode = nid2
+            else
+              if path[i + 3] then
+                tSi.turnDir = mapData.positions[path[i + 3]] - n3Pos
+                tSi.turnDir.z = 0
+                tSi.turnDir:normalize()
+                tSi.turnNode = path[i + 2]
+              end
+            end
+          end
+
         end
 
-        -- detect uncontrolled intersection or set the turn direction for an already detected controlled intersection
-        if not tSi.turnDir and tableSize(mapData.graph[nid1]) > 2 then -- why the trafficStates.intersection.turnDir check?
+        -- *****detect uncontrolled intersection or set the turn direction for an already detected controlled intersection******
+        if tableSize(mapData.graph[nid1]) > 2 and not tSi.node and tSi.startIdx > 0 then
           -- we should try to get the effective curvature of the path after this point to determine turn signals
 
           -- Get Direction Vector of edge exiting nid1
@@ -4656,6 +4287,7 @@ local function trafficActions()
           -- Give way if the direction change at nid1 is greater than 45 deg and less than 135 deg
           -- or if the current path edge leading to nid1 has drivability lower than other roads incident on nid1
           local giveWay = abs(nDir:dot(linkDir)) < 0.707
+
           if not giveWay and drivability < 1 then
             for _, edgeData in pairs(mapData.graph[nid1]) do
               if edgeData.drivability > drivability then
@@ -4666,36 +4298,49 @@ local function trafficActions()
           end
 
           if giveWay then
-            -- Checks implicitly if this is a traffic signal or stop sign intersection (i.e node is populated)
-            if not tSi.node then
-
-              local fourthNode -- the fourth node in a T-junction (the other three nodes being prevNode, nid1, nid2)
-              -- the prevNode check is to make sure one of the three roads of the T-Junction is the one the vehicle is comming from
-              if prevNode and tableSize(mapData.graph[nid1]) == 3 then
-                for k, v in pairs(mapData.graph[nid1]) do
-                  if k ~= prevNode and k ~= nid2 then
-                    fourthNode = k
-                  end
+            local fourthNode -- the fourth node in a T-junction (the other three nodes being prevNode, nid1, nid2)
+            -- the prevNode check is to make sure one of the three roads of the T-Junction is the one the vehicle is comming from
+            if prevNode and tableSize(mapData.graph[nid1]) == 3 then
+              for k, v in pairs(mapData.graph[nid1]) do
+                if k ~= prevNode and k ~= nid2 then
+                  fourthNode = k
                 end
               end
+            end
 
-              -- Checks if the vehicle has right of way in this T-junction
-              if not (fourthNode and roadNaturalContinuation(fourthNode, nid1) ~= nid2 and gravityDir:cross(nDir):dot(linkDir) > 0) then
-                local pos = n1Pos - nDir * (max(3, mapData.radius[nid1]) + 2)
-                --local startIdx = tSi.startIdx
-                table.clear(tSi)
-                tSi.node = nid1
-                tSi.nextNode = nid2
-                tSi.turnNode = nid1
-                tSi.turnDir = linkDir
-                tSi.pos = pos
-                tSi.dir = nDir
-                tSi.action = 3
-                tSi.block = false
-              end
-            else -- set turn direction for controlled intersection
+            -- Checks if the vehicle has right of way in this T-junction
+            local side = mapmgr.rules.rightHandDrive and -1 or 1
+            local nContinuation = fourthNode and roadNaturalContinuation(fourthNode, nid1)
+            local dotDir = side*gravityDir:cross(nDir):dot(linkDir)
+            if not (fourthNode and nContinuation ~= nid2 and dotDir > 0) then
+
+              local pos = n1Pos - nDir * (max(3, mapData.radius[nid1]) + 2) --needs at least + 3
+
+              table.clear(tSi)
+              tSi.node = nid1
+              tSi.nextNode = nid2
               tSi.turnNode = nid1
               tSi.turnDir = linkDir
+              tSi.pos = pos
+              tSi.dir = nDir
+              tSi.action = 3
+              tSi.block = false
+              -- tSi.fullGiveWay -> giveWay to both left + right
+              -- tSi.oneGiveWay -> giveWay only on (right) side
+              -- tSi.otherGiveWay -> giveWay only on (left) side
+              if fourthNode then
+                tSi.fullGiveWay = nContinuation == nid2
+                if not tSi.fullGiveWay then
+                  tSi.oneGiveWay = dotDir < 0
+                else
+                  if dotDir > 0 then
+                    tSi.fullGiveWay = false
+                    tSi.otherGiveWay = true
+                  end
+                end
+              else
+                tSi.oneGiveWay = true
+              end
             end
           end
         end
@@ -4725,7 +4370,6 @@ local function trafficActions()
     else
       tSi.action = tSi.action or 0 -- default action ("go")
     end
-
     --local sColor = tSi.action == 0 and color(0,255,0,160) or color(255,255,0,160)
     --obj.debugDrawProxy:drawSphere(1, tSi.pos, sColor)
     --obj.debugDrawProxy:drawText(tSi.pos + vec3(0, 0, 1), color(0,0,0,255), tostring(tSi.turn))
@@ -4738,10 +4382,10 @@ local function trafficActions()
       tSi.proximity = distSq <= 400
     end
 
-    if ((tSi.pos + tSi.dir * 4) - ai.pos):dot(tSi.dir) >= 0 then -- vehicle position is at the stop pos (with extra distance, to be safe)
+    if tSi.pos:dot(tSi.dir) + 4 * tSi.dir:dot(tSi.dir) >= ai.pos:dot(tSi.dir)  then -- vehicle position is at the stop pos (with extra distance, to be safe)
       if tSi.action == 3 or tSi.action == 2 or (tSi.action == 1 and (square(brakeDist) < distSq or tSi.commitStopOnYellow)) then -- red light or other stop condition
         local bestDist = 100
-        for i = 1, #plan - 1 do -- get best plan node to set as a stopping point
+        for i = 1, plan.planCount - 1 do -- get best plan node to set as a stopping point
           -- currently checks every frame due to plan segment updates
           -- positional check is used due to issues with using plan.pathidx or complex intersections
           -- it would be great to improve this in the future
@@ -4764,16 +4408,40 @@ local function trafficActions()
             local vehicleInRange = false
             local vPosF = vec3()
             local aiCenterPos = getObjectBoundingBox(objectId)
+            local distToJcenter = tSi.turnNode and ai.pos:distance(mapData.positions[tSi.turnNode]) or 1
             for vId, v in pairs(mapmgr.getObjects()) do
               if vId ~= objectId then
                 local vC, vX = getObjectBoundingBox(vId)
                 vPosF:setAdd2(vC, vX)
-                local trajDirVec = currentRoute.plan[2].dirVec
-                -- condition 1: v-velocity dependent radius semi-circle centered at aiCenterPos directed in ai.dirVec
-                -- condition 2: v-velocity dependent semi-circle centered at aiCenterPos directed in first plan segment direction (note plan[2].dirVec points towards plan[1].pos)
-                if not isVehicleStopped(v) and (ai.dirVec:dot(vPosF) >= ai.dirVec:dot(aiCenterPos) or trajDirVec:dot(vPosF) <= trajDirVec:dot(aiCenterPos)) and
-                aiCenterPos:squaredDistance(vPosF) < square(min(60, max(30, v.vel:squaredLength() / (g * ai.staticFrictionCoef)))) then
+
+                -- checkDirRad: v is outside a slice of +-45 degrees and is under a thredshold distance
+                local check = false
+                local checkDirRad
+                if not isVehicleStopped(v) and v.dirVec:dot(vPosF-(ai.pos + distToJcenter*ai.dirVec)) < 0 then
+                  checkDirRad = v.dirVec:dot(tSi.dir) < 0.707 and aiCenterPos:squaredDistance(vPosF) < square(max(min(60, max(40, v.vel:squaredLength() / (g * ai.staticFrictionCoef))), v.vel:length()*4))
+                end
+                -- Different tests for each kind of stop (controlled or fullGiveway/oneGiveWay/otherGiveWay)
+                if checkDirRad then
+                  if tSi.oneGiveWay then
+                    local vFxnorm = tSi.turnDir and vPosF:xnormOnLine(tSi.pos, tSi.pos + 1.5*mapData.radius[tSi.turnNode or tSi.node]*tSi.turnDir) or 0
+                    if vFxnorm > 0 and vFxnorm < 1 and v.dirVec:dot(tSi.dir) < -0.707 then
+                      check = true
+                    end
+                  elseif tSi.otherGiveWay or tSi.turn == (mapmgr.rules.rightHandDrive and -1 or 1) then -- other or stop/full but turning to right
+                    if tSi.turnDir and v.dirVec:dot(tSi.turnDir) > 0.707 then
+                      check = true
+                    end
+                  else
+                    check = true
+                  end
+                end
+
+                if check then
                   vehicleInRange = true
+                  local kr = tSi.controlled and parameters.delayFactorWaitTime[1] or parameters.delayFactorWaitTime[2]
+                  local ks = 0.9
+                  tSi.timer = tSi.timer - (kr + min(v.vel:squaredLength(),1)*(ks - kr)/1)*dt
+                  tSi.timer = max(tSi.timer, 0)
                   break
                 end
               end
@@ -4782,18 +4450,18 @@ local function trafficActions()
               tSi.timer = parameters.trafficWaitTime
             end
           end
+        end
 
-          if tSi.timer >= parameters.trafficWaitTime then
-            if tSi.action == 2 then
-              -- Turn on red allowed (right turn for RHT (LHD) and left turn for LHT (RHD) allowed after stopping and intersection is clear)
-              if mapmgr.rules.turnOnRed and tSi.turn == (mapmgr.rules.rightHandDrive and -1 or 1) then
-                tSi.nodeIdx = nil
-                tSi.action = 0
-              end
-            else
+        if tSi.timer >= parameters.trafficWaitTime then
+          if tSi.action == 2 then
+            -- Turn on red allowed (right turn for RHT (LHD) and left turn for LHT (RHD) allowed after stopping and intersection is clear)
+            if mapmgr.rules.turnOnRed and tSi.turn == (mapmgr.rules.rightHandDrive and -1 or 1) then
               tSi.nodeIdx = nil
               tSi.action = 0
             end
+          else
+            tSi.nodeIdx = nil
+            tSi.action = 0
           end
         end
       end
@@ -4822,8 +4490,7 @@ local function trafficActions()
     end
 
     plan.stopSeg = stopSeg
-
-    if parameters.enableElectrics and tSi.turnNode and ai.pos:squaredDistance(mapData.positions[tSi.turnNode]) < square(max(20, brakeDist * 1.2)) then -- approaching intersection
+    if parameters.enableElectrics and tSi.turnNode and ai.pos:squaredDistance(mapData.positions[tSi.turnNode]) < square(max(50, brakeDist * 1.2)) then -- approaching intersection
       if tSi.turn < 0 and electrics.values.turnsignal >= 0 then
         electrics.toggle_left_signal()
       elseif tSi.turn > 0 and electrics.values.turnsignal <= 0 then
@@ -4834,6 +4501,7 @@ local function trafficActions()
 end
 
 local function trafficPlan()
+  --profilerPushEvent('ai_trafficPlan_pathfinding')
   if trafficStates.block.block then
     trafficStates.block.timer = trafficStates.block.timer + dt
   else
@@ -4844,11 +4512,11 @@ local function trafficPlan()
   if currentRoute and currentRoute.path[1] and not currentRoute.plan.reRoute and trafficStates.block.timer <= trafficStates.block.timerLimit then --and not currentRoute.plan.noExit
     local plan = currentRoute.plan
     local path = currentRoute.path
-    if (internalState ~= 'offroad' and plan.planLen + getPathLen(path, plan[plan.planCount].pathidx) < getMinPlanLen()) or not path[plan[plan.planCount].pathidx+2] then
+    if (internalState.road ~= 'offroad' and plan.planLen + getPathLen(path, plan[plan.planCount].pathidx) < getMinPlanLen()) or not path[plan[plan.planCount].pathidx+2] then
       local pathCount = #path
 
       local newPath
-      newPath = mapData:getPathTWithState(path[pathCount], mapData.positions[path[pathCount]], getMinPlanLen(), trafficPathState[1] and trafficPathState or ai.dirVec)
+      newPath = mapData:getPathTWithState(path[pathCount], mapData.positions[path[pathCount]], getMinPlanLen(100), trafficPathState[1] and trafficPathState or ai.dirVec)
       table.clear(trafficPathState)
       for i, v in ipairs(newPath) do trafficPathState[i] = v end
 
@@ -4860,8 +4528,8 @@ local function trafficPlan()
     if wp1 == nil or wp2 == nil then
       guihooks.message("Could not find a road network, or closest road is too far", 5, "AI debug")
       currentRoute = nil
-      internalState = 'offroad'
-      changePlanTimer = 0
+      internalState.road = 'offroad'
+      internalState.changePlanTimer = 0
       driveCar(0, 0, 0, 1)
       return
     end
@@ -4880,7 +4548,7 @@ local function trafficPlan()
     wp1, wp2 = pickAiWp(wp1, wp2, dirVec)
 
     local path
-    path = mapData:getPathTWithState(wp1, ai.pos, getMinPlanLen(), ai.dirVec)
+    path = mapData:getPathTWithState(wp1, ai.pos, getMinPlanLen(80), ai.dirVec)
     table.clear(trafficPathState)
     for i, v in ipairs(path) do trafficPathState[i] = v end
 
@@ -4924,9 +4592,15 @@ local function trafficPlan()
       end
     end
   end
+  --profilerPopEvent('ai_trafficPlan_pathfinding')
 
+  --profilerPushEvent('ai_trafficActions')
   trafficActions()
+  --profilerPopEvent('ai_trafficActions')
+
+  --profilerPushEvent('ai_planAhead')
   planAhead(currentRoute)
+  --profilerPopEvent('ai_planAhead')
 end
 
 local function warningAIDisabled(message)
@@ -4939,18 +4613,33 @@ end
 
 local function targetFollowControl(targetSpeed, distLim) -- throttle and brake control for ai directly going to player
   -- distLim: Minimum distance allowed
+
+  -- local targetPos, throttleTargetSpeed, brakeTargetSpeed <-- WIP
   if not targetSpeed then
     if not player or not player.pos then return 0, 0, 0 end
     local plC, plX, plY, plZ = getObjectBoundingBox(player.id)
     local ai2PlDirVec = plC - ai.pos; ai2PlDirVec:normalize()
     local minHit = intersectsRay_OBB(ai.pos, ai2PlDirVec, plC, plX, plY, plZ)
     local plSpeedFromAI = player.vel:dot(ai2PlDirVec)
-    local ai2PlDist = max(0, minHit - (distLim or 3))
+    local ai2PlDist = minHit - (distLim or 3)
     targetSpeed = sqrt(max(0, abs(plSpeedFromAI) * plSpeedFromAI + 2 * g * min(aggression, ai.staticFrictionCoef) * ai2PlDist))
-  end
-  local speedDif = targetSpeed - ai.speed
 
+    -- WIP
+    -- throttleTargetSpeed = sqrt(max(0, abs(plSpeedFromAI) * plSpeedFromAI + 2 * g * min(aggression, ai.staticFrictionCoef) * (minHit - (distLim or 3) - ai.speed * 1)))
+    -- brakeTargetSpeed = sqrt(max(0, abs(plSpeedFromAI) * plSpeedFromAI + 2 * g * min(aggression * 1.5, ai.staticFrictionCoef) * (minHit - (distLim or 3))))
+    -- targetPos = catmullRomChordal(ai.pos-ai.dirVec, ai.pos, plC-plX, plC-plX+plX:normalized(), min(1, max(ai.speed * parameters.lookAheadKv, 4.5) / ai.pos:distance(plC - plX)))
+    -- obj.debugDrawProxy:drawSphere(0.25, targetPos, color(255, 0, 0, 255))
+    -- obj.debugDrawProxy:drawSphere(0.25, plC-plX, color(0, 0, 255, 255))
+    -- obj.debugDrawProxy:drawSphere(0.15, ai.pos + brakeTargetSpeed * ai.upVec, color(255, 0, 0, 255))
+    -- obj.debugDrawProxy:drawSphere(0.15, ai.pos + throttleTargetSpeed * ai.upVec, color(0, 255, 0, 255))
+    -- obj.debugDrawProxy:drawSphere(0.15, ai.pos + ai.speed * ai.upVec, color(0, 0, 255, 255))
+  end
+
+  local speedDif = targetSpeed - ai.speed
   return clamp(speedDif, 0, 1), clamp(-speedDif, 0, 1), targetSpeed
+
+  -- WIP
+  --return clamp((throttleTargetSpeed - ai.speed) * 0.25, 0, 1), clamp(ai.speed - brakeTargetSpeed, 0, 1), brakeTargetSpeed, targetPos
 end
 
 local function drivabilityChangeReroute()
@@ -5047,288 +4736,289 @@ local function getSafeTeleportPosRot()
 end
 
 local function modeAdjustments()
-    ------------------ RANDOM MODE ----------------
-    if M.mode == 'random' then
-      local route
-      if not currentRoute or currentRoute.plan.reRoute or currentRoute.plan.planLen + getPathLen(currentRoute.path, currentRoute.plan[currentRoute.plan.planCount].pathidx) < getMinPlanLen() then
-        local wp1, wp2 = mapmgr.findClosestRoad(ai.pos)
-        if wp1 == nil or wp2 == nil then
-          warningAIDisabled("Could not find a road network, or closest road is too far")
-          return
-        end
-        ai.currentSegment[1] = wp1
-        ai.currentSegment[2] = wp2
-  
-        if internalState == 'offroad' then
-          local vec1 = mapData.positions[wp1] - ai.pos
-          local vec2 = mapData.positions[wp2] - ai.pos
-          if ai.dirVec:dot(vec1) > 0 and ai.dirVec:dot(vec2) > 0 then
-            if vec1:squaredLength() > vec2:squaredLength() then
-              wp1, wp2 = wp2, wp1
-            end
-          elseif ai.dirVec:dot(mapData.positions[wp2] - mapData.positions[wp1]) > 0 then
+  ------------------ RANDOM MODE ----------------
+  if M.mode == 'random' then
+    local route
+    if not currentRoute or currentRoute.plan.reRoute or currentRoute.plan.planLen + getPathLen(currentRoute.path, currentRoute.plan[currentRoute.plan.planCount].pathidx) < getMinPlanLen() then
+      local wp1, wp2 = mapmgr.findClosestRoad(ai.pos)
+      if wp1 == nil or wp2 == nil then
+        warningAIDisabled("Could not find a road network, or closest road is too far")
+        return
+      end
+      ai.currentSegment[1] = wp1
+      ai.currentSegment[2] = wp2
+
+      if internalState.road == 'offroad' then
+        local vec1 = mapData.positions[wp1] - ai.pos
+        local vec2 = mapData.positions[wp2] - ai.pos
+        if ai.dirVec:dot(vec1) > 0 and ai.dirVec:dot(vec2) > 0 then
+          if vec1:squaredLength() > vec2:squaredLength() then
             wp1, wp2 = wp2, wp1
           end
         elseif ai.dirVec:dot(mapData.positions[wp2] - mapData.positions[wp1]) > 0 then
           wp1, wp2 = wp2, wp1
         end
-  
-        local path = mapData:getRandomPath(wp1, wp2, driveInLaneFlag and 1e4 or 1)
-  
-        if path and path[1] then
-          local route = planAhead(path, currentRoute)
-          if route and route.plan then
-            if not currentRoute then
-              currentRoute = route
-            else
-              local curPlanIdx = currentRoute.plan[2].pathidx
-              local curPathCount = #currentRoute.path
-              if curPlanIdx >= curPathCount * 0.9 or (targetsCompatible(currentRoute, route) and route.plan.targetSpeed >= ai.speed) then
-                currentRoute = route
-              end
-            end
-          end
-        end
+      elseif ai.dirVec:dot(mapData.positions[wp2] - mapData.positions[wp1]) > 0 then
+        wp1, wp2 = wp2, wp1
       end
-  
-      if currentRoute ~= route then
-        planAhead(currentRoute)
-      end
-  
-    ------------------ TRAFFIC MODE ----------------
-    elseif M.mode == 'traffic' then
-      trafficPlan()
-  
-    ------------------ MANUAL MODE ----------------
-    elseif M.mode == 'manual' then
-      if validateInput(wpList or manualPath) then
-        newManualPath()
-      elseif scriptData then
-        setScriptedPath(scriptData)
-        scriptData = nil
-      end
-  
-      if aggressionMode == 'rubberBand' then
-        updatePlayerData()
-        if player ~= nil then
-          if (ai.pos - player.pos):dot(ai.dirVec) > 0 then
-            setAggressionInternal(max(min(0.1 + max((150 - player.pos:distance(ai.pos))/150, 0), M.extAggression), 0.5))
-          else
-            setAggressionInternal()
-          end
-        end
-      end
-      
-      planAhead(currentRoute)
-  
-    ------------------ SPAN MODE ------------------
-    elseif M.mode == 'span' then
-      if currentRoute == nil then
-        local positions = mapData.positions
-        local wpAft, wpFore = mapmgr.findClosestRoad(ai.pos)
-        if not (wpAft and wpFore) then
-          warningAIDisabled("Could not find a road network, or closest road is too far")
-          return
-        end
-        if ai.dirVec:dot(positions[wpFore] - positions[wpAft]) < 0 then wpAft, wpFore = wpFore, wpAft end
-  
-        ai.currentSegment[1] = wpFore
-        ai.currentSegment[2] = wpAft
-  
-        local target, targetLink
-  
-        if not (edgeDict and edgeDict[1]) then
-          -- creates the edgeDict and returns a random edge
-          target, targetLink = getMapEdges(M.cutOffDrivability or 0, wpFore)
-          if not target then
-            warningAIDisabled("No available target with selected characteristics")
-            return
-          end
-        end
-  
-        local path = {}
-        while true do
-          if not target then
-            local maxDist = -math.huge
-            local lim = 1
-            repeat
-              -- get most distant non walked edge
-              for k, v in pairs(edgeDict) do
-                if v <= lim then
-                  if lim > 1 then edgeDict[k] = 1 end
-                  local i = string.find(k, '\0')
-                  local n1id = string.sub(k, 1, i-1)
-                  local sqDist = positions[n1id]:squaredDistance(ai.pos)
-                  if sqDist > maxDist then
-                    maxDist = sqDist
-                    target = n1id
-                    targetLink = string.sub(k, i+1, #k)
-                  end
-                end
-              end
-              lim = math.huge -- if the first iteration does not produce a target
-            until target
-          end
-  
-          local nodeDegree = 1
-          for lid, _ in pairs(mapData.graph[target]) do
-            -- we're looking for neighboring nodes other than the targetLink
-            if lid ~= targetLink then
-              nodeDegree = nodeDegree + 1
-            end
-          end
-          if nodeDegree == 1 then
-            local key = target..'\0'..targetLink
-            edgeDict[key] = edgeDict[key] + 1
-          end
-  
-          path = mapData:spanMap(wpFore, wpAft, target, edgeDict, driveInLaneFlag and 1e7 or 1)
-  
-          if not path[2] and wpFore ~= target then
-            -- remove edge from edgeDict list and get a new target (while loop will iterate again)
-            edgeDict[target..'\0'..targetLink] = nil
-            edgeDict[targetLink..'\0'..target] = nil
-            target = nil
-            if next(edgeDict) == nil then
-              warningAIDisabled("Could not find a path to any of the possible targets")
-              return
-            end
-          elseif not path[1] then
-            warningAIDisabled("No Route Found")
-            return
-          else
-            -- insert the second edge node in newRoute if it is not already contained
-            local pathCount = #path
-            if path[pathCount-1] ~= targetLink then path[pathCount+1] = targetLink end
-            break
-          end
-        end
-  
-        local route = planAhead(path)
-        if not route then return end
-        currentRoute = route
-      else
-        planAhead(currentRoute)
-      end
-  
-    ------------------ FLEE MODE ------------------
-    elseif M.mode == 'flee' then
-      updatePlayerData()
-      if player then
-        if validateInput() then
-          targetWPName = wpList[1]
-          wpList = nil
-        end
-  
-        fleePlan()
-  
-        if internalState == 'offroad' then
-          local targetPos = ai.pos + (ai.pos - player.pos) * 100
-          local targetSpeed = math.huge
-          driveToTarget(targetPos, 1, 0, targetSpeed)
-          return
-        end
-      else
-        -- guihooks.message("No vehicle to Flee from", 5, "AI debug") -- TODO: this freezes the up because it runs on the gfx step
-        return
-      end
-  
-    ------------------ CHASE MODE ------------------
-    elseif M.mode == 'chase' or M.mode == 'follow' then
-      updatePlayerData()
-      if player then
-        chasePlan()
-  
-        if internalState == 'tail' then
-          --internalState = 'onroad'
-          --currentRoute = nil
-          local plai = player.pos - ai.pos
-          local relvel = ai.vel:dot(plai) - player.vel:dot(plai)
-  
-          local throttle, brake, targetSpeed = targetFollowControl(chaseData.targetSpeed or math.huge)
-          if relvel > 0 then
-            driveToTarget(player.pos + (plai:length() / (relvel + 1e-30)) * player.vel, throttle, brake, targetSpeed)
-          else
-            driveToTarget(player.pos, throttle, brake, targetSpeed)
-          end
-          return
-        elseif internalState == 'offroad' then
-          local throttle, brake, targetSpeed = targetFollowControl(M.mode == 'chase' and math.huge)
-          driveToTarget(player.pos, throttle, brake, targetSpeed)
-          return
-        elseif currentRoute == nil then
-          driveCar(0, 0, 0, 1)
-          return
-        end
-  
-      else
-        -- guihooks.message("No vehicle to Chase", 5, "AI debug")
-        return
-      end
-  
-    ------------------ STOP MODE ------------------
-    elseif M.mode == 'stop' then
-      if currentRoute then
-        planAhead(currentRoute)
-        local targetSpeed = max(0, ai.speed - sqrt(max(0, square(ai.staticFrictionCoef * g) - square(sensors.gx2))) * dt) -- TODO: check this calculation, i don't think it does what you think it does
-        currentRoute.plan.targetSpeed = min(currentRoute.plan.targetSpeed, targetSpeed)
-      elseif ai.vel:dot(ai.dirVec) > 0 then
-        driveCar(0, 0, 0.5, 0)
-      else
-        driveCar(0, 1, 0, 0)
-      end
-      if ai.speed < 0.08 then
-        driveCar(0, 0, 0, 1)
-        M.mode = 'disabled'
-        M.manualTargetName = nil
-        M.updateGFX = nop
-        resetMapAndRoute()
-        stateChanged()
-        if controller.mainController and restoreGearboxMode then
-          controller.mainController.setGearboxMode('realistic')
-        end
-        return
-      end
-  
-    ------------------ MANUAL TRAFFIC MODE ------------------
-    elseif M.mode == 'manualTraffic' then
-      if validateInput(wpList or manualPath) then
-        newManualPath()
 
-      elseif scriptData then
-        setScriptedPath(scriptData)
-        scriptData = nil
-      end
-  
-      if aggressionMode == 'rubberBand' then
-        updatePlayerData()
-        if player ~= nil then
-          if (ai.pos - player.pos):dot(ai.dirVec) > 0 then
-            setAggressionInternal(max(min(0.1 + max((150 - player.pos:distance(ai.pos))/150, 0), M.extAggression), 0.5))
+      local path = mapData:getRandomPath(wp1, wp2, opt.driveInLaneFlag and 1e4 or 1)
+
+      if path and path[1] then
+        local route = planAhead(path, currentRoute)
+        if route and route.plan then
+          if not currentRoute then
+            currentRoute = route
           else
-            setAggressionInternal()
+            local curPlanIdx = currentRoute.plan[2].pathidx
+            local curPathCount = #currentRoute.path
+            if curPlanIdx >= curPathCount * 0.9 or (targetsCompatible(currentRoute, route) and route.plan.targetSpeed >= ai.speed) then
+              currentRoute = route
+            end
           end
         end
-      end
-      
-      -- Manual traffic: use manual planning but add traffic rule enforcement
-      planAhead(currentRoute)
-      
-      -- Initialize traffic states for stop lights and intersections
-      if trafficStates.block.block then
-        trafficStates.block.timer = trafficStates.block.timer + dt
-      else
-        trafficStates.block.timer = trafficStates.block.timer * 0.8
-        trafficStates.block.hornFlag = false
-      end
-      
-      -- Add traffic actions for stop lights, stop signs, and intersections
-      if currentRoute then
-        trafficActions()
       end
     end
-    -----------------------------------------------
+
+    if currentRoute ~= route then
+      planAhead(currentRoute)
+    end
+
+  ------------------ TRAFFIC MODE ----------------
+  elseif M.mode == 'traffic' then
+    --profilerPushEvent('ai_trafficPlan')
+    trafficPlan()
+    --profilerPopEvent('ai_trafficPlan')
+
+  ------------------ MANUAL MODE ----------------
+  elseif M.mode == 'manual' then
+    if validateInput(wpList or manualPath) then
+      newManualPath()
+    elseif scriptData then
+      setScriptedPath(scriptData)
+      scriptData = nil
+    end
+
+    if opt.aggressionMode == 'rubberBand' then
+      updatePlayerData()
+      if player ~= nil then
+        if (ai.pos - player.pos):dot(ai.dirVec) > 0 then
+          setAggressionInternal(max(min(0.1 + max((150 - player.pos:distance(ai.pos))/150, 0), M.extAggression), 0.5))
+        else
+          setAggressionInternal()
+        end
+      end
+    end
+
+    planAhead(currentRoute)
+
+  ------------------ SPAN MODE ------------------
+  elseif M.mode == 'span' then
+    if currentRoute == nil then
+      local positions = mapData.positions
+      local wpAft, wpFore = mapmgr.findClosestRoad(ai.pos)
+      if not (wpAft and wpFore) then
+        warningAIDisabled("Could not find a road network, or closest road is too far")
+        return
+      end
+      if ai.dirVec:dot(positions[wpFore] - positions[wpAft]) < 0 then wpAft, wpFore = wpFore, wpAft end
+
+      ai.currentSegment[1] = wpFore
+      ai.currentSegment[2] = wpAft
+
+      local target, targetLink
+
+      if not (edgeDict and edgeDict[1]) then
+        -- creates the edgeDict and returns a random edge
+        target, targetLink = getMapEdges(M.cutOffDrivability or 0, wpFore)
+        if not target then
+          warningAIDisabled("No available target with selected characteristics")
+          return
+        end
+      end
+
+      local path = {}
+      while true do
+        if not target then
+          local maxDist = -math.huge
+          local lim = 1
+          repeat
+            -- get most distant non walked edge
+            for k, v in pairs(edgeDict) do
+              if v <= lim then
+                if lim > 1 then edgeDict[k] = 1 end
+                local i = string.find(k, '\0')
+                local n1id = string.sub(k, 1, i-1)
+                local sqDist = positions[n1id]:squaredDistance(ai.pos)
+                if sqDist > maxDist then
+                  maxDist = sqDist
+                  target = n1id
+                  targetLink = string.sub(k, i+1, #k)
+                end
+              end
+            end
+            lim = math.huge -- if the first iteration does not produce a target
+          until target
+        end
+
+        local nodeDegree = 1
+        for lid, _ in pairs(mapData.graph[target]) do
+          -- we're looking for neighboring nodes other than the targetLink
+          if lid ~= targetLink then
+            nodeDegree = nodeDegree + 1
+          end
+        end
+        if nodeDegree == 1 then
+          local key = target..'\0'..targetLink
+          edgeDict[key] = edgeDict[key] + 1
+        end
+
+        path = mapData:spanMap(wpFore, wpAft, target, edgeDict, opt.driveInLaneFlag and 1e7 or 1)
+
+        if not path[2] and wpFore ~= target then
+          -- remove edge from edgeDict list and get a new target (while loop will iterate again)
+          edgeDict[target..'\0'..targetLink] = nil
+          edgeDict[targetLink..'\0'..target] = nil
+          target = nil
+          if next(edgeDict) == nil then
+            warningAIDisabled("Could not find a path to any of the possible targets")
+            return
+          end
+        elseif not path[1] then
+          warningAIDisabled("No Route Found")
+          return
+        else
+          -- insert the second edge node in newRoute if it is not already contained
+          local pathCount = #path
+          if path[pathCount-1] ~= targetLink then path[pathCount+1] = targetLink end
+          break
+        end
+      end
+
+      local route = planAhead(path)
+      if not route then return end
+      currentRoute = route
+    else
+      planAhead(currentRoute)
+    end
+
+  ------------------ FLEE MODE ------------------
+  elseif M.mode == 'flee' then
+    updatePlayerData()
+    if player then
+      if validateInput() then
+        targetWPName = wpList[1]
+        wpList = nil
+      end
+
+      fleePlan()
+
+      if internalState.road == 'offroad' then
+        local targetPos = ai.pos + (ai.pos - player.pos) * 100
+        local targetSpeed = math.huge
+        driveToTarget(targetPos, 1, 0, targetSpeed)
+        return
+      end
+    else
+      -- guihooks.message("No vehicle to Flee from", 5, "AI debug") -- TODO: this freezes the up because it runs on the gfx step
+      return
+    end
+
+  ------------------ CHASE MODE ------------------
+  elseif M.mode == 'chase' or M.mode == 'follow' then
+    updatePlayerData()
+    if player then
+      chasePlan()
+
+      if internalState.road == 'tail' then
+        --internalState.road = 'onroad'
+        --currentRoute = nil
+        local plai = player.pos - ai.pos
+        local relvel = ai.vel:dot(plai) - player.vel:dot(plai)
+
+        local throttle, brake, targetSpeed = targetFollowControl(internalState.chaseData.targetSpeed or math.huge)
+        if relvel > 0 then
+          driveToTarget(player.pos + (plai:length() / (relvel + 1e-30)) * player.vel, throttle, brake, targetSpeed)
+        else
+          driveToTarget(player.pos, throttle, brake, targetSpeed)
+        end
+        return
+      elseif internalState.road == 'offroad' then
+        local throttle, brake, targetSpeed = targetFollowControl(M.mode == 'chase' and math.huge)
+        driveToTarget(player.pos, throttle, brake, targetSpeed)
+        return
+      elseif currentRoute == nil then
+        driveCar(0, 0, 0, 1)
+        return
+      end
+
+    else
+      -- guihooks.message("No vehicle to Chase", 5, "AI debug")
+      return
+    end
+
+  ------------------ STOP MODE ------------------
+  elseif M.mode == 'stop' then
+    if currentRoute then
+      planAhead(currentRoute)
+      local targetSpeed = max(0, ai.speed - sqrt(max(0, square(ai.staticFrictionCoef * g) - square(sensors.gx2))) * dt) -- TODO: check this calculation, i don't think it does what you think it does
+      currentRoute.plan.targetSpeed = min(currentRoute.plan.targetSpeed, targetSpeed)
+    elseif ai.vel:dot(ai.dirVec) > 0 then
+      driveCar(0, 0, 0.5, 0)
+    else
+      driveCar(0, 1, 0, 0)
+    end
+    if ai.speed < 0.08 then
+      driveCar(0, 0, 0, 1)
+      M.mode = 'disabled'
+      M.manualTargetName = nil
+      M.updateGFX = nop
+      resetMapAndRoute()
+      stateChanged()
+      if controller.mainController and restoreGearboxMode then
+        controller.mainController.setGearboxMode('realistic')
+      end
+      return
+    end
+    ------------------ MANUAL TRAFFIC MODE ------------------
+  elseif M.mode == 'manualTraffic' then
+    if validateInput(wpList or manualPath) then
+      newManualPath()
+
+    elseif scriptData then
+      setScriptedPath(scriptData)
+      scriptData = nil
+    end
+
+    if aggressionMode == 'rubberBand' then
+      updatePlayerData()
+      if player ~= nil then
+        if (ai.pos - player.pos):dot(ai.dirVec) > 0 then
+          setAggressionInternal(max(min(0.1 + max((150 - player.pos:distance(ai.pos))/150, 0), M.extAggression), 0.5))
+        else
+          setAggressionInternal()
+        end
+      end
+    end
+    
+    -- Manual traffic: use manual planning but add traffic rule enforcement
+    planAhead(currentRoute)
+    
+    -- Initialize traffic states for stop lights and intersections
+    if trafficStates.block.block then
+      trafficStates.block.timer = trafficStates.block.timer + dt
+    else
+      trafficStates.block.timer = trafficStates.block.timer * 0.8
+      trafficStates.block.hornFlag = false
+    end
+    
+    -- Add traffic actions for stop lights, stop signs, and intersections
+    if currentRoute then
+      trafficActions()
+    end
   end
+  return 0
+end
 
 M.updateGFX = nop
 local function updateGFX(dtGFX)
@@ -5363,12 +5053,10 @@ local function updateGFX(dtGFX)
   ai.length = ai.length or obj:getInitialLength()
   ai.staticFrictionCoef = parameters.staticFrictionCoefMult * obj:getStaticFrictionCoef() -- depends on ground model, tire and tire load
 
-  dataLogger.logData()
-
   if lastCommand.throttle > 0.5 and ai.speed < 1 then
-    aiCannotMoveTime = aiCannotMoveTime + dt
+    internalState.aiCannotMoveTime = internalState.aiCannotMoveTime + dt
   else
-    aiCannotMoveTime = 0
+    internalState.aiCannotMoveTime = 0
   end
 
   if ai.speed < 3 then
@@ -5400,7 +5088,7 @@ local function updateGFX(dtGFX)
     end
   end
 
-  changePlanTimer = max(0, changePlanTimer - dt)
+  internalState.changePlanTimer = max(0, internalState.changePlanTimer - dt)
 
   -- local wp1, wp2 = mapmgr.findClosestRoad(ai.pos)
   -- if (mapData.positions[wp2] - mapData.positions[wp1]):dot(ai.dirVec) > 0 then
@@ -5410,7 +5098,9 @@ local function updateGFX(dtGFX)
   ai.currentSegment[1] = nil
   ai.currentSegment[2] = nil
 
-  modeAdjustments()
+  if not modeAdjustments() then
+    return
+  end
 
   if currentRoute then
     local plan = currentRoute.plan
@@ -5418,7 +5108,7 @@ local function updateGFX(dtGFX)
     local aiSeg = plan.aiSeg
 
     -- cleanup path if it has gotten too long
-    if not race and plan[aiSeg].pathidx >= 10 and currentRoute.path[20] then
+    if not loopPath and plan[aiSeg].pathidx >= 10 and currentRoute.path[20] then
       local path = currentRoute.path
       local k = plan[aiSeg].pathidx - 2
       for i = 1, #path do
@@ -5493,41 +5183,25 @@ local function updateGFX(dtGFX)
     if ai.speed < 0.1 and targetSpeed > 0.5 and (lastCommand.throttle ~= 0 or lastCommand.brake ~= 0) and twt.state == 0 and
     not (controller.isFrozen or electrics.values['transbrake'] or (trafficStates.intersection.action == 3 or trafficStates.intersection.action == 2)) then
 
-      if crash.time == 0 then
-        crash.pos = ai.pos:copy()
+      if internalState.crash.time == 0 then
+        internalState.crash.pos = ai.pos:copy()
       end
-      crash.time = crash.time + dt
-      if crash.time > 1 then
-        local diff = ai.pos:squaredDistance(crash.pos)
+      internalState.crash.time = internalState.crash.time + dt
+      if internalState.crash.time > 1 then
+        local diff = ai.pos:squaredDistance(internalState.crash.pos)
         if  diff < 0.1*0.1 then
           if recover.recoverOnCrash then
             recover._recoverOnCrash = true
-            crash.time = 0
+            internalState.crash.time = 0
           else
-            crash.dir = vec3(ai.dirVec)
-            crash.manoeuvre = 1
+            internalState.crash.dir = vec3(ai.dirVec)
+            internalState.crash.manoeuvre = 1
           end
         else
-          crash.time = 0
+          internalState.crash.time = 0
         end
       end
     end
-
-    --if not controller.isFrozen and ai.speed < 0.1 and targetSpeed > 0.5 and (lastCommand.throttle ~= 0 or lastCommand.brake ~= 0) and twt.state == 0 then
-    --  crash.time = crash.time + dt
-    --  if crash.time > 1 then
-    --    if recover.recoverOnCrash then
-    --      recover._recoverOnCrash = true
-    --      crash.time = 0
-    --    else
-    --      crash.dir = vec3(ai.dirVec)
-    --      crash.manoeuvre = 1
-    --    end
-    --  end
-    --else
-    --  crash.time = 0
-    --end
-
 
     -- Throttle and Brake control
     local speedDif = targetSpeed - ai.speed
@@ -5535,7 +5209,7 @@ local function updateGFX(dtGFX)
     speedDif = targetSpeedDifSmoother:getWithRate(speedDif, dt, rate)
 
     local legalSpeedDif = plan.targetSpeedLegal - ai.speed
-    local lowSpeedDif = min(speedDif - clamp((ai.speed - 2) * 0.5, 0, 1), legalSpeedDif) * 0.5
+    local lowSpeedDif = min(speedDif - clamp((ai.speed - 2) * 0.5, 0, 1), legalSpeedDif) * parameters.throttleKp
     local lowTargSpeedConstBrake = lowTargetSpeedVal - targetSpeed -- apply constant brake below some targetSpeed
 
     local throttle = clamp(lowSpeedDif, 0, 1) * sign(max(0, -lowTargSpeedConstBrake)) -- throttle not enganged for targetSpeed < 0.26
@@ -5543,8 +5217,8 @@ local function updateGFX(dtGFX)
     local brakeLimLow = sign(max(0, lowTargSpeedConstBrake)) * 0.5
 
     local brake = sign(max(0, (electrics.values.smoothShiftLogicAV or 0) - 3))
-    if plan.sideDisp and racing then
-      local speedDifH = targetSpeed/sqrt(min(1,aggression)) - ai.speed
+    if plan.sideDisp and opt.racing then
+      local speedDifH = targetSpeed/sqrt(min(1, aggression)) - ai.speed
       brake = clamp(-speedDifH, brakeLimLow, 1) * brake  -- arcade autobrake comes in at |smoothShiftLogicAV| < 5
     else
       brake = clamp(-speedDif, brakeLimLow, 1) * brake -- arcade autobrake comes in at |smoothShiftLogicAV| < 5
@@ -5559,6 +5233,8 @@ local function updateGFX(dtGFX)
 
     driveToTarget(targetPos, throttle, brake)
   end
+
+  dataLogger.logData()
 end
 
 local function debugDraw(focusPos)
@@ -5601,19 +5277,19 @@ local function debugDraw(focusPos)
 
     elseif M.debugMode == 'route' then
       local maxCount = 700
-      local last = routeRec.last
-      local count = min(#routeRec, maxCount)
-      if count == 0 or routeRec[last]:squaredDistance(ai.pos) > (7 * 7) then
+      local last = visDebug.routeRec.last
+      local count = min(#visDebug.routeRec, maxCount)
+      if count == 0 or visDebug.routeRec[last]:squaredDistance(ai.pos) > (7 * 7) then
         last = 1 + last % maxCount
-        routeRec[last] = vec3(ai.pos)
+        visDebug.routeRec[last] = vec3(ai.pos)
         count = min(count+1, maxCount)
-        routeRec.last = last
+        visDebug.routeRec.last = last
       end
 
       local tmpVec = vec3(0.7, ai.width, 0.7)
       local black = color(0, 0, 0, 128)
       for i = 1, count-1 do
-        debugDrawer:drawSquarePrism(routeRec[1+(last+i-1)%count], routeRec[1+(last+i)%count], tmpVec, tmpVec, black)
+        debugDrawer:drawSquarePrism(visDebug.routeRec[1+(last+i-1)%count], visDebug.routeRec[1+(last+i)%count], tmpVec, tmpVec, black)
       end
 
       if currentRoute.plan[1].pathidx then
@@ -5627,14 +5303,14 @@ local function debugDraw(focusPos)
       end
 
       -- Draw candidate paths if available
-      if candidatePaths and candidatePaths[1] then
-        local winner = candidatePaths.winner
-        local source = candidatePaths[1][1] -- all paths have the same source node
+      if visDebug.candidatePaths and visDebug.candidatePaths[1] then
+        local winner = visDebug.candidatePaths.winner
+        local source = visDebug.candidatePaths[1][1] -- all paths have the same source node
         debugDrawer:drawSphere(2, mapData.positions[source], color(0, 0, 0, 255))
-        for i = 1, #candidatePaths do
-          local thisPath = candidatePaths[i]
+        for i = 1, #visDebug.candidatePaths do
+          local thisPath = visDebug.candidatePaths[i]
           local thisPathCount = #thisPath
-          local thisScore = candidatePaths[i].score
+          local thisScore = visDebug.candidatePaths[i].score
           for i = 1, thisPathCount-1 do
             debugDrawer:drawCylinder(mapData.positions[thisPath[i]], mapData.positions[thisPath[i+1]], 0.5, jetColor(thisScore, 200))
           end
@@ -5658,19 +5334,19 @@ local function debugDraw(focusPos)
     elseif M.debugMode == 'speeds' then
       -- Debug Throttle brake application
       local maxCount = 175
-      local count = min(#trajecRec, maxCount)
-      local last = trajecRec.last
-      if count == 0 or trajecRec[last][1]:squaredDistance(ai.pos) > (0.2 * 0.2) then
+      local count = min(#visDebug.trajecRec, maxCount)
+      local last = visDebug.trajecRec.last
+      if count == 0 or visDebug.trajecRec[last][1]:squaredDistance(ai.pos) > (0.2 * 0.2) then
         last = 1 + last % maxCount
-        trajecRec[last] = {vec3(ai.pos), ai.speed, targetSpeed, lastCommand.brake, lastCommand.throttle}
+        visDebug.trajecRec[last] = {vec3(ai.pos), ai.speed, targetSpeed, lastCommand.brake, lastCommand.throttle}
         count = min(count+1, maxCount)
-        trajecRec.last = last
+        visDebug.trajecRec.last = last
       end
 
       local tmpVec1 = vec3(0.7, ai.width, 0.7)
       for i = 1, count-1 do
-        local n = trajecRec[1 + (last + i) % count]
-        debugDrawer:drawSquarePrism(trajecRec[1 + (last + i - 1) % count][1], n[1], tmpVec1, tmpVec1, color(255 * sqrt(abs(n[4])), 255 * sqrt(n[5]), 0, 100))
+        local n = visDebug.trajecRec[1 + (last + i) % count]
+        debugDrawer:drawSquarePrism(visDebug.trajecRec[1 + (last + i - 1) % count][1], n[1], tmpVec1, tmpVec1, color(255 * sqrt(abs(n[4])), 255 * sqrt(n[5]), 0, 100))
       end
 
       local prevEntry
@@ -5678,7 +5354,7 @@ local function debugDraw(focusPos)
       local yellow, blue = color(255,255,0,200), color(0,0,255,200)
       local tmpVec2 = vec3()
       for i = 1, count-1 do
-        local v = trajecRec[1 + (last + i - 1) % count]
+        local v = visDebug.trajecRec[1 + (last + i - 1) % count]
         if prevEntry then
           -- actuall speed
           tmpVec1:set(0, 0, prevEntry[2] * 0.2)
@@ -5694,7 +5370,7 @@ local function debugDraw(focusPos)
         tmpVec1:set(0, 0, v[3] * 0.2)
         debugDrawer:drawCylinder(v[1], v[1] + tmpVec1, 0.01, blue)
 
-        if focusPos:squaredDistance(v[1]) < labelRenderDistance * labelRenderDistance then
+        if focusPos:squaredDistance(v[1]) < visDebug.labelRenderDistance * visDebug.labelRenderDistance then
           tmpVec1:set(0, 0, v[2] * 0.2)
           debugDrawer:drawText(v[1] + tmpVec1 + zOffSet, yellow, strFormat("%2.0f", v[2]*3.6).." kph")
 
@@ -5758,7 +5434,7 @@ local function debugDraw(focusPos)
           debugDrawer:drawCylinder(n.posOrig, p1Orig, 0.03, black)
           debugDrawer:drawCylinder(p1Orig, p1Orig + n.normal, 0.03, black)
           debugDrawer:drawCylinder(prevPointOrig, p1Orig, 0.03, black)
-          local roadHalfWidth = n.radiusOrig * n.chordLength
+          local roadHalfWidth = n.halfWidth
           --debugDrawer:drawCylinder(n.posOrig, p1Orig, roadHalfWidth, color(255, 0, 0, 40))
           if n.laneLimLeft and n.laneLimRight then -- You need to uncomment the appropriate code in planAhead force integrator loop for this to work
             debugDrawer:drawSquarePrism(n.pos - (n.lateralXnorm - n.laneLimLeft) * n.normal, n.pos + (n.laneLimRight - n.lateralXnorm) * n.normal, tmpVec, tmpVec, color(0,0,255,120))
@@ -5799,18 +5475,18 @@ local function debugDraw(focusPos)
       end
 
       -- Player segment visual debug for chase / follow mode
-      -- if chaseData.playerRoad then
+      -- if internalState.chaseData.playerRoad then
       --   local col1, col2
-      --   if internalState == 'tail' then
+      --   if internalState.road == 'tail' then
       --     col1 = color(0,0,0,200)
       --     col2 = color(0,0,0,200)
       --   else
       --     col1 = color(255,0,0,100)
       --     col2 = color(0,0,255,100)
       --   end
-      --   local plwp1 = chaseData.playerRoad[1]
+      --   local plwp1 = internalState.chaseData.playerRoad[1]
       --   debugDrawer:drawSphere(2, mapData.positions[plwp1], col1)
-      --   local plwp2 = chaseData.playerRoad[2]
+      --   local plwp2 = internalState.chaseData.playerRoad[2]
       --   debugDrawer:drawSphere(2, mapData.positions[plwp2], col2)
       -- end
 
@@ -5854,19 +5530,19 @@ local function debugDraw(focusPos)
 
       -- Debug Throttle brake application
       local maxCount = 175
-      local count = min(#trajecRec, maxCount)
-      local last = trajecRec.last
-      if count == 0 or trajecRec[last][1]:squaredDistance(ai.pos) > (0.25 * 0.25) then
+      local count = min(#visDebug.trajecRec, maxCount)
+      local last = visDebug.trajecRec.last
+      if count == 0 or visDebug.trajecRec[last][1]:squaredDistance(ai.pos) > (0.25 * 0.25) then
         last = 1 + last % maxCount
-        trajecRec[last] = {vec3(ai.pos), lastCommand.throttle, lastCommand.brake}
+        visDebug.trajecRec[last] = {vec3(ai.pos), lastCommand.throttle, lastCommand.brake}
         count = min(count+1, maxCount)
-        trajecRec.last = last
+        visDebug.trajecRec.last = last
       end
 
       local tmpVec = vec3(0.7, ai.width, 0.7)
       for i = 1, count-1 do
-        local n = trajecRec[1+(last+i)%count]
-        debugDrawer:drawSquarePrism(trajecRec[1+(last+i-1)%count][1], n[1], tmpVec, tmpVec, color(255 * sqrt(abs(n[3])), 255 * sqrt(n[2]), 0, 100))
+        local n = visDebug.trajecRec[1+(last+i)%count]
+        debugDrawer:drawSquarePrism(visDebug.trajecRec[1+(last+i-1)%count][1], n[1], tmpVec, tmpVec, color(255 * sqrt(abs(n[3])), 255 * sqrt(n[2]), 0, 100))
       end
     elseif false and M.debugMode == 'rays' then
       local aiScanLength = ai.length * 0.9 --small adjustments for origins to be a bit inside the car
@@ -5941,7 +5617,7 @@ local function debugDraw(focusPos)
       debugDrawer:drawSphere(0.1, twt.posTable[3], color(255,255,255,255))
       debugDrawer:drawSphere(0.1, twt.posTable[4], color(255,255,255,255))
 
-      for _, d in pairs(debugSpots) do
+      for _, d in pairs(visDebug.debugSpots) do
         debugDrawer:drawSphere(0.2, d[1], d[2])
       end
     end
@@ -6005,9 +5681,9 @@ end
 local function setAvoidCars(v)
   M.extAvoidCars = v
   if M.extAvoidCars == 'off' or M.extAvoidCars == 'on' then
-    avoidCars = M.extAvoidCars
+    opt.avoidCars = M.extAvoidCars
   else
-    avoidCars = M.mode == 'manual' and 'off' or 'on'
+    opt.avoidCars = M.mode == 'manual' and 'off' or 'on'
   end
   stateChanged()
 end
@@ -6015,10 +5691,10 @@ end
 local function driveInLane(v)
   if v == 'on' then
     M.driveInLaneFlag = 'on'
-    driveInLaneFlag = true
+    opt.driveInLaneFlag = true
   else
     M.driveInLaneFlag = 'off'
-    driveInLaneFlag = false
+    opt.driveInLaneFlag = false
   end
   stateChanged()
 end
@@ -6026,16 +5702,16 @@ end
 local function setVehicleDebugMode(newMode)
   tableMerge(M, newMode)
   if M.debugMode ~= 'trajectory' then
-    trajecRec = {last = 0}
+    visDebug.trajecRec = {last = 0}
   end
   if M.debugMode ~= 'route' then
-    routeRec = {last = 0}
+    visDebug.routeRec = {last = 0}
   end
   if M.debugMode ~= 'speeds' then
-    trajecRec = {last = 0}
+    visDebug.trajecRec = {last = 0}
   end
   if M.debugMode ~= 'rays' then
-    trajecRec = {last = 0}
+    visDebug.trajecRec = {last = 0}
   end
   if M.debugMode ~= 'off' then
     M.debugDraw = debugDraw
@@ -6054,9 +5730,9 @@ local function setMode(mode)
   end
 
   if M.extAvoidCars == 'off' or M.extAvoidCars == 'on' then
-    avoidCars = M.extAvoidCars
+    opt.avoidCars = M.extAvoidCars
   else
-    avoidCars = (M.mode == 'manual' and 'off' or 'on')
+    opt.avoidCars = (M.mode == 'manual' and 'off' or 'on')
   end
 
   if M.mode ~= 'script' then
@@ -6065,7 +5741,8 @@ local function setMode(mode)
 
       mapmgr.requestMap()
       M.updateGFX = updateGFX
-      targetSpeedDifSmoother = newTemporalSmoothingNonLinear(1e300, 4, vec3(obj:getSmoothRefVelocityXYZ()):length())
+      targetSpeedDifSmoother:set(0)
+      targetSpeedSmoother:set(ai.speed)
 
       if controller.mainController then
         if electrics.values.gearboxMode == 'realistic' then
@@ -6107,8 +5784,8 @@ local function setMode(mode)
     sounds.updateObjType()
   end
 
-  trajecRec = {last = 0}
-  routeRec = {last = 0}
+  visDebug.trajecRec = {last = 0}
+  visDebug.routeRec = {last = 0}
 end
 
 local function setRecoverOnCrash(val)
@@ -6137,6 +5814,10 @@ local function reset() -- called when the user pressed I
     setMode() -- some scenarios don't work if this is changed to setMode('disabled')
   end
   stateChanged()
+
+  if dataLogger.logData ~= nop then
+    startStopDataLog()
+  end
 end
 
 local function resetLearning()
@@ -6287,8 +5968,8 @@ local function driveUsingPath(arg)
         outNode = 'wp_'..tostring(i+1)
         local inPos = vec3(arg.script[i].x, arg.script[i].y, arg.script[i].z)
         outPos = vec3(arg.script[i+1].x, arg.script[i+1].y, arg.script[i+1].z)
-        pathMap:uniEdge(inNode, outNode, inPos:distance(outPos), 1, 100, nil, false)
-        pathMap:setPointPositionRadius(inNode, inPos, radius)
+        pathMap:uniEdge(inNode, outNode, inPos:distance(outPos), 1, arg.script[i].vl or 100, nil, false)
+        pathMap:setPointPositionRadius(inNode, inPos, arg.script[i].r or radius)
         table.insert(path, inNode)
         speedProfile[inNode] = arg.script[i].v
       end
@@ -6312,17 +5993,21 @@ local function driveUsingPath(arg)
       oversteerThrottleControl = arg.oversteerThrottleControl,
       throttleTcs = arg.throttleTcs,
       abBrakeControl = arg.abBrakeControl,
-      underSteerBrakeControl = arg.underSteerBrakeControl
+      underSteerBrakeControl = arg.underSteerBrakeControl,
+      throttleKp = arg.throttleKp,
+      targetSpeedSmootherRate = arg.targetSpeedSmootherRate,
+      turnForceCoef = arg.turnForceCoef,
+      springForceIntegratorDispLim = arg.springForceIntegratorDispLim
     })
 
     noOfLaps = arg.noOfLaps and max(arg.noOfLaps, 1) or 1
     wpList = arg.wpTargetList
     manualPath = arg.path
     validateInput = validateUserInput
-    avoidCars = arg.avoidCars or 'off'
+    opt.avoidCars = arg.avoidCars or 'off'
 
-    if noOfLaps > 1 and wpList[2] and wpList[1] == wpList[#wpList] then
-      race = true
+    if noOfLaps > 1 and ((wpList and wpList[2] and wpList[1] == wpList[#wpList]) or (manualPath and manualPath[2] and manualPath[1] == manualPath[#manualPath])) then
+      loopPath = true
     end
 
     speedProfile = arg.wpSpeeds or {}
@@ -6334,6 +6019,41 @@ local function driveUsingPath(arg)
     setAggressionExternal(arg.aggression)
     stateChanged()
   end
+end
+
+local function driveUsingPathWithTraffic(arg)
+  -- Helper function to easily enable manual traffic mode
+  -- This combines destination-oriented driving with traffic rule following
+  if not arg then return end
+  
+  -- Set up the parameters with traffic-friendly defaults
+  local trafficArgs = {
+    wpTargetList = arg.wpTargetList,
+    path = arg.path,
+    script = arg.script,
+    wpSpeeds = arg.wpSpeeds,
+    noOfLaps = arg.noOfLaps,
+    routeSpeed = arg.routeSpeed,
+    routeSpeedMode = arg.routeSpeedMode,
+    driveInLane = arg.driveInLane or 'on',  -- Default to staying in lanes
+    aggression = arg.aggression or 0.3,     -- Default to conservative driving
+    avoidCars = arg.avoidCars or 'on',      -- Default to avoiding cars
+    driveStyle = arg.driveStyle,
+    staticFrictionCoefMult = arg.staticFrictionCoefMult,
+    lookAheadKv = arg.lookAheadKv,
+    understeerThrottleControl = arg.understeerThrottleControl,
+    oversteerThrottleControl = arg.oversteerThrottleControl,
+    throttleTcs = arg.throttleTcs,
+    abBrakeControl = arg.abBrakeControl,
+    underSteerBrakeControl = arg.underSteerBrakeControl
+  }
+  
+  -- Use the regular driveUsingPath function to set up the route
+  driveUsingPath(trafficArgs)
+  
+  -- Then switch to manual traffic mode
+  M.mode = 'manualTraffic'
+  stateChanged()
 end
 
 local function spanMap(cutOffDrivability)
@@ -6418,41 +6138,6 @@ local function isDriving()
   return M.updateGFX == updateGFX or (scriptai ~= nil and scriptai.isDriving())
 end
 
-local function driveUsingPathWithTraffic(arg)
-  -- Helper function to easily enable manual traffic mode
-  -- This combines destination-oriented driving with traffic rule following
-  if not arg then return end
-  
-  -- Set up the parameters with traffic-friendly defaults
-  local trafficArgs = {
-    wpTargetList = arg.wpTargetList,
-    path = arg.path,
-    script = arg.script,
-    wpSpeeds = arg.wpSpeeds,
-    noOfLaps = arg.noOfLaps,
-    routeSpeed = arg.routeSpeed,
-    routeSpeedMode = arg.routeSpeedMode,
-    driveInLane = arg.driveInLane or 'on',  -- Default to staying in lanes
-    aggression = arg.aggression or 0.3,     -- Default to conservative driving
-    avoidCars = arg.avoidCars or 'on',      -- Default to avoiding cars
-    driveStyle = arg.driveStyle,
-    staticFrictionCoefMult = arg.staticFrictionCoefMult,
-    lookAheadKv = arg.lookAheadKv,
-    understeerThrottleControl = arg.understeerThrottleControl,
-    oversteerThrottleControl = arg.oversteerThrottleControl,
-    throttleTcs = arg.throttleTcs,
-    abBrakeControl = arg.abBrakeControl,
-    underSteerBrakeControl = arg.underSteerBrakeControl
-  }
-  
-  -- Use the regular driveUsingPath function to set up the route
-  driveUsingPath(trafficArgs)
-  
-  -- Then switch to manual traffic mode
-  M.mode = 'manualTraffic'
-  stateChanged()
-end
-
 
 -- public interface
 M.driveInLane = driveInLane
@@ -6465,18 +6150,6 @@ M.setTarget = setTarget
 M.setPath = setPath
 M.setSpeed = setSpeed
 M.setSpeedMode = setSpeedMode
-
--- Expose race mode getters
-local function getRaceMode()
-  return raceMode
-end
-
-local function getRacing()
-  return racing
-end
-
-M.getRaceMode = getRaceMode
-M.getRacing = getRacing
 M.setParameters = setParameters
 M.getParameters = getParameters
 M.setVehicleDebugMode = setVehicleDebugMode

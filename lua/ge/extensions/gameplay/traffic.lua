@@ -8,7 +8,7 @@ M.dependencies = {'gameplay_police', 'gameplay_traffic_trafficUtils', 'core_vehi
 local logTag = 'traffic'
 
 local traffic, trafficAiVehsList, trafficIdsSorted, rolesCache = {}, {}, {}, {}
-local mapNodes, mapRules
+local mapNodes
 local vehPool, vehPoolId
 local trafficVehicle = require('gameplay/traffic/vehicle')
 
@@ -31,15 +31,19 @@ local TRAFFIC_STATIONARY_RADIUS = 200 -- Radius to spawn traffic when player is 
 local TRAFFIC_MIN_VEHICLES_IN_VIEW = 3 -- Minimum vehicles that should be visible
 
 --------
-local queuedVehicle = 0
-local globalSpawnDist = 0 -- dynamic respawn distance ahead for all traffic vehicles
-local globalSpawnDir = 0 -- dynamic respawn direction bias for all traffic vehicles
 local state = 'off'
-local worldLoaded = false
-
 local spawnProcess = {}
-local vars, focus
+local spawnPointPos, spawnPointDirVec = vec3(), vec3()
 local tempVec = vec3()
+local vars, focus
+
+local auxiliaryData = { -- additional data for traffic
+  worldLoaded = false, -- world loaded flag
+  queuedVehicle = 0, -- current traffic vehicle index
+  dynamicSpawnDist = 0, -- dynamic respawn distance ahead for all traffic vehicles
+  dynamicSpawnDir = 0, -- dynamic respawn direction bias for all traffic vehicles
+  sampleTimer = 0 -- timer for sampling the current traffic conditions
+}
 
 local defaultData = { -- safe vehicles to use
   traffic = {model = 'pickup'},
@@ -116,12 +120,13 @@ end
 setFocus()
 
 local function getFocus() -- returns the focus point
+  if not focus then setFocus() end -- just in case
   return focus
 end
 
 local function setMapData() -- updates all map related data
   mapNodes = map.getMap().nodes
-  mapRules = map.getRoadRules()
+  --mapRules = map.getRoadRules()
 end
 
 local function getNextSpawnPoint(id, spawnData, placeData) -- sets the new spawn point of a vehicle
@@ -130,19 +135,23 @@ local function getNextSpawnPoint(id, spawnData, placeData) -- sets the new spawn
     if not spawnData then
       local spawnValue = traffic[id] and traffic[id].respawn.spawnValue or 1
       if spawnValue > 0 then -- respawning is enabled
+        spawnValue = clamp(spawnValue, 0.05, 5)
         local freeCamMode = commands.isFreeCamera() or not traffic[playerId]
-        local startPos = focus.pos
-        local startDir = focus.dirVec
-        local speedValue = min(100, square(math.abs(focus.dist or 0) * 0.125)) -- affects spawn point distance and deviation
+        spawnPointPos:set(focus.pos)
+        spawnPointDirVec:set(focus.dirVec)
+        local speedValue = min(150, square(math.abs(focus.dist or 0) * 0.15)) -- affects spawn point distance and deviation
         local addedDist = speedValue
-        local height = max(-1e6, be:getSurfaceHeightBelow(startPos))
+        local height = max(-1e6, be:getSurfaceHeightBelow(spawnPointPos))
 
         if freeCamMode then -- if free camera, the added distance is based on height from ground (can make vehicles respawn further away)
-          addedDist = startPos.z - height
+          addedDist = spawnPointPos.z - height
           addedDist = clamp(square(addedDist) / 15, 0, 200)
         end
-        if spawnValue == 1 then -- if value is default, add some distance scattering
-          addedDist = addedDist + globalSpawnDist
+        addedDist = addedDist + random() * auxiliaryData.dynamicSpawnDist -- distance scattering; perhaps this should be stronger if there are very many vehicles
+
+        if focus.dist < 1 and random() < 0.25 then -- randomly try reverse direction if player is stationary
+          spawnPointDirVec:setScaled(-1)
+          addedDist = 0
         end
 
         local baseValue = clamp(50 + 50 / spawnValue, 50, 400) -- base value to use for initial distance
@@ -150,53 +159,37 @@ local function getNextSpawnPoint(id, spawnData, placeData) -- sets the new spawn
         local maxDist = clamp(minDist * 3, 200, 1200) -- spawn search final distance
         local targetDist = baseValue + minDist -- spawn search visible distance (static raycast)
         local spawnRandomValue = traffic[id] and traffic[id].respawn.spawnRandomization or 1 -- spawn search scatter randomness
-        local lateralDist = spawnRandomValue * clamp(100 - speedValue, 0, 20 + (startPos.z - height)) * 0.25 -- side offset
+        local lateralDist = spawnRandomValue * clamp(100 - speedValue, 0, 40 + (spawnPointPos.z - height)) * 0.25 -- side offset (amplified by height)
 
         if lateralDist ~= 0 then -- adjacent roads may be used with lateral offset to start position
-          tempVec:setCross(startDir, vecUp)
+          tempVec:setCross(spawnPointDirVec, vecUp)
           tempVec:setScaled(lerp(-lateralDist, lateralDist, random()))
-          startPos:setAdd(tempVec)
+          spawnPointPos:setAdd(tempVec)
         end
 
         local params = {}
-        params.pathRandomization = freeCamMode and 1 or clamp((100 - speedValue) / 80, 0, spawnRandomValue)
+        params.pathRandomization = freeCamMode and 1 or clamp((100 - speedValue) / 80, 0, spawnRandomValue) -- pathfinder randomization (higher value is more random)
 
         if traffic[id] then
           -- roads with a drivability < 1 will have a much lower chance of being usable
           params.minDrivability = clamp(math.log10(10 * random() + 1) * 0.9, min(1, traffic[id].drivability), 1)
         end
 
-        spawnData = gameplay_traffic_trafficUtils.findSafeSpawnPoint(startPos, startDir, minDist, maxDist, targetDist, params)
+        spawnData = gameplay_traffic_trafficUtils.findSafeSpawnPoint(spawnPointPos, spawnPointDirVec, minDist, maxDist, targetDist, params)
       end
     end
   end
 
   if spawnData then
-    if spawnData.n1 and spawnData.n2 then
-      local link = mapNodes[spawnData.n1].links[spawnData.n2] or mapNodes[spawnData.n2].links[spawnData.n1]
-      if link then
-        -- adjust global respawn distance based on road network density value based on this spawn point
-        local branchNodes = map.getGraphpath():getBranchNodesAround(spawnData.n1, 200)
-        local branchNodeCount = branchNodes and #branchNodes or 100
-        local baseVal = link.speedLimit <= 25 and 500 or 200 -- highways: lower max spawn distance
-        local baseCoef = link.speedLimit <= 25 and 25 or 50 -- highways: higher scattering
-        local maxDist = baseVal / max(2, branchNodeCount) -- max global respawn distance is affected by the local road network density
-        globalSpawnDist = globalSpawnDist + random() * baseCoef -- randomized increase
-        if globalSpawnDist >= maxDist then globalSpawnDist = 0 end -- reset value if threshold reached
-
-        globalSpawnDir = globalSpawnDir <= 0 and 0.6 or -0.6
-        globalSpawnDir = globalSpawnDir + random() * 0.2 -- random stronger bias for respawning in the incoming direction
-      end
-    end
-
     if not placeData then
       -- this needs improvement
       local dirBias = traffic[id] and traffic[id].respawn.spawnDirBias or 0
       if dirBias == 0 then
-        dirBias = globalSpawnDir
-
-        if focus.dirVec:dot(spawnData.pos - focus.pos) < 0 then
-          dirBias = min(1, dirBias + 0.8) -- vehicles respawning on the path behind should mostly drive towards you
+        tempVec:setSub2(spawnData.pos, focus.pos)
+        if focus.dist < 1 or focus.dirVec:dot(tempVec) < 0 then
+          dirBias = 0.6 -- vehicles respawning on the path behind should mostly drive towards you
+        else
+          dirBias = auxiliaryData.dynamicSpawnDir -- smart direction scattering
         end
       end
 
@@ -227,7 +220,7 @@ local function getNextSpawnPoint(id, spawnData, placeData) -- sets the new spawn
   end
 end
 
-local function updateTrafficVisibility(dt, playerVeh, playerPos)
+local function updateTrafficVisibility(dt)
   lastVisibilityUpdate = lastVisibilityUpdate + dt
   if lastVisibilityUpdate < 0.1 then
       return
@@ -286,7 +279,6 @@ local function respawnVehicle(id, pos, rot, strict) -- moves the vehicle to a ne
     obj:autoplace(false)
     obj:resetBrokenFlexMesh()
   end
-  obj.renderDistance = TRAFFIC_VISIBLE_DISTANCE
 
   if traffic[id] then
     traffic[id].pos = vec3(pos) -- instantly updates the position this frame
@@ -297,19 +289,21 @@ local function respawnVehicle(id, pos, rot, strict) -- moves the vehicle to a ne
 end
 
 local function forceTeleport(id, pos, dir, minDist, maxDist, targetDist) -- force teleports a traffic vehicle
-  setMapData()
+  if traffic[id] and traffic[id].ignoreForceTeleport then return end -- ignoreForceTeleport is a special flag for vehicles that should not be force teleported
 
   local vehObj = getObjectByID(id)
   if vehObj and vehObj:getActive() then
+    setMapData()
+
     pos = pos or core_camera.getPosition()
     dir = dir or core_camera.getForward()
     minDist = minDist or 100
     maxDist = maxDist or 500
     targetDist = targetDist or min(minDist * 2, lerp(minDist, maxDist, 0.5))
 
-    if traffic[id] then
-      traffic[id].respawn.pos = vec3(0, 0, -1000)
-    end
+    --if traffic[id] then
+      --traffic[id].respawn.pos = vec3(0, 0, -1000) -- temporary, prevents conflicts (remove later)
+    --end
 
     local spawnData = gameplay_traffic_trafficUtils.findSafeSpawnPoint(nil, nil, minDist, maxDist, targetDist)
     local newPos, newRot = gameplay_traffic_trafficUtils.finalizeSpawnPoint(spawnData.pos, spawnData.dir, spawnData.n1, spawnData.n2, {legalDirection = true})
@@ -319,8 +313,8 @@ local function forceTeleport(id, pos, dir, minDist, maxDist, targetDist) -- forc
 end
 
 local function scatterTraffic(vehIds, minDist, maxDist) -- teleports a group of vehicles away from the current place
-  vehIds = vehIds or trafficAiVehsList -- all traffic by default
-  for _, id in ipairs(trafficAiVehsList) do
+  vehIds = vehIds or trafficAiVehsList -- all AI-controlled traffic by default
+  for _, id in ipairs(vehIds) do
     forceTeleport(id, nil, nil, minDist, maxDist)
   end
 end
@@ -412,8 +406,8 @@ local function resetTrafficVars() -- resets traffic variables to default
   vars = {
     spawnValue = 1, -- as the default value, globalSpawnDist will dynamically adjust the random respawn distance from player
     spawnDirBias = 0, -- as the default value, globalSpawnDir will dynamically adjust the random respawn direction
-    baseAggression = 0.35, -- old default: 0.3
     activeAmount = math.huge, -- number of active (visible) vehicles at a time
+    baseAggression = 0.35, -- old default: 0.3
     speedLimit = nil, -- global speed limit; overrides road speed limits
     aiMode = 'traffic',
     aiAware = 'auto',
@@ -441,16 +435,30 @@ local function setTrafficVars(data, reset) -- sets various traffic variables
     local veh = traffic[id]
 
     if data.aiMode then
-      veh:setAiMode(vars.aiMode)
+      veh:setAiMode(data.aiMode)
     end
-    if data.aiAware then
-      veh:setAiAware(vars.aiAware)
-    end
-    if data.speedLimit or data.baseAggression then
-      refreshVehicles()
+    if data.aiAware or data.speedLimit or data.baseAggression then
+      veh:setAiParameters(data)
     end
     if data.spawnValue then
       veh.respawn.spawnValue = data.spawnValue
+      auxiliaryData.dynamicSpawnDist = 0 -- resets distance scattering
+    end
+    if data.spawnDirBias then
+      veh.respawn.spawnDirBias = data.spawnDirBias
+      auxiliaryData.dynamicSpawnDir = 0 -- resets direction scattering
+    end
+
+    if data.aiMode then
+      -- here is special logic that sets or unsets roles if a different AI mode is set
+      -- in other words, this enables modes such as 'flee' or 'chase' to work seamlessly for all vehicles
+      if data.aiMode == 'traffic' and veh.roleName == 'empty' then
+        veh:setRole(veh._tempRole) -- restores the previous role (or auto role if no previous role was set)
+        veh._tempRole = nil
+      elseif data.aiMode ~= 'traffic' and veh.roleName ~= 'empty' then
+        veh._tempRole = veh.roleName
+        veh:setRole('empty') -- prevents role logic from changing AI mode internally
+      end
     end
   end
 
@@ -485,8 +493,9 @@ local function getRoleConstructor(roleName) -- gets the role constructor module
   return rolesCache[roleName]
 end
 
-local function insertTraffic(id, ignoreAi) -- inserts new vehicles into the traffic table
+local function insertTraffic(id, ignoreAi, ignoreVehPool) -- inserts new vehicles into the traffic table
   -- ignoreAi prevents AI and respawn logic from getting applied to the given vehicle
+  -- ignoreVehPool prevents the vehicle from becoming deactivated due to the vehicle pooling system (maybe needs another way to handle this)
   local obj = getObjectByID(id)
 
   if obj and not traffic[id] then
@@ -505,7 +514,14 @@ local function insertTraffic(id, ignoreAi) -- inserts new vehicles into the traf
       if not vehPool then
         createTrafficPool()
       end
-      vehPool:insertVeh(id)
+      if not ignoreVehPool then
+        vehPool:insertVeh(id)
+      end
+
+      if not next(map.getMap().nodes) then -- always disable respawning if no map nodes exist
+        traffic[id].enableRespawn = false
+        traffic[id].ignoreForceTeleport = true
+      end
 
       traffic[id]:setAiMode(obj.aiMode or vars.aiMode) -- object ai mode can overwrite traffic default ai mode
     end
@@ -529,6 +545,9 @@ local function removeTraffic(id, stopAi) -- removes vehicles from the traffic ta
 
       if stopAi and traffic[id].isAi then
         obj:queueLuaCommand('ai.setMode("stop")')
+      end
+      if vehPool then
+        vehPool:removeVeh(id)
       end
     end
 
@@ -573,7 +592,7 @@ local function onVehicleSpawned(id)
 end
 
 local function onVehicleSwitched(oldId, newId)
-  checkPlayer(newId, oldId)
+  checkPlayer(newId)
 end
 
 local function onVehicleResetted(id)
@@ -600,7 +619,7 @@ local function onVehicleActiveChanged(vehId, active)
         traffic[vehId].alpha = 0
         getObjectByID(vehId):setMeshAlpha(0, '')
       else
-        if traffic[vehId]._teleport then -- immediately teleport vehicle if flag exists
+        if traffic[vehId]._teleport then -- force teleport if flag exists
           if gameplay_traffic_trafficUtils.checkSpawnPoint(traffic[vehId].pos) then -- if current position is safe, then no teleport needed
             traffic[vehId]:onRefresh()
           else
@@ -623,11 +642,12 @@ local function deleteVehicles() -- deletes all traffic vehicles
 end
 
 local function activate(vehList, ignoreFilter) -- activates traffic mode, and adds specified vehicles to the traffic table
-  -- if ignoreFilter is true and vehList is empty, all vehicles get activated
   if type(vehList) ~= 'table' then -- for backwards compatibility
     vehList = {}
+
+    -- NOTE: If vehList is empty, all vehicles get activated, even unintended ones; this may need to be reconsidered in the future
     for _, veh in ipairs(getAllVehiclesByType()) do
-      if ignoreFilter or (not veh.isParked and veh.vehicleGroup) then
+      if not veh.isParked then
         table.insert(vehList, veh:getId())
       end
     end
@@ -660,12 +680,17 @@ local function spawnTraffic(amount, group, options) -- spawns a defined group of
   options = type(options) == 'table' and options or {}
   state = 'spawning'
 
-  if not options.pos then
+  local spawnMode = next(map.getMap().nodes) and 'traffic' or 'lineAhead' -- check if map nodes exist
+  if not options.pos and spawnMode == 'traffic' then
     local spawnData = gameplay_traffic_trafficUtils.findSafeSpawnPoint(nil, nil, options.minDist or 0, options.maxDist or 200, 0)
-    options.pos, options.dir = spawnData.pos, spawnData.dir
+    if core_camera.getPosition():squaredDistance(spawnData.pos or vecUp) >= 100 then -- camera is far enough from spawn point
+      options.pos, options.dir = spawnData.pos, spawnData.dir -- sets custom position and direction
+      log('I', logTag, 'Spawn point found outside of default spawn range')
+    end
   end
 
-  return core_multiSpawn.spawnGroup(group, amount, {name = 'autoTraffic', mode = options.mode or 'traffic', gap = options.gap or 20, pos = options.pos, dir = options.dir, ignoreJobSystem = not worldLoaded, ignoreAdjust = not worldLoaded})
+  return core_multiSpawn.spawnGroup(group, amount, {name = 'autoTraffic', mode = options.mode or spawnMode, gap = options.gap or 20, pos = options.pos, dir = options.dir,
+  ignoreJobSystem = not auxiliaryData.worldLoaded, ignoreAdjust = not auxiliaryData.worldLoaded})
 end
 
 local function setupTraffic(amount, policeRatio, options) -- prepares a group of vehicles for traffic
@@ -752,8 +777,8 @@ local function setupTraffic(amount, policeRatio, options) -- prepares a group of
       if policeGroup then
         for i = 1, policeAmount do
           if policeGroup[i] then
-            table.insert(trafficGroup, 1, policeGroup[i]) -- insert at the start of the array (police vehicles have priority)
-            table.remove(trafficGroup, #trafficGroup) -- removes the last entry
+            table.insert(trafficGroup, 1, policeGroup[i]) -- pushes to array (police vehicles have priority)
+            table.remove(trafficGroup, #trafficGroup) -- pops from array
           end
         end
       end
@@ -830,7 +855,7 @@ local function toggle(keepInMemory)
   end
 end
 
-local function freezeState() -- stops the traffic and parking systems, and returns the state data
+local function freezeState() -- stops the traffic, police, and parking systems, and returns the state data
   return M.onSerialize(), gameplay_police.onSerialize(), gameplay_parking.onSerialize()
 end
 
@@ -873,7 +898,7 @@ local function doTraffic(dt, dtSim) -- active traffic logic
           end
         end
 
-        if i == queuedVehicle then -- checks one vehicle per frame, as an optimization
+        if i == auxiliaryData.queuedVehicle then -- checks one vehicle per frame, as an optimization
           if veh._teleport then
             forceTeleport(id, nil, nil, veh._teleportDist)
           else
@@ -890,9 +915,49 @@ local function doTraffic(dt, dtSim) -- active traffic logic
     end
   end
 
-  queuedVehicle = queuedVehicle + 1
-  if queuedVehicle > vehCount then
-    queuedVehicle = 1
+  auxiliaryData.queuedVehicle = auxiliaryData.queuedVehicle + 1
+  if auxiliaryData.queuedVehicle > vehCount then
+    auxiliaryData.queuedVehicle = 1
+  end
+
+  if vars.spawnValue == 1 or vars.spawnDirBias == 0 then
+    auxiliaryData.sampleTimer = auxiliaryData.sampleTimer + dtSim
+    if auxiliaryData.sampleTimer > 5 then -- every 5 seconds, sample the current traffic conditions if there is a need to set dynamic spawn parameters
+      if vars.spawnValue == 1 then -- adjust global respawn distance based on road network density
+        local n1, n2 = map.findClosestRoad(focus.pos)
+        if n1 and n2 then
+          local link = mapNodes[n1].links[n2] or mapNodes[n2].links[n1]
+          if link then
+            local branchNodes = map.getGraphpath():getBranchNodesAround(n1, 200)
+            local branchNodeCount = branchNodes and #branchNodes or 100
+            auxiliaryData.dynamicSpawnDist = (square(link.speedLimit / 2.5) * 4) / branchNodeCount -- distance scattering is affected by the local road network density
+          end
+        end
+      end
+
+      if vars.spawnDirBias == 0 then -- adjust global respawn direction based on current traffic ahead on the road
+        local count = 0
+        local outboundCount = 0
+        for id, veh in pairs(traffic) do
+          if veh.state == 'active' then
+            count = count + 1
+            local dotDir = sign2(focus.dirVec:dot(veh.dirVec))
+            if dotDir == 1 then
+              outboundCount = outboundCount + 1
+            end
+          end
+        end
+
+        if count == 0 then
+          auxiliaryData.dynamicSpawnDir = 0
+        else
+          local limit = min(1, count / 8) -- stronger effect if there are more vehicles
+          auxiliaryData.dynamicSpawnDir = lerp(-limit, limit, outboundCount / count)
+        end
+      end
+
+      auxiliaryData.sampleTimer = 0
+    end
   end
 end
 
@@ -906,14 +971,14 @@ local function onSettingsChanged()
 end
 
 local function trackAIAllVeh(mode) -- triggers when the player sets an AI mode for all vehicles
-  vars.aiMode = string.lower(mode)
-  refreshVehicles()
+  mode = mode or 'traffic'
+  setTrafficVars({aiMode = string.lower(mode)})
 end
 
 local function onVehicleMapmgrUpdate(id) -- when the latest spawned vehicle processes its mapmgr, complete the spawning process
   if vehPool and spawnProcess.vehList and spawnProcess.vehList[#spawnProcess.vehList] == id then
-    if not worldLoaded then
-      worldLoaded = true
+    if not auxiliaryData.worldLoaded then
+      auxiliaryData.worldLoaded = true
     end
 
     if spawnProcess.waitForUi then
@@ -939,10 +1004,6 @@ local function onVehicleGroupSpawned(vehList, groupId, groupName)
   if groupName == 'autoTraffic' then
     spawnProcess.vehList = vehList
     activate(spawnProcess.vehList)
-    local _, dist = gameplay_traffic_trafficUtils.getNearestTrafficVehicle()
-    if dist > 50 then
-      ui_message('Traffic was moved to nearest valid road', 5, 'traffic', 'traffic')
-    end
   end
 end
 
@@ -952,7 +1013,7 @@ local function onUpdate(dtReal, dtSim)
   end
 
   -- these hooks activate the frame after the first or last traffic vehicle gets inserted or removed
-  -- NOTE: need to explain why
+  -- this frame delay solves some timing issues
   if state ~= 'on' and trafficAiVehsList[1] then
     extensions.hook('onTrafficStarted')
   end
@@ -965,12 +1026,14 @@ local function onUpdate(dtReal, dtSim)
       focus.vehId = focus.vehId or be:getPlayerVehicleID(0)
       if map.objects[focus.vehId] then
         focus.pos:set(map.objects[focus.vehId].pos)
-        focus.dirVec:set(map.objects[focus.vehId].dirVec)
-        focus.dist = map.objects[focus.vehId].vel:dot(map.objects[focus.vehId].dirVec) -- relative speed
-        if focus.dist <= -1 then -- if the vehicle is in reverse, invert the direction vector
-          focus.dirVec:setScaled(-1)
+        focus.dirVec:set(map.objects[focus.vehId].vel) -- uses velocity vector instead of direction vector
+        focus.dist = focus.dirVec:length()
+        if focus.dist < 1 then
+          focus.dirVec:set(map.objects[focus.vehId].dirVec) -- uses direction vector if the vehicle is stationary
+        else
+          focus.dirVec:setScaled(1 / max(1e-12, focus.dist)) -- normalizes the vector
+          focus.dist = min(80, focus.dist) -- capped absolute distance
         end
-        focus.dist = min(70, math.abs(focus.dist)) -- capped absolute distance
       end
     end
     if focus.mode == 'camera' or (focus.mode == 'vehicle' and focus.auto and (not map.objects[focus.vehId] or commands.isFreeCamera() or focus.dist < 1)) then
@@ -990,6 +1053,7 @@ local function onUpdate(dtReal, dtSim)
     end
 
     if be:getEnabled() and not freeroam_bigMapMode.bigMapActive() then
+      updateTrafficVisibility(dtSim)
       doTraffic(dtReal, dtSim)
     end
   end
@@ -1024,8 +1088,9 @@ end
 local function onTrafficStarted()
   setMapData()
   state = 'on'
-  globalSpawnDist = 0
-  globalSpawnDir = 0
+  auxiliaryData.queuedVehicle = 0
+  auxiliaryData.dynamicSpawnDist = 0
+  auxiliaryData.dynamicSpawnDir = 0
 
   if not vehPool then
     createTrafficPool(trafficAiVehsList)
@@ -1051,7 +1116,7 @@ end
 
 local function onClientStartMission()
   if state == 'off' then
-    worldLoaded = true
+    auxiliaryData.worldLoaded = true
   end
 end
 
@@ -1059,13 +1124,13 @@ local function onClientEndMission()
   onTrafficStopped()
   resetTrafficVars()
   setFocus()
-  worldLoaded = false
+  auxiliaryData.worldLoaded = false
 end
 
-local function onUiWaitingState()
+local function onUiWaitingState() -- callback for when the waiting UI is shown
   if spawnProcess.waitForUi and not spawnProcess.trafficSetup and not spawnProcess.parkingSetup then
     if settings.getValue('trafficParkedVehicles') then
-      spawnProcess.parkingSetup = gameplay_parking.setupVehicles()
+      spawnProcess.parkingSetup = gameplay_parking.setupVehicles() -- setup parked cars first, if applicable
     else
       spawnProcess.parkingSetup = false
     end
@@ -1087,12 +1152,12 @@ local function onSerialize()
   end
   local data = {state = state, traffic = deepcopy(trafficData), vars = deepcopy(vars)}
   onTrafficStopped()
-  mapNodes, mapRules = nil, nil
+  mapNodes = nil
   return data
 end
 
 local function onDeserialized(data)
-  worldLoaded = true
+  auxiliaryData.worldLoaded = true
   vars = data.vars
   if data.state == 'on' then
     for _, veh in pairs(data.traffic) do

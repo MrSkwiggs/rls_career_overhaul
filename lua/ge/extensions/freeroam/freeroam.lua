@@ -9,7 +9,6 @@ local logTag = 'freeroam'
 local inputActionFilter = extensions.core_input_actionFilter
 
 local function startFreeroamHelper (level, startPointName, spawnVehicle)
-  core_gamestate.requestEnterLoadingScreen(logTag .. '.startFreeroamHelper')
   unloadAutoExtensions()
   loadPresetExtensions()
   extensions.load("gameplay/events/freeroamEvents")
@@ -36,7 +35,6 @@ local function startFreeroamHelper (level, startPointName, spawnVehicle)
   end
 
   core_levels.startLevel(levelPath, nil, nil, spawnVehicle)
-  core_gamestate.requestExitLoadingScreen(logTag .. '.startFreeroamHelper')
 end
 
 local function startAssociatedFlowgraph(level)
@@ -89,19 +87,31 @@ local function startFreeroam(level, startPointName, wasDelayed, spawnVehicle)
   end
 end
 
-local function startFreeroamByName(levelName, startPointName, wasDelayed, spawnVehicle)
-  local level = core_levels.getLevelByName(levelName)
-  if level then
-    startFreeroam(level, startPointName, wasDelayed, spawnVehicle)
-    return true
-  end
-  return false
+-- if this is anything other than nil, the next freeroam will load with traffic or without traffic depending on the value
+local forceTrafficLoading = nil
+M.setForceTrafficLoading = function(value)
+  forceTrafficLoading = value
 end
 
 local function onPlayerCameraReady()
-  if M.state.freeroamActive and gameplay_traffic.getState() == 'off' and settings.getValue('trafficLoadForFreeroam') then
+  local loadTraffic = gameplay_traffic.getState() == 'off' and settings.getValue('trafficLoadForFreeroam')
+  local loadParkedVehicles = settings.getValue('trafficParkedVehicles')
+
+  if forceTrafficLoading ~= nil then
+    if type(forceTrafficLoading) == 'boolean' then
+      loadTraffic = forceTrafficLoading
+    elseif type(forceTrafficLoading) == 'table' then
+      loadTraffic = forceTrafficLoading.traffic
+      loadParkedVehicles = forceTrafficLoading.parkedVehicles
+    end
+
+    log('I', logTag, string.format('Overriding traffic loading for freeroam mode: traffic %s, parked vehicles %s', loadTraffic, loadParkedVehicles))
+    forceTrafficLoading = nil
+  end
+
+  if M.state.freeroamActive and loadTraffic then
     log('I', logTag, 'Now spawning traffic for freeroam mode')
-    if settings.getValue('trafficParkedVehicles') then
+    if loadParkedVehicles then
       gameplay_parking.setupVehicles()
     end
     gameplay_traffic.setupTraffic()

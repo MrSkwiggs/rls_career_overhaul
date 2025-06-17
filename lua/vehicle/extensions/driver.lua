@@ -31,9 +31,9 @@ local function goToTarget(speedMode)
         routeSpeedMode = 'legal'
     })
     ai.setParameters({
-        trafficWaitTime = 0.05,
-        lookAheadKv = 0.005,
-        awarenessForceCoef = 0.01, 
+        trafficWaitTime = 0.005,
+        lookAheadKv = 0.01,
+        awarenessForceCoef = 0.02, 
         driveStyle = "offroad"
     })
 end
@@ -53,15 +53,11 @@ local function raceToTarget()
     ai.setMode("manual")
     ai.setAvoidCars("on")
     ai.setSpeedMode("off")
-    ai.setSpeed(300)
-    ai.driveInLane("off")
+    ai.driveInLane("on")
     ai.setParameters({
-        lookAheadKv = 0.005,
-        awarenessForceCoef = 0.005,
-        driveStyle = "offroad"
+        lookAheadKv = 0.03,
+        awarenessForceCoef = 0.1,
     })
-    ai.setRacing(true)
-    ai.setAggression(10)
 end
 
 local function returnTargetPosition(target, race)

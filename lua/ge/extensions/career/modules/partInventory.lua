@@ -18,6 +18,7 @@ local coreSlots = {}
 local partsBefore = {}
 local partsAfter
 local slotToPartIdMap = {}
+local partPathToPartIdMap = {}
 local partInventoryOpen = false
 local closeMenuAfterSaving
 
@@ -209,35 +210,6 @@ local function generateAndGetPartsFromVehicle(inventoryId)
   return result
 end
 
--- TODO maybe also save for each part taken off the subparts that are attached to it
--- option 2: when detaching a part, put all the subparts seperately into the inventory and whenever you attach a part, all it's slots will be made empty
-
-local function movePart(to, partId)
-  local part = partInventory[partId]
-  if not part then return end
-
-  local from = part.location
-  if from == to then return end
-
-  -- we cant change parts of inaccessible vehicles
-  local vehicles = career_modules_inventory.getVehicles()
-  if vehicles[from] and vehicles[from].timeToAccess then return end
-
-  if from >= 1 then
-    if coreSlots[from][part.containingSlot] then return end
-  end
-
-  if to >= 1 then return end
-
-  if from >= 1 then
-    partsBefore = getPartIdsFromVehicle(from)
-    removePart(partId, from)
-    career_modules_vehiclePerformance.invalidateCertification(from)
-  end
-
-  career_modules_log.addLog(string.format("Moved part %d from %d to %d", partId, from, to), "partInventory")
-end
-
 local function updateVehicleMaps()
   -- Build a map of core slots
   table.clear(coreSlots)
@@ -255,9 +227,15 @@ local function updateVehicleMaps()
   -- TODO does this need to be cached?
   -- Make a map from slot to its part
   table.clear(slotToPartIdMap)
+  table.clear(partPathToPartIdMap)
   for partId, part in pairs(partInventory) do
     slotToPartIdMap[part.location] = slotToPartIdMap[part.location] or {}
     slotToPartIdMap[part.location][part.containingSlot] = partId
+
+    if part.location > 0 then
+      partPathToPartIdMap[part.location] = partPathToPartIdMap[part.location] or {}
+      partPathToPartIdMap[part.location][part.partPath] = partId
+    end
   end
 end
 
@@ -320,11 +298,6 @@ local function debugMenu()
         if coreSlots[part.location][part.slotType] then
           imgui.BeginDisabled()
           disabled = true
-        end
-        if part.description.description then
-          if imgui.Button(part.description.description .. "##inVehicle") then
-            movePart(0, partId)
-          end
         end
         if disabled then imgui.EndDisabled() end
       end
@@ -661,6 +634,10 @@ local function getSlotToPartIdMap()
   return slotToPartIdMap
 end
 
+local function getPartPathToPartIdMap()
+  return partPathToPartIdMap
+end
+
 local function getInventory()
   return partInventory
 end
@@ -682,7 +659,6 @@ local function onComputerAddFunctions(menuData, computerFunctions)
 end
 
 M.generateAndGetPartsFromVehicle = generateAndGetPartsFromVehicle
-M.movePart = movePart
 M.changedPartsCallback = changedPartsCallback
 M.initConditionsCallback = initConditionsCallback
 M.sendUIData = sendUIData
@@ -690,6 +666,7 @@ M.openMenu = openMenu
 M.closeMenu = closeMenu
 M.partInventoryClosed = partInventoryClosed
 M.getSlotToPartIdMap = getSlotToPartIdMap
+M.getPartPathToPartIdMap = getPartPathToPartIdMap
 M.getInventory = getInventory
 M.addPartToInventory = addPartToInventory
 M.getPart = getPart

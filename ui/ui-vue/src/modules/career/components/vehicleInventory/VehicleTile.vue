@@ -403,7 +403,7 @@ const locked = computed(() => {
   .performance-index {
     display: inline-flex;
     font-weight: 600;
-    border-radius: 0.25em;
+    border-radius: var(--bng-corners-1);
     overflow: hidden;
     align-items: center;
 

@@ -11,36 +11,26 @@ local moduleVersion = 42
 local jbeamIO = require('jbeam/io')
 local imgui = ui_imgui
 
+local vehicleShopDirtyDate
+
 local vehicleDeliveryDelay = 60
-local shopGenerationDelay = 15 * 60
-local vehiclesPerDealership = 10
+local vehicleOfferTimeToLive = 10 * 60
+local dealershipTimeBetweenOffers = 1 * 60
+local vehiclesPerDealership = vehicleOfferTimeToLive / dealershipTimeBetweenOffers
 local salesTax = 0.07
 local customLicensePlatePrice = 300
 
 local starterVehicleMileages = {bx = 165746239, etki = 285817342, covet = 80174611}
 local starterVehicleYears = {bx = 1990, etki = 1989, covet = 1989}
 
-local lastGenerationTime = 0
-
-local vehiclesInShop
+local vehiclesInShop = {}
+local sellersInfos = {}
 local currentSeller
 
 local purchaseData
-local paySoundId
 
 local tether
 local tetherRange = 4 --meter
-
-local isReallyRandom = false
-
-local function getVehiclesPerDealership() return vehiclesPerDealership end
-local function setVehiclesPerDealership(amount)
-  vehiclesPerDealership = amount
-  lastGenerationTime = 0
-end
-
-local function getShopGenerationDelay() return shopGenerationDelay end
-local function setShopGenerationDelay(amount) shopGenerationDelay = amount end
 
 local function convertKeysToStrings(t)
   local newTable = {}
@@ -157,45 +147,123 @@ local function getVehiclePartsValue(modelName, configKey)
   return totalValue
 end
 
-local function generateVehicleList()
-  local eligibleVehicles = util_configListGenerator.getEligibleVehicles(not career_career.hasBoughtStarterVehicle())
-  normalizePopulations(eligibleVehicles, 0.4)
-
+local function updateVehicleList(fromScratch)
+  vehicleShopDirtyDate = os.date("!%Y-%m-%dT%XZ")
+  local eligibleVehicles
   local sellers = {}
+  local onlyStarterVehicles = not career_career.hasBoughtStarterVehicle()
+
+  if fromScratch then
+    vehiclesInShop = {}
+  end
+
+  -- if there are already vehicles in the shop, don't generate starter vehicles
+  if onlyStarterVehicles and not tableIsEmpty(vehiclesInShop) then
+    return
+  end
 
   -- get the dealerships from the level
   local facilities = deepcopy(freeroam_facilities.getFacilities(getCurrentLevelIdentifier()))
   for _, dealership in ipairs(facilities.dealerships) do
-    if career_career.hasBoughtStarterVehicle() then
-      dealership.filter = dealership.filter or {}
-      table.insert(sellers, dealership)
-    else
+    if onlyStarterVehicles then
       if dealership.containsStarterVehicles then
         dealership.filter = {whiteList = {careerStarterVehicle = {true}}}
         dealership.subFilters = nil
         table.insert(sellers, dealership)
       end
+    else
+      dealership.filter = dealership.filter or {}
+      table.insert(sellers, dealership)
     end
   end
 
-  if career_career.hasBoughtStarterVehicle() then
+  if not onlyStarterVehicles then
     for _, dealership in ipairs(facilities.privateSellers) do
       table.insert(sellers, dealership)
     end
   end
   table.sort(sellers, function(a,b) return a.id < b.id end)
 
-  vehiclesInShop = {}
-  for _, seller in ipairs(sellers) do
-    local randomVehicleInfos = util_configListGenerator.getRandomVehicleInfos(seller, seller.stock or 15, eligibleVehicles, "adjustedPopulation")
+  local currentTime = os.time()
 
-    for _, randomVehicleInfo in ipairs(randomVehicleInfos) do
+  -- remove vehicles that have expired
+  for i = #vehiclesInShop, 1, -1 do
+    local vehicleInfo = vehiclesInShop[i]
+    local offerTime = currentTime - vehicleInfo.generationTime
+    if offerTime > vehicleInfo.offerTTL then
+      vehicleInfo.soldViewCounter = vehicleInfo.soldViewCounter or 0
+      vehicleInfo.soldViewCounter = vehicleInfo.soldViewCounter + 1
+      if vehicleInfo.soldViewCounter > 1 then
+        table.remove(vehiclesInShop, i)
+      end
+    end
+  end
+
+  -- update the shopId for each vehicle that hasnt been removed
+  for id, vehInfo in ipairs(vehiclesInShop) do
+    vehInfo.shopId = id
+  end
+
+  for _, seller in ipairs(sellers) do
+    if not sellersInfos[seller.id] then
+      sellersInfos[seller.id] = {
+        lastGenerationTime = 0,
+      }
+    end
+    if fromScratch then
+      sellersInfos[seller.id].lastGenerationTime = 0
+    end
+
+    local randomVehicleInfos = {}
+    if onlyStarterVehicles then
+      -- generate the starter vehicles
+      if not eligibleVehicles then
+        eligibleVehicles = util_configListGenerator.getEligibleVehicles(onlyStarterVehicles)
+        normalizePopulations(eligibleVehicles, 0.4)
+      end
+      randomVehicleInfos = util_configListGenerator.getRandomVehicleInfos(seller, 3, eligibleVehicles, "adjustedPopulation")
+    else
+      -- Count how many vehicles this seller already has in the shop
+      local currentVehicleCount = 0
+      for _, vehicleInfo in ipairs(vehiclesInShop) do
+        if vehicleInfo.sellerId == seller.id then
+          currentVehicleCount = currentVehicleCount + 1
+        end
+      end
+      
+      -- Calculate how many vehicles can be generated based on stock limit and time
+      local maxStock = seller.stock or 10 -- fallback to 10 if no stock limit defined
+      local availableSlots = math.max(0, maxStock - currentVehicleCount)
+      
+      -- Scale restock speed based on dealership size (larger dealerships restock faster)
+      local stockScalingFactor = math.max(1, maxStock / 10) -- Larger dealerships get faster restock
+      local scaledTimeBetweenOffers = dealershipTimeBetweenOffers / stockScalingFactor
+      
+      local timeBasedGeneration = math.floor((currentTime - sellersInfos[seller.id].lastGenerationTime) / scaledTimeBetweenOffers)
+      local numberOfVehiclesToGenerate = math.min(timeBasedGeneration, availableSlots)
+  
+        
+        -- generate the vehicles
+      for i = 1, numberOfVehiclesToGenerate do
+        if not eligibleVehicles then
+          eligibleVehicles = util_configListGenerator.getEligibleVehicles()
+          normalizePopulations(eligibleVehicles, 0.4)
+        end
+        arrayConcat(randomVehicleInfos, util_configListGenerator.getRandomVehicleInfos(seller, 1, eligibleVehicles, "adjustedPopulation"))
+      end
+    end
+
+    for i, randomVehicleInfo in ipairs(randomVehicleInfos) do
+      -- Distribute generation times evenly between lastGenerationTime and currentTime
+      randomVehicleInfo.generationTime = currentTime - ((i-1) * dealershipTimeBetweenOffers)
+      randomVehicleInfo.offerTTL = vehicleOfferTimeToLive
+
       randomVehicleInfo.sellerId = seller.id
       randomVehicleInfo.sellerName = seller.name
       local filter = randomVehicleInfo.filter
       local years = randomVehicleInfo.Years or randomVehicleInfo.aggregates.Years
 
-      if career_career.hasBoughtStarterVehicle() then
+      if not onlyStarterVehicles then
         randomVehicleInfo.year = years and math.random(years.min, years.max) or 2023
         if filter.whiteList and filter.whiteList.Mileage then
           randomVehicleInfo.Mileage = randomGauss3()/3 * (filter.whiteList.Mileage.max - filter.whiteList.Mileage.min) + filter.whiteList.Mileage.min
@@ -218,7 +286,7 @@ local function generateVehicleList()
       -- compute taxes and fees
       randomVehicleInfo.fees = seller.fees or 0
       randomVehicleInfo.tax = seller.salesTax or salesTax
-
+      
       if seller.id == "private" then
         local parkingSpots = gameplay_parking.getParkingSpots().byName
         local parkingSpotNames = tableKeys(parkingSpots)
@@ -253,7 +321,12 @@ local function generateVehicleList()
       end
       vehiclesInShop[randomVehicleInfo.shopId] = randomVehicleInfo
     end
+    if not tableIsEmpty(randomVehicleInfos) then
+      sellersInfos[seller.id].lastGenerationTime = currentTime
+    end
   end
+
+  log("I", "Career", "Vehicles in shop: " .. tableSize(vehiclesInShop))
 end
 
 local function moveVehicleToDealership(vehObj, dealershipId)
@@ -343,9 +416,6 @@ local function buyVehicleAndSendToGarage(options)
   spawnFollowUpActions = {delayAccess = delay, licensePlateText = options.licensePlateText, dealershipId = options.dealershipId}
   spawnVehicle(purchaseData.vehicleInfo)
   deleteAddedVehicle = true
-  if purchaseData.tradeInVehicleInfo then
-    extensions.hook("onVehicleListingUpdate", {forSale = false, inventoryId = purchaseData.tradeInVehicleInfo.id})
-  end
 end
 
 local function buyVehicleAndSpawnInParkingSpot(options)
@@ -359,9 +429,6 @@ local function buyVehicleAndSpawnInParkingSpot(options)
   if gameplay_walk.isWalking() then
     gameplay_walk.setRot(newVehObj:getPosition() - getPlayerVehicle(0):getPosition())
   end
-  if purchaseData.tradeInVehicleInfo then
-    extensions.hook("onVehicleListingUpdate", {forSale = false, inventoryId = purchaseData.tradeInVehicleInfo.id})
-  end
 end
 
 local function navigateToPos(pos)
@@ -372,21 +439,13 @@ end
 
 -- TODO At this point, the part conditions of the previous vehicle should have already been saved. for example when entering the garage
 local originComputerId
-local function openShop(seller, _originComputerId)
-  guihooks.trigger('ChangeState', {state = 'vehicleShopping', params = {}})
+local function openShop(seller, _originComputerId, screenTag)
   currentSeller = seller
   originComputerId = _originComputerId
 
   local currentTime = os.time()
-  if (currentTime > lastGenerationTime + shopGenerationDelay) and not career_modules_inspectVehicle.getSpawnedVehicleInfo() then
-    log("I", "Career", "New vehicle shop seed")
-    lastGenerationTime = currentTime
-    vehiclesInShop = nil
-  end
-
-  if not vehiclesInShop then
-    math.randomseed(lastGenerationTime - (lastGenerationTime % shopGenerationDelay))
-    generateVehicleList()
+  if not career_modules_inspectVehicle.getSpawnedVehicleInfo() then
+    updateVehicleList()
   end
 
   local sellerInfos = {}
@@ -413,14 +472,16 @@ local function openShop(seller, _originComputerId)
     end
   end
 
-  local tetherPos = vec3()
+  local computer
   if currentSeller then
-    tetherPos = freeroam_facilities.getAverageDoorPositionForFacility(freeroam_facilities.getFacility("dealership",currentSeller))
+    local tetherPos = freeroam_facilities.getAverageDoorPositionForFacility(freeroam_facilities.getFacility("dealership",currentSeller))
+    tether = career_modules_tether.startSphereTether(tetherPos, tetherRange, M.endShopping)
   elseif originComputerId then
-    tetherPos = freeroam_facilities.getAverageDoorPositionForFacility(freeroam_facilities.getFacility("computer",originComputerId))
+    computer = freeroam_facilities.getFacility("computer", originComputerId)
+    tether = career_modules_tether.startDoorTether(computer.doors[1], nil, M.endShopping)
   end
 
-  tether = career_modules_tether.startSphereTether(tetherPos, tetherRange, M.endShopping)
+  guihooks.trigger('ChangeState', {state = 'vehicleShopping', params = {screenTag = screenTag, buyingAvailable = not computer or not not computer.functions.vehicleShop, marketplaceAvailable = not currentSeller}})
   extensions.hook("onVehicleShoppingMenuOpened", {seller = currentSeller})
 end
 
@@ -458,7 +519,7 @@ end
 local function buySpawnedVehicle(buyVehicleOptions)
   if career_modules_playerAttributes.getAttributeValue("money") >= purchaseData.prices.finalPrice
   and career_modules_inventory.hasFreeSlot() then
-    local vehObj = be:getObjectByID(purchaseData.vehId)
+    local vehObj = getObjectByID(purchaseData.vehId)
     payForVehicle()
     local newInventoryId = career_modules_inventory.addVehicle(vehObj:getID())
     if buyVehicleOptions.licensePlateText then
@@ -471,9 +532,6 @@ local function buySpawnedVehicle(buyVehicleOptions)
     removeNonUsedPlayerVehicles = true
     if be:getPlayerVehicleID(0) == vehObj:getID() then
       career_modules_inventory.enterVehicle(newInventoryId)
-    end
-    if purchaseData.tradeInVehicleInfo then
-      extensions.hook("onVehicleListingUpdate", {forSale = false, inventoryId = purchaseData.tradeInVehicleInfo.id})
     end
   end
 end
@@ -533,7 +591,7 @@ local function sendPurchaseDataToUi()
 end
 
 local function onClientStartMission()
-  vehiclesInShop = nil
+  vehiclesInShop = {}
 end
 
 local function onAddedVehiclePartsToInventory(inventoryId, newParts)
@@ -563,8 +621,7 @@ local function onAddedVehiclePartsToInventory(inventoryId, newParts)
   -- TODO removed with parts refactor. check if this is needed. depends on if there are slots in the data missing that contain a default part or if there are slots with some weird name like "none"
 
   -- remove old leftover slots that dont exist anymore
-  --[[
-  local slotsToRemove = {}
+  --[[ local slotsToRemove = {}
   for slot, partName in pairs(vehicle.config.parts) do
     if not allSlotsInVehicle[slot] then
       slotsToRemove[slot] = true
@@ -580,8 +637,7 @@ local function onAddedVehiclePartsToInventory(inventoryId, newParts)
     if not vehicle.originalParts[slot] then
       vehicle.config.parts[slot] = ""
     end
-  end
-  ]]
+  end ]]
 
   vehicle.changedSlots = {}
 
@@ -639,7 +695,6 @@ local function buyFromPurchaseMenu(purchaseType, options)
   if purchaseData.tradeInVehicleInfo then
     career_modules_inventory.removeVehicle(purchaseData.tradeInVehicleInfo.id)
   end
-  print("Dealership ID: " .. options.dealershipId and options.dealershipId or "none")
 
   local buyVehicleOptions = {licensePlateText = options.licensePlateText, dealershipId = options.dealershipId}
   if purchaseType == "inspect" then
@@ -657,7 +712,7 @@ local function buyFromPurchaseMenu(purchaseType, options)
   end
 
   if options.licensePlateText then
-  career_modules_playerAttributes.addAttributes({money=-purchaseData.prices.customLicensePlate}, {tags={"buying"}, label=string.format("Bought custom license plate for new vehicle")})
+    career_modules_playerAttributes.addAttributes({money=-purchaseData.prices.customLicensePlate}, {tags={"buying"}, label=string.format("Bought custom license plate for new vehicle")})
   end
 
   -- remove the vehicle from the shop and update the other vehicles shopIds
@@ -719,15 +774,22 @@ local function onExtensionLoaded()
 
   local data = not outdated and jsonReadFile(savePath .. "/career/vehicleShop.json")
   if data then
-    lastGenerationTime = os.time(data.lastGenerationTime)
-  else
-    lastGenerationTime = 0
+    vehiclesInShop = data.vehiclesInShop or {}
+    sellersInfos = data.sellersInfos or {}
+    vehicleShopDirtyDate = data.dirtyDate
+
+    for _, vehicleInfo in ipairs(vehiclesInShop) do
+      vehicleInfo.pos = vec3(vehicleInfo.pos)
+    end
   end
 end
 
-local function onSaveCurrentSaveSlot(currentSavePath)
+local function onSaveCurrentSaveSlot(currentSavePath, oldSaveDate)
+  if vehicleShopDirtyDate and oldSaveDate >= vehicleShopDirtyDate then return end
   local data = {}
-  data.lastGenerationTime = os.date("*t", lastGenerationTime)
+  data.vehiclesInShop = vehiclesInShop
+  data.sellersInfos = sellersInfos
+  data.dirtyDate = vehicleShopDirtyDate
   career_saveSystem.jsonWriteFileSafe(currentSavePath .. "/career/vehicleShop.json", data, true)
 end
 
@@ -736,11 +798,9 @@ local function getCurrentSellerId()
 end
 
 local function onComputerAddFunctions(menuData, computerFunctions)
-  if not menuData.computerFacility.functions["vehicleShop"] then return end
-
   local computerFunctionData = {
     id = "vehicleShop",
-    label = "Purchase Vehicles",
+    label = "Vehicle Marketplace",
     callback = function() openShop(nil, menuData.computerFacility.id) end,
     order = 10
   }
@@ -766,7 +826,7 @@ M.showVehicle = showVehicle
 M.navigateToPos = navigateToPos
 M.buySpawnedVehicle = buySpawnedVehicle
 M.quickTravelToVehicle = quickTravelToVehicle
-M.generateVehicleList = generateVehicleList
+M.updateVehicleList = updateVehicleList
 M.getShoppingData = getShoppingData
 M.sendPurchaseDataToUi = sendPurchaseDataToUi
 M.getCurrentSellerId = getCurrentSellerId
@@ -782,11 +842,6 @@ M.cancelShopping = cancelShopping
 M.cancelPurchase = cancelPurchase
 
 M.getVehiclesInShop = getVehiclesInShop
-
-M.getVehiclesPerDealership = getVehiclesPerDealership
-M.setVehiclesPerDealership = setVehiclesPerDealership
-M.getShopGenerationDelay = getShopGenerationDelay
-M.setShopGenerationDelay = setShopGenerationDelay
 
 M.onClientStartMission = onClientStartMission
 M.onVehicleSpawnFinished = onVehicleSpawnFinished

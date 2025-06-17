@@ -2,7 +2,6 @@
   <!--div class="vehicle-shop-wrapper"-->
   <BngCard class="vehicle-shop-wrapper" v-bng-blur bng-ui-scope="vehicleList">
     <div class="address-bar">
-      <BngButton v-bng-on-ui-nav:back,menu.asMouse @click="close" :accent="ACCENTS.attention"><BngBinding ui-event="back" deviceMask="xinput" />Back</BngButton>
       <div class="spacer"></div>
       <div class="field">
         <BngInput 
@@ -13,7 +12,7 @@
           @keydown.enter="triggerSearch"
         />
       </div>
-      <div class="spacer" style="width: 8em"></div>
+      <div class="spacer"></div>
     </div>
     <div class="site-body" bng-nav-scroll bng-nav-scroll-force>
       <!-- <div class="heading">
@@ -87,7 +86,7 @@
 </template>
 
 <script setup>
-import { reactive, onMounted, ref, computed, watch } from "vue"
+import { reactive, onMounted, ref, computed } from "vue"
 import VehicleCard from "./VehicleCard.vue"
 import { BngCard, BngButton, ACCENTS, BngBinding, BngInput } from "@/common/components/base"
 import { vBngBlur, vBngOnUiNav } from "@/common/directives"
@@ -178,10 +177,6 @@ const getWebsiteText = () => {
   return headerText.replace(/\s+/g, "-") + ".com"
 }
 
-const close = () => {
-  lua.career_modules_vehicleShopping.cancelShopping()
-}
-
 const layouts = reactive([
   { name: "switch", selected: true, class: "" },
   { name: "me", selected: false, class: "" },
@@ -219,14 +214,15 @@ const sortedDealers = computed(() => {
     padding: 0.5rem;
 
     & > .spacer {
-      flex: 0.2 0.2 0.25rem;
+      flex: 1;
     }
     & > .field {
       border-radius: var(--bng-corners-1);
       background-color: var(--bng-cool-gray-900);
       // border: 0.0625rem solid var(--bng-cool-gray-600);
       padding: 0.5rem 0.75rem;
-      flex: 1 1 auto;
+      flex: 0 0 auto;
+      width: 64rem;
       text-overflow: ellipsis;
       color: white;
       text-align: center;

@@ -603,6 +603,7 @@ local function spawnVehicle(inventoryId, replaceOption, callback)
 
     -- load damage state
     career_modules_damageManager.loadDamageState(inventoryId)
+    gameplay_traffic.insertTraffic(vehObj:getID(), true, true)
 
     return vehObj
   end
@@ -979,35 +980,41 @@ local function processPerformanceData(performanceData)
   end
 
   -- Process fuel type information
-  if performanceData.fuelTypes then
-    if performanceData.fuelTypes["fuelTank:gasoline"] then
+  if performanceData.fuelType then
+    if performanceData.fuelType["fuelTank:gasoline"] then
       performanceData.fuelType = "Gasoline"
-    elseif performanceData.fuelTypes["fuelTank:diesel"] then
+    elseif performanceData.fuelType["fuelTank:diesel"] then
       performanceData.fuelType = "Diesel"
-    elseif performanceData.fuelTypes["fuelTank:electric"] then
+    elseif performanceData.fuelType["fuelTank:electric"] then
       performanceData.fuelType = "Electric"
-    elseif next(performanceData.fuelTypes) then
-      performanceData.fuelType = next(performanceData.fuelTypes)
+    elseif next(performanceData.fuelType) then
+      performanceData.fuelType = next(performanceData.fuelType)
     else
       performanceData.fuelType = "Unknown"
     end
   end
 
   -- Process induction type information
-  if performanceData.inductionTypes then
-    if performanceData.inductionTypes.naturalAspiration then
+  if performanceData.inductionType then
+    if performanceData.inductionType.naturalAspiration then
       performanceData.inductionType = "NA"
-    elseif performanceData.inductionTypes.turbocharger then
+    elseif performanceData.inductionType.turbocharger then
       performanceData.inductionType = "Turbocharger"
-    elseif next(performanceData.inductionTypes) then
-      performanceData.inductionType = next(performanceData.inductionTypes)
+    elseif next(performanceData.inductionType) then
+      performanceData.inductionType = next(performanceData.inductionType)
     else
       performanceData.inductionType = "Unknown"
     end
   end
 
-  if performanceData.power and performanceData.weight then
-    performanceData.powerPerTon = performanceData.power * 1000 / performanceData.weight
+  if performanceData.lateralAcceleration then
+    performanceData.lateralGForce = performanceData.lateralAcceleration.maxAcceleration / 9.81
+  end
+
+  if performanceData.power and performanceData.power.propulsionPowerCombined and performanceData.weight then
+    local powerInHP = performanceData.power.propulsionPowerCombined / 735.5
+    performanceData.powerPerTon = powerInHP * 1000 / performanceData.weight
+    performanceData.power = powerInHP
   end
 end
 
@@ -1058,6 +1065,8 @@ local function getVehicleUiData(inventoryId, inventoryIdsInGarage)
   vehicleData.storePermission = career_modules_permissions.getStatusForTag("vehicleStoring", {inventoryId = inventoryId})
   vehicleData.licensePlateChangePermission = career_modules_permissions.getStatusForTag({"vehicleLicensePlate", "vehicleModification"}, {inventoryId = inventoryId})
   vehicleData.returnLoanerPermission = career_modules_permissions.getStatusForTag("returnLoanedVehicle", {inventoryId = inventoryId})
+
+  vehicleData.listedForSale = career_modules_marketplace.findVehicleListing(inventoryId) ~= nil
 
   for _, performanceData in ipairs(vehicleData.performanceHistory or {}) do
     processPerformanceData(performanceData)
@@ -1258,7 +1267,6 @@ local function openMenu(_chooseButtonsData, header, _buttonsActive, _closeMenuCa
   chooseButtonsData = _chooseButtonsData or {{}}
   for _, buttonData in ipairs(chooseButtonsData) do
     buttonData.buttonText = buttonData.buttonText or "Choose Vehicle"
-    if buttonData.repairRequired == nil then buttonData.repairRequired = true end
     if buttonData.insuranceRequired == nil then buttonData.insuranceRequired = false end
     if buttonData.ownedRequired == nil then buttonData.ownedRequired = false end
     buttonData.callback = buttonData.callback or function() end
@@ -1409,12 +1417,12 @@ local function getVehicleTimeToAccess(inventoryId)
   return vehicles[inventoryId].timeToAccess
 end
 
-local function sellVehicle(inventoryId)
+local function sellVehicle(inventoryId, price)
   local vehicle = vehicles[inventoryId]
   if not vehicle then return end
 
-  local value = career_modules_valueCalculator.getInventoryVehicleValue(inventoryId) * (career_modules_hardcore.isHardcoreMode() and 0.33 or 0.66)
-  career_modules_playerAttributes.addAttributes({money=value}, {tags={"vehicleSold","selling"},label="Sold a vehicle: "..(vehicle.niceName or "(Unnamed Vehicle)")}, true)
+  local value = price or career_modules_valueCalculator.getInventoryVehicleValue(inventoryId)
+  career_modules_playerAttributes.addAttributes({money=value}, {tags={"vehicleSold","selling"},label="Sold a vehicle: "..(vehicle.niceName or "(Unnamed Vehicle)")})
   removeVehicle(inventoryId)
   Engine.Audio.playOnce('AudioGui','event:>UI>Career>Buy_01')
 
@@ -1596,6 +1604,25 @@ local function isEmpty()
   return tableIsEmpty(vehicles)
 end
 
+local function isLicensePlateValid(text)
+  return core_vehicles.isLicensePlateValid(text)
+end
+
+local function isVehicleNameValid(text)
+  if not text or text == "" then return false end
+  return not text:find('["\\\b\f\n\r\t]')
+end
+
+local function renameVehicle(inventoryId, name)
+  if not isVehicleNameValid(name) then
+    log("E", "inventory", "Invalid characters in vehicle name: " .. name)
+    return false
+  end
+  vehicles[inventoryId].niceName = name
+  setVehicleDirty(inventoryId)
+  return true
+end
+
 local function getVehicle(inventoryId)
   return vehicles[inventoryId]
 end
@@ -1727,43 +1754,6 @@ end
 
 -- RLS Marketplace Functions
 
-function M.loadMarketplaceData(savePath)
-  local marketplaceData = jsonReadFile(savePath .. "/career/rls_career/marketplace.json")
-
-  if marketplaceData then
-    for inventoryId, vehicle in pairs(vehicles) do
-      if marketplaceData[inventoryId] ~= nil then
-
-        vehicle.forSale = true
-      end
-    end
-    return marketplaceData
-  end
-  return {}
-end
-
-function M.removeVehicleFromSale(inventoryId, price)
-  inventoryId = tonumber(inventoryId)
-  local vehicle = vehicles[inventoryId]
-  if vehicle and vehicle.forSale then
-    vehicle.forSale = nil
-  end
-  extensions.hook("onVehicleListingUpdate", {inventoryId = inventoryId, forSale = false})
-  if price then
-    career_modules_playerAttributes.addAttributes({money=price}, {tags={"vehicleSold","selling"},label="Sold a "..(vehicle.niceName or "(Unnamed Vehicle)")}, true)
-    Engine.Audio.playOnce('AudioGui','event:>UI>Career>Buy_01')
-    career_modules_log.addLog(string.format("Sold vehicle %d for %f", inventoryId, price), "inventory")
-    removeVehicle(inventoryId)
-  end
-end
-
-function M.listVehicleForSale(inventoryId)
-  local vehicle = vehicles[tonumber(inventoryId)]
-  if not vehicle then return end
-  vehicle.forSale = true
-  extensions.hook("onVehicleListingUpdate", {inventoryId = inventoryId, forSale = true})
-end
-
 function M.setMileage(inventoryId)
   if not inventoryId then inventoryId = currentVehicle end
   local vehicle = vehicles[inventoryId]
@@ -1781,19 +1771,6 @@ function M.setMileage(inventoryId)
   end
   vehicle.mileage = maxOdometer
   return maxOdometer
-end
-
-function M.requestListedVehicles()
-  local listedVehicles = {}
-  for _, vehicle in pairs(vehicles) do
-    listedVehicles[tostring(vehicle.id)] = false
-    if vehicle.forSale then
-      listedVehicles[tostring(vehicle.id)] = true
-    end
-  end
-  print("requestListedVehicles LUA")
-  dump(listedVehicles)
-  guihooks.trigger("listedVehiclesUpdate", listedVehicles)
 end
 
 -- RLS FRE Functions
@@ -1945,7 +1922,9 @@ M.setLicensePlateText = setLicensePlateText
 M.getLicensePlateText = getLicensePlateText
 M.purchaseLicensePlateText = purchaseLicensePlateText
 M.getVehicleThumbnail = getVehicleThumbnail
-
+M.renameVehicle = renameVehicle
+M.isLicensePlateValid = isLicensePlateValid
+M.isVehicleNameValid = isVehicleNameValid
 M.onExtensionLoaded = onExtensionLoaded
 M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
 M.onClientStartMission = onClientStartMission

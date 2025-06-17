@@ -28,7 +28,7 @@
                 {{ part.description.description }} (Inventory)
               </div>
               <div v-else-if="part.emptyPlaceholder">
-                Empty
+                Remove current part
               </div>
               <div v-else>
                 {{ part.description.description }}
@@ -53,7 +53,7 @@
           @click="isPartInShoppingCart(part) ? lua.career_modules_partShopping.removePartBySlot(part.containingSlot) : lua.career_modules_partShopping.installPartByPartShopId(part.partShopId)"
           :icon="isPartInShoppingCart(part) ? icons.undo : ''">
           <div v-if="!isPartInShoppingCart(part)">
-            Install
+            {{ part.emptyPlaceholder ? 'Remove' : 'Install' }}
           </div>
         </BngButton>
       </div>
@@ -145,7 +145,7 @@ onUnmounted(() => {
     padding-left: 0.25em;
   }
   &.part-installed {
-    border-radius: 0.25em 0 0 0.25em;
+    border-radius: var(--bng-corners-1) 0 0 var(--bng-corners-1);
     background-image: linear-gradient(90deg, rgba(#f60, 0.5), rgba(#f60, 0.0) 65%);
   }
   > * {

@@ -30,7 +30,6 @@ import PurchaseGarage from "./views/PurchaseGarage.vue"
 import PhoneMain from "./views/PhoneMain.vue"
 import PhoneMinimap from "./views/PhoneMinimap.vue"
 import PhoneMarketplace from "./views/PhoneMarketplace.vue"
-import Marketplace from "./views/Marketplace.vue"
 import PhoneTaxi from "./views/PhoneTaxi.vue"
 import CarMeetsPhone from "./views/CarMeetsPhone.vue"
 import PhoneRepo from "./views/PhoneRepo.vue"
@@ -58,7 +57,8 @@ export default [
   {
     path: "/career",
     children: [
-      // Career Pause
+
+      // Career Pause (WIP with middle panel)
       {
         path: "pauseBigMiddlePanel",
         name: "pauseBigMiddlePanel",
@@ -167,9 +167,10 @@ export default [
 
       // Vehicle Shopping
       {
-        path: "vehicleShopping",
+        path: "vehicleShopping/:screenTag?/:buyingAvailable?/:marketplaceAvailable?",
         name: "vehicleShopping",
         component: VehicleShopping,
+        props: true,
         meta: {
           uiApps: {
             shown: false,
@@ -347,12 +348,6 @@ export default [
         path: "phone-taxi",
         name: "phone-taxi",
         component: PhoneTaxi
-      },
-
-      {
-        path: "marketplace",
-        name: "marketplace",
-        component: Marketplace
       },
 
       { 

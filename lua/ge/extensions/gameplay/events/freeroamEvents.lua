@@ -207,7 +207,7 @@ local function payoutRace()
                     amount = math.floor(xp / 10)
                 },
                 vouchers = {
-                    amount = (oldTime == 0 or oldTime > time) and in_race_time < time and 1 or 0
+                    amount = (oldTime == 0 or oldTime > (time * 1.05)) and in_race_time < time and 1 or 0
                 }
             }
             for _, type in ipairs(race.type) do

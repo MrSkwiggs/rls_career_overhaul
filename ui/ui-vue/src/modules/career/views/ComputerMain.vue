@@ -126,7 +126,6 @@ import { BngButton, ACCENTS, BngCard, BngCardHeading, BngBinding, BngImageTile, 
 import { default as UINavEvents, UI_EVENT_GROUPS } from "@/bridge/libs/UINavEvents"
 import { vBngOnUiNav, vBngBlur, vBngUiNavFocus } from "@/common/directives"
 import VehicleTile from "../components/vehicleInventory/VehicleTile.vue"
-import { LIST_LAYOUTS } from "@/common/components/base"
 import { openConfirmation } from "@/services/popup"
 
 const computerStore = useComputerStore()
@@ -295,7 +294,7 @@ onUnmounted(kill)
   max-width: 100%;
   height: 100%;
   color: white;
-  background-color: rgba(0, 0, 0, 0.75);
+  background-color: var(--bng-black-8);
   & :deep(.card-cnt) {
     background-color: rgba(0, 0, 0, 0);
   }
@@ -419,7 +418,7 @@ onUnmounted(kill)
   .performance-index {
     display: inline-flex;
     font-weight: 600;
-    border-radius: 0.25em;
+    border-radius: var(--bng-corners-1);
     overflow: hidden;
     align-items: center;
 

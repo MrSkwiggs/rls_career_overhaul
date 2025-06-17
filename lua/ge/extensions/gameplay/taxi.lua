@@ -311,7 +311,7 @@ local function calculateSpeedFactor()
         return 0
     end
     local elapsedTime = os.difftime(os.time(), currentFare.startTime)
-    local actualSpeed = currentFare.totalDistance / elapsedTime
+    local actualSpeed = (currentFare.totalDistance or 0) / elapsedTime
 
     return (actualSpeed - suggestedSpeed) / suggestedSpeed
 end
@@ -379,6 +379,7 @@ local function completeRide()
     }, true)
 
     career_modules_inventory.addTaxiDropoff(career_modules_inventory.getInventoryIdFromVehicleId(be:getPlayerVehicleID(0)), currentFare.passengers)
+    core_groundMarkers.resetAll()
 end
 
 local function rejectJob()
@@ -413,7 +414,7 @@ local function update(dt)
         if core_groundMarkers.getPathLength() == 0 then
             core_groundMarkers.setPath(currentFare.pickup.pos)
             local pickupDistance = core_groundMarkers.getPathLength()
-            currentFare.totalDistance = pickupDistance
+            currentFare.totalDistance = pickupDistance or 0
         end
 
         local vehicle = be:getPlayerVehicle(0)

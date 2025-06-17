@@ -18,6 +18,8 @@ local function loadExtensions()
     setExtensionUnloadMode("gameplay_repo", "manual")
 
     setExtensionUnloadMode("gameplay_taxi", "manual")
+    
+    setExtensionUnloadMode("gameplay_cab", "manual")
 end
 
 setExtensionUnloadMode("careerMaps", "manual")

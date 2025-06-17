@@ -11,29 +11,34 @@
                 </div>
             </div>
             <hr class="custom-hr">
-            <template v-if="listedVehicles.length && !helpPopup">
-                <div v-for="vehicle in listedVehicles" :key="vehicle.id" class="vehicle-listing">
+            <template v-if="listings.length && !helpPopup">
+                <div v-for="vehicle in listings" :key="vehicle.id" class="vehicle-listing">
                     <div class="vehicle-card" :class="{ active: showOffers === vehicle.id }">
                         <img :src="vehicle.thumbnail ? vehicle.thumbnail : image" alt="" class="vehicle-image">
                         <div class="vehicle-info">
                             <div class="vehicle-header">
                                 <div>
-                                    <div class="year"> {{ vehicle.year }}</div>
+                                    <div class="year">{{ vehicle.vehicleData?.year || 'N/A' }}</div>
                                     <div class="model">{{ vehicle.niceName }}</div>
-                                    <div class="mileage"> {{ units.buildString('length', vehicle.mileage, 0) }} </div>
+                                    <div class="mileage">{{ formatMileage(vehicle.vehicleData?.mileage || 0) }}</div>
                                 </div>
-                                <button class="messages-badge" @click="toggleOffers(vehicle.id)">
-                                    <BngIcon :type="icons.dialogOutline" />
-                                    <span class="badge" v-if="vehicleOffers(vehicle.id).length">{{
-                                        vehicleOffers(vehicle.id).length }}</span>
-                                </button>
+                                <div class="header-buttons">
+                                    <button class="remove-listing-btn" @click="confirmRemoveListingScreen(vehicle.inventoryId)" title="Remove Listing">
+                                        <BngIcon :type="icons.xmark" />
+                                    </button>
+                                    <button class="messages-badge" @click="toggleOffers(vehicle.id)">
+                                        <BngIcon :type="icons.dialogOutline" />
+                                        <span class="badge" v-if="vehicleOffers(vehicle.id).length">{{
+                                            vehicleOffers(vehicle.id).length }}</span>
+                                    </button>
+                                </div>
                             </div>
                             <div class="vehicle-specs">
                                 <div class="specs">
-                                    <div>{{ vehicle.power }} PS</div>
-                                    <div>{{ vehicle.torque }} NM</div>
-                                    <div>{{ vehicle.weight }} KG</div>
-                                    <div>{{ vehicle.powerPerWeight }} PS/KG</div>
+                                    <div>{{ vehicle.vehicleData?.power || 0 }} PS</div>
+                                    <div>{{ vehicle.vehicleData?.torque || 0 }} NM</div>
+                                    <div>{{ vehicle.vehicleData?.weight || 0 }} KG</div>
+                                    <div>{{ vehicle.vehicleData?.powerPerWeight || 0 }} PS/KG</div>
                                 </div>
                                 <div>
                                     <button class="event-times" :class="{ active: showEventTimes === vehicle.id }"
@@ -45,7 +50,7 @@
                                     <div class="price-info">
                                         <div class="repIncrease">
                                             <BngIcon :type="icons.arrowsUp" :color="'#4caf50'" />
-                                            {{ vehicle.meetReputation ? vehicle.meetReputation : 0 }}%
+                                            {{ vehicle.vehicleData?.rep || 0 }}%
                                         </div>
                                         <div class="price">
                                             <BngIcon :type="icons.beamCurrency" :color="'#4caf50'" />{{
@@ -58,8 +63,8 @@
                     </div>
 
                     <div v-if="showEventTimes === vehicle.id" class="event-times-dropdown">
-                        <template v-if="Object.keys(vehicle.FRETimes || {}).length">
-                            <div v-for="(time, name) in vehicle.FRETimes" :key="name" class="time-entry">
+                        <template v-if="vehicle.vehicleData?.FRETimes && Object.keys(vehicle.vehicleData.FRETimes).length">
+                            <div v-for="(time, name) in vehicle.vehicleData.FRETimes" :key="name" class="time-entry">
                                 <span>{{ name }}:</span>
                                 <span>{{ formatTime(time) }}</span>
                             </div>
@@ -70,16 +75,16 @@
                     </div>
                     <div v-if="showOffers === vehicle.id" class="offers-container">
                         <template v-if="vehicleOffers(vehicle.id).length">
-                            <div v-for="offer in vehicleOffers(vehicle.id)" :key="offer.customer" class="offer-row">
-                                <div class="offer-actions">
+                            <div v-for="(offer, index) in vehicleOffers(vehicle.id)" :key="`offer-${vehicle.id}-${index}`" class="offer-row">
+                                <div class="offer-info">
                                     <span class="dealer-name">{{ offer.customer }}</span>
-                                    <span class="offer-amount">${{ formatValue(offer.price) }}</span>
+                                    <span class="offer-amount">${{ formatValue(offer.value) }}</span>
                                 </div>
                                 <div class="offer-actions">
                                     <button class="accept-btn"
-                                        @click="acceptOffer(vehicle.id, offer.customer)" :disabled="vehicle.needsRepair">Accept</button>
+                                        @click="acceptOffer(vehicle.id, index)" :disabled="vehicle.vehicleData?.needsRepair">Accept</button>
                                     <button class="decline-btn"
-                                        @click="declineOffer(vehicle.id, offer.customer)">Decline</button>
+                                        @click="declineOffer(vehicle.id, index)">Decline</button>
                                 </div>
                             </div>
                         </template>
@@ -94,7 +99,7 @@
                     <div class="help-screen">
                         <h1>Marketplace Overview</h1>
                         <p>
-                            Your vehicle’s appeal in the marketplace is determined by a range of criteria.
+                            Your vehicle's appeal in the marketplace is determined by a range of criteria.
                             The more activities and customizations you complete, the higher the interest
                             from potential customers—and higher offers you'll receive (although offers come
                             in offline and at a longer interval).
@@ -112,21 +117,21 @@
                         <ul>
                             <li>
                                 <strong>Performance Values:</strong>
-                                These values represent your vehicle’s performance in free roam events.
+                                These values represent your vehicle's performance in free roam events.
                                 The better you perform, the higher this score will be.
                             </li>
                             <li>
                                 <strong>Completions:</strong>
                                 Tracks how many free roam events you have participated in and your streak of consecutive
                                 completions.
-                                Consistency here boosts your vehicle’s appeal.
+                                Consistency here boosts your vehicle's appeal.
                             </li>
                             <li>
                                 <strong>Arrests, Tickets, & Evades:</strong>
                                 <ul>
-                                    <li><em>Arrests:</em> Number of times you’ve been caught by the police.</li>
-                                    <li><em>Tickets:</em> Times you’ve received fines.</li>
-                                    <li><em>Evades:</em> How often you’ve successfully evaded the police.</li>
+                                    <li><em>Arrests:</em> Number of times you've been caught by the police.</li>
+                                    <li><em>Tickets:</em> Times you've received fines.</li>
+                                    <li><em>Evades:</em> How often you've successfully evaded the police.</li>
                                 </ul>
                             </li>
                             <li>
@@ -143,20 +148,20 @@
                             </li>
                             <li>
                                 <strong>Repos:</strong>
-                                Shows the number of vehicles you’ve successfully repossessed using your vehicle. This
+                                Shows the number of vehicles you've successfully repossessed using your vehicle. This
                                 can appeal to
                                 certain high-paying customer types.
                             </li>
                             <li>
                                 <strong>Taxi Dropoffs & Delivered Items:</strong>
                                 <ul>
-                                    <li><em>Taxi Dropoffs:</em> The number of passengers you’ve transported.</li>
-                                    <li><em>Delivered Items:</em> Volume or count of deliveries you’ve made.</li>
+                                    <li><em>Taxi Dropoffs:</em> The number of passengers you've transported.</li>
+                                    <li><em>Delivered Items:</em> Volume or count of deliveries you've made.</li>
                                 </ul>
                             </li>
                             <li>
                                 <strong>Suspects Caught:</strong>
-                                Indicates the number of times you’ve used your vehicle in police chases to catch
+                                Indicates the number of times you've used your vehicle in police chases to catch
                                 suspects, enhancing
                                 its law enforcement credentials.
                             </li>
@@ -172,7 +177,7 @@
                             <li>
                                 <strong>Number of Removed Parts:</strong>
                                 Indicates modifications or removals from the original setup, which can reflect a
-                                vehicle’s
+                                vehicle's
                                 customization journey.
                             </li>
                         </ul>
@@ -196,7 +201,7 @@
                                 Offers are generated while you play the game and the interval depends on your interest.
                                 They are also generated offline, and the interval between offers is five times longer than
                                 normal.
-                                More interest means you’ll receive these offers more quickly once the wait time is up.
+                                More interest means you'll receive these offers more quickly once the wait time is up.
                             </li>
                         </ul>
 
@@ -227,7 +232,7 @@ import { lua, useBridge } from '@/bridge'
 import { useRouter } from 'vue-router'
 import { $translate } from "@/services/translation"
 
-const vehiclesForSale = ref([])
+const listings = ref([])
 
 const { units, events } = useBridge()
 
@@ -237,28 +242,32 @@ const showEventTimes = ref(null)
 const showOffers = ref(null)
 const image = ref("/settings/cloud/saves/Profile 17/autosave3/career/vehicles/5.png")
 const notifications = ref(true)
-const marketplaceData = ref({})
 const helpPopup = ref(false)
 
+const handleListings = (data) => { 
+  listings.value = data
+  console.log('Received phone marketplace listings:', data)
+}
+
+const getNewData = () => {
+  lua.career_modules_marketplace.getListings().then(handleListings)
+}
+
 watch(notifications, (newValue, oldValue) => {
-    lua.career_modules_vehicleMarketplace.toggleNotifications(newValue)
+    lua.career_modules_marketplace.toggleNotifications(newValue)
 })
 
 onMounted(() => {
-    lua.career_modules_vehicleMarketplace.requestInitialData()
+    getNewData()
+    lua.career_modules_marketplace.menuOpened(true)
 });
 
 onBeforeMount(() => {
     vehicleInventoryStore.requestInitialData()
 })
 
-events.on("marketplaceUpdate", (data) => {
-    console.log("marketplaceUpdate", data)
-    marketplaceData.value = data
-    vehiclesForSale.value = Object.keys(data)
-})
-
 const close = () => {
+    lua.career_modules_marketplace.menuOpened(false)
     router.back()
 }
 
@@ -290,34 +299,63 @@ const formatTime = (seconds) => {
     return `${mins}:${secs}`
 }
 
+const formatMileage = (mileage) => {
+  if (!mileage) return '0 mi'
+  return `${mileage.toFixed(0)} mi`
+}
+
 const vehicleOffers = (vehicleId) => {
-    return marketplaceData.value[vehicleId].offers || []
+    const listing = listings.value.find(l => l.id === vehicleId)
+    return listing ? listing.offers || [] : []
 }
 
-const acceptOffer = async (vehicleId, customer) => {
-    const res = await openConfirmation("", `Do you want to accept this offer for $${formatValue(vehicleOffers(vehicleId).find(offer => offer.customer === customer).price)} from ${customer}?`, [
-        { label: $translate.instant("ui.common.yes"), value: true, extras: { default: true } },
-        { label: $translate.instant("ui.common.no"), value: false, extras: { accent: ACCENTS.secondary } },
+const acceptOffer = async (vehicleId, offerIndex) => {
+    const listing = listings.value.find(l => l.id === vehicleId)
+    const offer = listing.offers[offerIndex]
+    
+    const res = await openConfirmation("", 
+      `Do you want to accept this offer for $${formatValue(offer.value)} from ${offer.customer || 'Anonymous Buyer'}?`, [
+      { label: $translate.instant("ui.common.yes"), value: true, extras: { default: true } },
+      { label: $translate.instant("ui.common.no"), value: false, extras: { accent: ACCENTS.secondary } },
     ])
-    if (res) lua.career_modules_vehicleMarketplace.acceptOffer(vehicleId, customer)
+    
+    if (res) {
+      lua.career_modules_marketplace.acceptOffer(vehicleId, offerIndex + 1).then(getNewData)
+    }
 }
 
-const declineOffer = async (vehicleId, customer) => {
-    const res = await openConfirmation("", `Do you want to decline this offer for $${formatValue(vehicleOffers(vehicleId).find(offer => offer.customer === customer).price)} from ${customer}?`, [
-        { label: $translate.instant("ui.common.yes"), value: true, extras: { default: true } },
-        { label: $translate.instant("ui.common.no"), value: false, extras: { accent: ACCENTS.secondary } },
+const declineOffer = async (vehicleId, offerIndex) => {
+    const listing = listings.value.find(l => l.id === vehicleId)
+    const offer = listing.offers[offerIndex]
+    
+    const res = await openConfirmation("", 
+      `Do you want to decline this offer for $${formatValue(offer.value)} from ${offer.customer || 'Anonymous Buyer'}?`, [
+      { label: $translate.instant("ui.common.yes"), value: true, extras: { default: true } },
+      { label: $translate.instant("ui.common.no"), value: false, extras: { accent: ACCENTS.secondary } },
     ])
-    if (res) lua.career_modules_vehicleMarketplace.declineOffer(vehicleId, customer)
+    
+    if (res) {
+      lua.career_modules_marketplace.declineOffer(vehicleId, offerIndex + 1).then(getNewData)
+    }
 }
-
-const listedVehicles = computed(() => {
-    return vehicleInventoryStore.filteredVehicles.filter(vehicle =>
-        vehiclesForSale.value.includes(vehicle.id.toString())
-    )
-})
 
 const help = () => {
     helpPopup.value = !helpPopup.value
+}
+
+const confirmRemoveListingScreen = async (inventoryId) => {
+    const res = await openConfirmation("", "Do you want to remove this listing?", [
+        { label: $translate.instant("ui.common.yes"), value: true, extras: { default: true } },
+        { label: $translate.instant("ui.common.no"), value: false, extras: { accent: ACCENTS.secondary } },
+    ])
+
+    if (res) {
+        removeVehicleListing(inventoryId)
+    }
+}
+
+const removeVehicleListing = (inventoryId) => {
+    lua.career_modules_marketplace.removeVehicleListing(inventoryId).then(getNewData)
 }
 
 </script>
@@ -333,10 +371,12 @@ const help = () => {
     color: white;
     font-family: "Overpass", sans-serif;
     overflow-y: auto;
+    overflow-x: hidden;
     -ms-overflow-style: none;
     /* IE and Edge */
     scrollbar-width: none;
     /* Firefox */
+    box-sizing: border-box;
 
     &::-webkit-scrollbar {
         display: none;
@@ -436,6 +476,29 @@ const help = () => {
     color: #888;
     font-size: 14px;
     font-weight: 600;
+}
+
+.header-buttons {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.remove-listing-btn {
+    background-color: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 26px;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: -32px;
+    transition: color 0.2s ease;
+    
+    &:hover {
+        color: #ff4444;
+    }
 }
 
 .messages-badge {
@@ -550,61 +613,73 @@ const help = () => {
     margin-top: -10px;
     padding: 5px;
     position: relative;
-    z-index: 1;
+    z-index: 10;
+    width: 100%;
+    max-height: none;
+    overflow: visible;
 }
 
 .offer-row {
     display: flex;
-    flex-wrap: wrap;
-    justify-content: space-evenly;
-    padding: 8px 16px;
+    flex-direction: column;
+    padding: 6px 12px;
     background-color: #2B2C28;
-    margin: 10px;
+    margin: 5px;
     border-radius: 8px;
 }
 
+.offer-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
 .dealer-name {
-    justify-content: space-evenly;
     font-weight: 500;
     color: white;
+    font-size: 14px;
 }
 
 .offer-amount {
-    color: #888;
+    color: #4caf50;
+    font-weight: 600;
+    font-size: 14px;
 }
 
 .offer-actions {
     display: flex;
-    gap: 10px;
-    width: 100%;
-    margin-top: 8px;
-    justify-content: space-evenly;
+    gap: 8px;
+    justify-content: center;
 }
 
 .accept-btn,
 .decline-btn {
-    color: black;
-    padding: 4px 16px;
-    font-size: 16px;
+    color: black !important;
+    padding: 6px 16px;
+    font-size: 14px;
     border: none;
-    border-radius: 10px;
+    border-radius: 8px;
     font-weight: 600;
     cursor: pointer;
+    min-width: 70px;
+    z-index: 15;
+    position: relative;
 }
 
 .accept-btn {
-    background-color: #4CAF50;
+    background-color: #4CAF50 !important;
     margin-right: 10px;
     
     &:disabled {
-        background-color: #2d5a2f;
+        background-color: #2d5a2f !important;
         opacity: 0.7;
         cursor: not-allowed;
     }
 }
 
 .decline-btn {
-    background-color: #f44336;
+    background-color: #f44336 !important;
 }
 
 .no-times-message {

@@ -39,32 +39,13 @@
               </div>
               <div class="part-info-row">
                 <span class="right">{{ part.mileage }}</span>
-                <!-- note: BngUnit is very slow -->
-                <!-- <span class="right"><BngUnit :money="part.value" /></span> -->
-                <!-- <span class="right"><BngPropVal :iconType="icons.beamCurrency" :valueLabel="units.beamBucks(part.value)" /></span> -->
                 <span class="right"><BngPropVal :iconType="icons.beamCurrency" :valueLabel="part.valueFormatted" /></span>
                 <span v-if="groupBy !== 'location'" class="center">{{ part.location }}</span>
                 <span v-else-if="groupBy !== 'model'" class="center">{{ part.model }}</span>
+                <span class="center"><span v-if="part.data.repairCount">Repairs: {{ part.data.repairCount }} </span></span>
+                <span class="center"> <span v-if="part.data.primered">Not painted</span></span>
               </div>
             </div>
-            <BngButton
-              v-if="(group.ready || index < immediateLimit)"
-              :disabled="!part.functions.install || disableInstallButtons"
-              :accent="ACCENTS.outlined"
-              class="part-button"
-              @click="movePartToLocation(partInventoryStore.partInventoryData.currentVehicle, part.data.id)"
-              v-bng-tooltip="'Put into current vehicle'">
-              Install
-            </BngButton>
-            <BngButton
-              v-if="(group.ready || index < immediateLimit) && !part.functions.sell"
-              :disabled="!part.functions.uninstall || disableInstallButtons"
-              :accent="ACCENTS.outlined"
-              class="part-button"
-              @click="movePartToLocation(0, part.data.id)"
-              v-bng-tooltip="'Remove from vehicle'">
-              Uninstall
-            </BngButton>
             <BngButton
               v-if="(group.ready || index < immediateLimit) && part.functions.sell"
               :accent="ACCENTS.outlined"
@@ -81,13 +62,13 @@
 </template>
 
 <script setup>
-import { ref, toRaw, watchEffect, markRaw, onMounted } from "vue"
+import { ref, watchEffect, onMounted } from "vue"
 import { lua, useBridge } from "@/bridge"
-import { BngCard, BngUnit, BngPropVal, BngButton, BngIcon, ACCENTS, icons, BngInput } from "@/common/components/base"
+import { BngCard, BngPropVal, BngButton, BngIcon, ACCENTS, icons, BngInput } from "@/common/components/base"
 import { Accordion, AccordionItem } from "@/common/components/utility"
-import { vBngDisabled, vBngTooltip } from "@/common/directives"
+import { vBngDisabled } from "@/common/directives"
 import { usePartInventoryStore } from "../../stores/partInventoryStore"
-import { openConfirmation, openExperimental, openMessage, openScreenOverlay,openPrompt,addPopup } from "@/services/popup"
+import { openConfirmation, openMessage, addPopup } from "@/services/popup"
 import { $translate } from "@/services/translation"
 import { vBngOnUiNav } from "@/common/directives"
 import PartSellingPopup from "../partInventory/PartSellingPopup.vue"
@@ -107,8 +88,12 @@ const accordionItems = ref([])
 const disableInstallButtons = ref(false)
 const listedVehicleIds = ref([])
 
+const handleListings = (listings) => {
+  listedVehicleIds.value = listings.map(listing => listing.id)
+}
+
 onMounted(() => {
-  lua.career_modules_vehicleMarketplace.requestInitialData()
+  lua.career_modules_marketplace.getListings().then(handleListings)
 })
 
 const addExpandedFuncToGroup = (group) => {
@@ -141,10 +126,6 @@ const openSellPopup = async () => {
     emit("partSold")
   }
 }
-
-events.on("marketplaceUpdate", (data) => {
-    listedVehicleIds.value = Object.keys(data)
-})
 
 watchEffect(() => {
   disableInstallButtons.value = false
@@ -258,22 +239,6 @@ const confirmSellPart = async partToSell => {
     { label: $translate.instant("ui.common.no"), value: false, extras: { accent: ACCENTS.secondary } },
   ])
   if (res) sellPart(partToSell)
-}
-
-const showPartInstallPopup = (data) => {
-  if (data) {
-    if (data.success) {
-      partInventoryStore.openNewPartsPopup(data.newPartIds)
-    } else {
-      openMessage(data.title, data.message)
-    }
-  }
-}
-
-const movePartToLocation = (location, partId) => {
-  if (disableInstallButtons.value) { return }
-  disableInstallButtons.value = true
-  lua.career_modules_partInventory.movePart(location, partId).then(showPartInstallPopup)
 }
 
 const sellPart = part => {

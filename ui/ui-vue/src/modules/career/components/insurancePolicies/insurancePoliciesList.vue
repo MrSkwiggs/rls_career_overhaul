@@ -311,7 +311,7 @@ tr:nth-child(even) {
   margin-bottom: 50px;
   padding: 20px;
   background-color: rgba(83, 83, 83, 0.465);
-  border-radius: 10px;
+  border-radius: var(--bng-corners-2);
 }
 .details {
   margin-left: 20px;

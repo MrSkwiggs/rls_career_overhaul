@@ -128,7 +128,7 @@ local parcelItemMoneyMultiplier = 1
 local function getMoneyRewardForParcelItem(item, distance)
   local basePrice = math.sqrt(item.slots) / 4
   local distanceExp = 1.3 + math.sqrt(item.slots)/100
-  local pricePerM = 2 + math.pow(item.weight, 0.6)
+  local pricePerM = 5 + math.pow(item.weight, 0.9)
   local modMultiplier = 1---0.9 + 0.1 * #item.modifiers
   for _, mod in ipairs(item.modifiers) do
     modMultiplier = modMultiplier * (mod.moneyMultipler or 1)
@@ -143,10 +143,10 @@ local function finalizeParcelItemDistanceAndRewards(item)
   if item.rewards then return end
   local distance = getDistanceBetweenFacilities(item.origin, item.destination)
 
-  local baseXP = 0.25
-  if item.slots >= 32 then baseXP = baseXP + 0.5 end
-  if item.slots >= 64 then baseXP = baseXP + 0.5 end
-  if item.slots >= 128 then baseXP = baseXP + 0.5 end
+  local baseXP = 2
+  if item.slots >= 16 then baseXP = baseXP + 1 end
+  if item.slots >= 32 then baseXP = baseXP + 1 end
+  if item.slots >= 64 then baseXP = baseXP + 1 end
 
   item.data.originalDistance = distance
   local template = deepcopy(M.getParcelTemplateById(item.templateId))
@@ -464,8 +464,7 @@ local function finalizeVehicleOffer(offer)
 
     offer.rewards = {
       money = (filter.baseReward + round(filter.rewardPerKm * distance/1000)) * hardcoreMultiplier,
-      beamXP = (5 + round(distance/400)) * hardcoreMultiplier,
-      labourer = (5 + round(distance/400)) * hardcoreMultiplier
+      logistics = (5 + round(distance/400)) * hardcoreMultiplier
     }
     if offer.data.type == "vehicle" then
       offer.rewards.money = offer.rewards.money * hardcoreMultiplier
@@ -895,8 +894,7 @@ local function finalizeMaterialDistanceRewards(item, destination)
   --(3+(max(0,($D24/2000)-1))) * (E$23/400)
   local distance = getDistanceBetweenFacilities(item.origin, destination)
   local xpAmount = round((3+math.max(0,(distance/2000)-1)) * (item.slots / 400)) * hardcoreMultiplier
-  item.rewards.beamXP = xpAmount
-  item.rewards.labourer = xpAmount
+  item.rewards.logistics = xpAmount
   item.rewards["logistics-delivery"] = xpAmount
 
   if item.organization then
@@ -930,10 +928,6 @@ M.triggerGenerator = triggerGenerator
 
 local hasGeneratedThisFrame = false
 local function triggerAllGenerators()
-  if career_modules_hardcore.isHardcoreMode() then
-    hardcoreMultiplier = 0.5
-  end
-
   if hasGeneratedThisFrame then return end
   for _, fac in ipairs(facilities or {}) do
     for _, generator in ipairs(fac.logisticGenerators) do

@@ -426,15 +426,15 @@ local function getDefaultPartName(jbeamData, slotName)
   end
 end
 
--- TODO unfinished
-local function getFittingPartFromInventory(parentPart, slotName)
-  -- Add matching parts from inventory
+local function getFittingPartFromInventory(parentPart, slotName, currentVehicleData)
   for partId, inventoryPart in pairs(career_modules_partInventory.getInventory()) do
-    local partSlotOfThisPartInShoppingCart = getPartSlotFromPartIdInShoppingCart(partId)
-    if inventoryPart.location == 0 and inventoryPart.vehicleModel == parentPart.vehicleModel and (not partSlotOfThisPartInShoppingCart or partSlotOfThisPartInShoppingCart == parentPart.containingSlot) then
+    local partSlotOfThisPartInShoppingCart = getPartSlotFromPartIdInShoppingCart(partId) -- for checking if the part is already in the shopping cart
+
+    local partDescription = jbeamIO.getPart(currentVehicleData.ioCtx, inventoryPart.name)
+    if inventoryPart.location == 0 and inventoryPart.vehicleModel == parentPart.vehicleModel and (not partSlotOfThisPartInShoppingCart) and jbeamSlotSystem.partFitsSlot(partDescription, parentPart.description.slotInfoUi[slotName]) then
       local shopPart = deepcopy(inventoryPart)
-      shopPart.containingSlot = parentPart.containingSlot
-      shopPart.partPath = parentPart.partPath
+      shopPart.containingSlot = parentPart.containingSlot .. slotName .. "/"
+      shopPart.partPath = shopPart.containingSlot .. inventoryPart.name
       shopPart.slot = slotName
       shopPart.vehicleModel = parentPart.vehicleModel
       shopPart.partId = partId
@@ -477,19 +477,20 @@ local function getNeededAdditionalParts(parts, inventoryId)
           local jbeamData = jbeamIO.getPart(currentVehicleData.ioCtx, part.name)
 
           -- look for a fitting part from the inventory
-          --getFittingPartFromInventory(part, slotName)
+          local fittingPart = getFittingPartFromInventory(part, slotName, currentVehicleData)
 
-          local partNameToGenerate = getDefaultPartName(jbeamData, slotName)
+          if not fittingPart then
+            local partNameToGenerate = getDefaultPartName(jbeamData, slotName)
+            if partNameToGenerate then -- found a default part name
+              fittingPart = generatePart(partNameToGenerate, currentVehicleData, availableParts, path, slotName, vehicleObj)
+            end
+          end
 
-          if partNameToGenerate then -- found a default part name
-            local newGeneratedPart = generatePart(partNameToGenerate, currentVehicleData, availableParts, path, slotName, vehicleObj)
-
-            if newGeneratedPart then -- the default part exists in the jbeam
-              resultParts[newGeneratedPart.containingSlot] = newGeneratedPart
-              addedParts = true
-              if not slotInfo.coreSlot then
-                newGeneratedPart.sourcePart = true
-              end
+          if fittingPart then
+            resultParts[fittingPart.containingSlot] = fittingPart
+            addedParts = true
+            if not slotInfo.coreSlot then
+              fittingPart.sourcePart = true
             end
           end
         end
