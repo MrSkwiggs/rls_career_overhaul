@@ -601,8 +601,6 @@ function C:checkOffenses() -- tests for vechicle offenses for police
   local pursuit = self.pursuit
   local minScore = clamp(self.policeVars.strictness, 0, 0.8) -- offense threshold
   
-  dump(self.tracking)
-
   if self.tracking.speedScore <= minScore then
     if self.speed >= max(16.7, self.tracking.speedLimit * 1.2) and not pursuit.offenses.speeding then -- at least 60 km/h
       self:triggerOffense({key = 'speeding', value = self.speed, maxLimit = self.tracking.speedLimit, score = 100})
