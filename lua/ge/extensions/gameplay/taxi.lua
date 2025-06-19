@@ -60,6 +60,12 @@ local function specificCapcityCases(partName)
       elseif partName:find("lh_seats") then return 70
       elseif partName:find("artic") then return 107 end
     end
+    if partName:find("schoolbus_seats_R_c")  then
+      return 10
+    end
+    if partName:find("schoolbus_seats_L_c")  then
+      return 10
+    end
     return nil
   end
   
