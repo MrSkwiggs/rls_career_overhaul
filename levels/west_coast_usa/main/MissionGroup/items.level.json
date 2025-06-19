@@ -42,7 +42,6 @@
 {"name":"driftZones","class":"SimGroup","__parent":"MissionGroup"}
 {"name":"dragTunnel","class":"SimGroup","__parent":"MissionGroup"}
 {"name":"raceTrackParkingLotGrandStands","class":"SimGroup","__parent":"MissionGroup"}
-{"name":"e_road","class":"SimGroup","__parent":"MissionGroup"}
 {"name":"skidpadTestTrack","class":"SimGroup","__parent":"MissionGroup"}
 {"name":"skidpadWP1","class":"BeamNGWaypoint","__parent":"MissionGroup","position":[407.55658,-60.9128342,145.044159],"rotationMatrix":[-0.000852346304,0.999999523,0,-0.99993062,-0.000852197234,-0.0117333187,-0.0117332889,-1.00136531e-05,0.999930918]}
 {"name":"skidpadWP2","class":"BeamNGWaypoint","__parent":"MissionGroup","position":[381.004944,-101.403893,144.770889],"rotationMatrix":[0.447065532,0.89450103,-2.98023188e-08,-0.894424021,0.447026998,-0.0131171001,-0.0117331902,0.0058643003,0.999913752]}
@@ -51,3 +50,9 @@
 {"name":"RLS_EDITS","class":"SimGroup","__parent":"MissionGroup"}
 {"name":"night_light","class":"SimGroup","__parent":"MissionGroup"}
 {"name":"night_light_shadow","class":"SimGroup","__parent":"MissionGroup"}
+{"name":"dragTuningPits_area","class":"BeamNGGameplayArea","__parent":"MissionGroup","position":[-221.585754,-228.857178,118.778564],"rotationMatrix":[0.863144636,0.504956901,0,-0.504956901,0.863144636,0,0,0,1],"scale":[9.5064106,30.0105782,1]}
+{"name":"dragTuningPits_icon","class":"BeamNGPointOfInterest","__parent":"MissionGroup","position":[-220.823288,-230.146515,120.16037]}
+{"name":"cabinGarage_area","class":"BeamNGGameplayArea","__parent":"MissionGroup","position":[-817.135071,-916.470581,157.567383],"rotationMatrix":[0.993330538,-0.115301408,0,0.115301408,0.993330538,0,0,0,1],"scale":[1,1.40194821,3.09606433]}
+{"name":"cabinGarage_icon","class":"BeamNGPointOfInterest","__parent":"MissionGroup","position":[-817.172546,-916.470032,158.059662]}
+{"name":"horizonEstate_area","class":"BeamNGGameplayArea","__parent":"MissionGroup","position":[-523.339905,-449.963318,117.595299],"rotationMatrix":[0.672391891,0.740195394,0,-0.740195394,0.672391891,-0,-0,0,1],"scale":[2.28113627,1.41772461,2.80672598]}
+{"name":"horizonEstate_icon","class":"BeamNGPointOfInterest","__parent":"MissionGroup","position":[-523.322205,-450.308899,118.948425]}

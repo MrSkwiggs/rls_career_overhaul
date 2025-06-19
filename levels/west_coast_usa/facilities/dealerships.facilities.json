@@ -28,6 +28,7 @@
         }
       ],
       "filter": {
+        "whiteList": {},
         "blackList": {
           "Type": [
             "Trailer"
@@ -57,12 +58,12 @@
               "min": 11000,
               "max": 17600056
             },
-            "Body Style": [
-              "ATV"
-            ],
             "Config Type": [
               "Factory",
               "Race"
+            ],
+            "Body Style": [
+              "ATV"
             ]
           }
         },
@@ -89,12 +90,12 @@
               "min": 11000,
               "max": 17600056
             },
-            "Body Style": [
-              "Buggy"
-            ],
             "Config Type": [
               "Factory",
               "Race"
+            ],
+            "Body Style": [
+              "Buggy"
             ]
           }
         },
@@ -150,7 +151,7 @@
         "timeLimit": 120,
         "licencePlate": "Fast"
       },
-      "iconOffsetHeight": 1.0,
+      "iconOffsetHeight": 1,
       "iconLift": 0.25,
       "playModeIconName": "poi_entrance_round"
     },
@@ -158,15 +159,15 @@
       "id": "jeffersonmotors",
       "name": "Jefferson Motors",
       "description": "Jefferson Motors - Custom American cars",
+      "preview": "jefferson_dealership.jpg",
       "stock": 16,
       "range": [
         0.5,
-        0.80,
+        0.8,
         1.25,
         1.5
       ],
       "associatedOrganization": "jeffersonMotors",
-      "preview": "jefferson_dealership.jpg",
       "doors": [
         [
           "jeffersonmotors_area",
@@ -183,6 +184,7 @@
         }
       ],
       "filter": {
+        "whiteList": {},
         "blackList": {
           "Type": [
             "Trailer"
@@ -249,11 +251,11 @@
             "Config Type": [
               "Custom"
             ],
-            "Brand": [
-              "Gavril"
-            ],
             "Body Style": [
               "Pickup"
+            ],
+            "Brand": [
+              "Gavril"
             ]
           }
         },
@@ -418,7 +420,7 @@
         "timeLimit": 120,
         "licencePlate": "jmotors"
       },
-      "iconOffsetHeight": 1.0,
+      "iconOffsetHeight": 1,
       "iconLift": 0.25,
       "playModeIconName": "poi_entrance_round"
     },
@@ -426,14 +428,14 @@
       "id": "frameDealership",
       "name": "Smash Rollers",
       "description": "Smash Rollers - The perfect start to your build",
+      "preview": "smash.jpg",
       "stock": 7,
       "range": [
         0.2,
-        0.70,
+        0.7,
         1.35,
         1.9
       ],
-      "preview": "smash.jpg",
       "doors": [
         [
           "frameDealership_area",
@@ -450,6 +452,7 @@
         }
       ],
       "filter": {
+        "whiteList": {},
         "blackList": {
           "Type": [
             "Trailer"
@@ -477,7 +480,7 @@
         "timeLimit": 120,
         "licencePlate": ""
       },
-      "iconOffsetHeight": 1.0,
+      "iconOffsetHeight": 1,
       "iconLift": 0.25,
       "playModeIconName": "poi_entrance_round"
     },
@@ -485,9 +488,9 @@
       "id": "belascoAuto",
       "name": "Belasco Auto",
       "description": "Belasco Auto - New & quality used vehicle sales.",
+      "preview": "belasco_auto_dealership.jpg",
       "stock": 20,
       "associatedOrganization": "belascoAuto",
-      "preview": "belasco_auto_dealership.jpg",
       "doors": [
         [
           "belascoAuto_area_1",
@@ -506,23 +509,21 @@
       ],
       "filter": {
         "whiteList": {
-          "Type": [
-            "Car"
-          ],
-          "Years": {
-            "min": 2002,
-            "max": 2025
-          },
           "Mileage": {
             "min": 9000,
             "max": 70000000
           },
+          "Years": {
+            "min": 2002,
+            "max": 2025
+          },
+          "Type": [
+            "Car"
+          ],
           "Config Type": [
             "Factory"
           ],
-          "Value": {
-            "max": 65000
-          }
+          "Value": {}
         },
         "blackList": {
           "Type": [
@@ -588,7 +589,7 @@
         "timeLimit": 120,
         "licencePlate": "belasco"
       },
-      "iconOffsetHeight": 1.0,
+      "iconOffsetHeight": 1,
       "iconLift": 0.25,
       "playModeIconName": "poi_entrance_round"
     },
@@ -596,6 +597,7 @@
       "id": "richsmotorcompany",
       "name": "Rich's Motor Company",
       "description": "Rich's Motor Company - Prestige auto sales, only the finest quality vehicles are sold here!",
+      "preview": "richsmotorcompany_dealership.jpg",
       "stock": 15,
       "range": [
         0.75,
@@ -604,7 +606,6 @@
         1.3
       ],
       "associatedOrganization": "richsMotorCompany",
-      "preview": "richsmotorcompany_dealership.jpg",
       "doors": [
         [
           "richsmotorcompany_area_1",
@@ -658,63 +659,51 @@
         {
           "probability": 1,
           "whiteList": {
-            "Years": {
-              "min": 1950,
-              "max": 1973
-            },
             "Mileage": {
               "min": 2500000,
               "max": 132000422
             },
-            "Value": {
-              "min": 120000
-            }
+            "Years": {
+              "min": 1950,
+              "max": 1973
+            },
+            "Value": {}
           }
         },
         {
           "probability": 2,
           "whiteList": {
-            "Years": {
-              "min": 1973,
-              "max": 2010
-            },
             "Mileage": {
               "min": 2500000,
               "max": 132000422
             },
-            "Value": {
-              "min": 120000
-            }
+            "Years": {
+              "min": 1973,
+              "max": 2010
+            },
+            "Value": {}
           }
         },
         {
           "probability": 3,
           "whiteList": {
-            "Years": {
-              "min": 2010
-            },
             "Mileage": {
               "min": 250000,
               "max": 18000000
             },
-            "Value": {
-              "min": 120000
-            }
+            "Years": {},
+            "Value": {}
           }
         },
         {
           "probability": 4,
           "whiteList": {
-            "Years": {
-              "min": 2017
-            },
             "Mileage": {
               "min": 10000,
               "max": 50000
             },
-            "Value": {
-              "min": 120000
-            }
+            "Years": {},
+            "Value": {}
           }
         }
       ],
@@ -725,7 +714,7 @@
         "timeLimit": 120,
         "licencePlate": "prestige"
       },
-      "iconOffsetHeight": 1.0,
+      "iconOffsetHeight": 1,
       "iconLift": 0.25,
       "playModeIconName": "poi_entrance_round"
     },
@@ -733,15 +722,15 @@
       "id": "quarrysideAutoSales",
       "name": "Quarryside Auto Sales",
       "description": "Quarryside Auto Sales - Used trucks and vans.",
+      "preview": "quarryside_dealership.jpg",
       "stock": 20,
       "range": [
         0.75,
-        0.80,
-        1.10,
+        0.8,
+        1.1,
         1.2
       ],
       "associatedOrganization": "quarrysideAutoSales",
-      "preview": "quarryside_dealership.jpg",
       "doors": [
         [
           "garageDealership_area_1",
@@ -767,13 +756,13 @@
             "min": 8800028,
             "max": 264000845
           },
+          "Config Type": [
+            "Factory"
+          ],
           "Body Style": [
             "Pickup",
             "Van",
             "Chassis Cab"
-          ],
-          "Config Type": [
-            "Factory"
           ]
         },
         "blackList": {
@@ -877,9 +866,9 @@
         "timeLimit": 120,
         "licencePlate": "qarySide"
       },
-      "playModeIconName": "poi_entrance_round",
-      "iconOffsetHeight": 1.0,
-      "iconLift": 0.25
+      "iconOffsetHeight": 1,
+      "iconLift": 0.25,
+      "playModeIconName": "poi_entrance_round"
     },
     {
       "id": "gizamnDealership",
@@ -889,7 +878,7 @@
       "stock": 5,
       "range": [
         0.8,
-        0.90,
+        0.9,
         1.35,
         1.8
       ],
@@ -909,6 +898,7 @@
         }
       ],
       "filter": {
+        "whiteList": {},
         "blackList": {
           "Type": [
             "Trailer"
@@ -939,7 +929,7 @@
         "timeLimit": 120,
         "licencePlate": ""
       },
-      "iconOffsetHeight": 1.0,
+      "iconOffsetHeight": 1,
       "iconLift": 0.25,
       "playModeIconName": "poi_entrance_round"
     },
@@ -951,7 +941,7 @@
       "stock": 25,
       "range": [
         0.5,
-        0.70,
+        0.7,
         1.15,
         1.4
       ],
@@ -1074,9 +1064,7 @@
         {
           "probability": 1,
           "whiteList": {
-            "Value": {
-              "max": 300000
-            }
+            "Value": {}
           }
         }
       ],
@@ -1087,7 +1075,7 @@
         "timeLimit": 120,
         "licencePlate": ""
       },
-      "iconOffsetHeight": 1.0,
+      "iconOffsetHeight": 1,
       "iconLift": 0.25,
       "playModeIconName": "poi_entrance_round"
     },
@@ -1099,7 +1087,7 @@
       "stock": 7,
       "range": [
         0.6,
-        0.80,
+        0.8,
         1.1,
         1.3
       ],
@@ -1120,6 +1108,7 @@
         }
       ],
       "filter": {
+        "whiteList": {},
         "blackList": {
           "Body Style": [
             "ATV",
@@ -1151,7 +1140,7 @@
         "timeLimit": 120,
         "licencePlate": "Joe Junk"
       },
-      "iconOffsetHeight": 1.0,
+      "iconOffsetHeight": 1,
       "iconLift": 0.25,
       "playModeIconName": "poi_entrance_round"
     },
@@ -1159,6 +1148,7 @@
       "id": "policeDealership",
       "name": "Police Dealership",
       "description": "Police Dealership - Purchase police Vehicles here",
+      "preview": "police.jpg",
       "stock": 8,
       "range": [
         0.6,
@@ -1166,7 +1156,6 @@
         1.1,
         1.3
       ],
-      "preview": "police.jpg",
       "doors": [
         [
           "policeDealer_area",
@@ -1242,7 +1231,7 @@
         "timeLimit": 120,
         "licencePlate": "Police"
       },
-      "iconOffsetHeight": 1.0,
+      "iconOffsetHeight": 1,
       "iconLift": 0.25,
       "playModeIconName": "poi_entrance_round"
     },
@@ -1390,7 +1379,7 @@
         "timeLimit": 120,
         "licencePlate": "Police"
       },
-      "iconOffsetHeight": 1.0,
+      "iconOffsetHeight": 1,
       "iconLift": 0.25,
       "playModeIconName": "poi_entrance_round"
     },
@@ -1423,10 +1412,12 @@
           "Type": [
             "Trailer"
           ]
-        }
+        },
+        "blackList": {}
       },
       "subFilters": [
         {
+          "probability": 3,
           "whiteList": {
             "Type": [
               "Trailer"
@@ -1435,8 +1426,7 @@
               "min": 1613,
               "max": 161290323
             }
-          },
-          "probability": 3
+          }
         }
       ],
       "fees": 449,
@@ -1446,7 +1436,7 @@
         "timeLimit": 120,
         "licencePlate": "belasco"
       },
-      "iconOffsetHeight": 1.0,
+      "iconOffsetHeight": 1,
       "iconLift": 0.25,
       "playModeIconName": "poi_entrance_round"
     },
@@ -1479,6 +1469,7 @@
         }
       ],
       "filter": {
+        "whiteList": {},
         "blackList": {
           "Type": [
             "Trailer"
@@ -1512,7 +1503,7 @@
         "timeLimit": 120,
         "licencePlate": ""
       },
-      "iconOffsetHeight": 1.0,
+      "iconOffsetHeight": 1,
       "iconLift": 0.25,
       "playModeIconName": "poi_entrance_round"
     },
@@ -1520,6 +1511,7 @@
       "id": "GavrilcarDealership",
       "name": "Gavril-Car Online Dealership",
       "description": "Gavril-Car Online Dealership",
+      "preview": "USDM_Dealer_TB.png",
       "stock": 10,
       "range": [
         0.8,
@@ -1527,7 +1519,6 @@
         1.15,
         1.3
       ],
-      "preview": "USDM_Dealer_TB.png",
       "doors": [
         [
           "GavrilcarDealership_area",
@@ -1545,6 +1536,7 @@
         }
       ],
       "filter": {
+        "whiteList": {},
         "blackList": {
           "Type": [
             "Trailer"
@@ -1581,7 +1573,7 @@
         "timeLimit": 120,
         "licencePlate": ""
       },
-      "iconOffsetHeight": 1.0,
+      "iconOffsetHeight": 1,
       "iconLift": 0.25,
       "playModeIconName": "poi_entrance_round"
     },
@@ -1589,6 +1581,7 @@
       "id": "GavriltruckDealership",
       "name": "Gavril-Truck Online Dealership",
       "description": "Gavril-Truck Online Dealership",
+      "preview": "USDM_Dealer_TB.png",
       "stock": 10,
       "range": [
         0.8,
@@ -1596,7 +1589,6 @@
         1.15,
         1.3
       ],
-      "preview": "USDM_Dealer_TB.png",
       "doors": [
         [
           "GavriltruckDealership_area",
@@ -1614,6 +1606,7 @@
         }
       ],
       "filter": {
+        "whiteList": {},
         "blackList": {
           "Type": [
             "Trailer"
@@ -1668,7 +1661,7 @@
         "timeLimit": 120,
         "licencePlate": ""
       },
-      "iconOffsetHeight": 1.0,
+      "iconOffsetHeight": 1,
       "iconLift": 0.25,
       "playModeIconName": "poi_entrance_round"
     },
@@ -1676,6 +1669,7 @@
       "id": "SoliadDealership",
       "name": "Soliad Online Dealership",
       "description": "Soliad Online Dealership",
+      "preview": "USDM_Dealer_TB.png",
       "stock": 10,
       "range": [
         0.8,
@@ -1683,7 +1677,6 @@
         1.15,
         1.3
       ],
-      "preview": "USDM_Dealer_TB.png",
       "doors": [
         [
           "SoliadDealership_area",
@@ -1701,6 +1694,7 @@
         }
       ],
       "filter": {
+        "whiteList": {},
         "blackList": {
           "Type": [
             "Trailer"
@@ -1734,7 +1728,7 @@
         "timeLimit": 120,
         "licencePlate": ""
       },
-      "iconOffsetHeight": 1.0,
+      "iconOffsetHeight": 1,
       "iconLift": 0.25,
       "playModeIconName": "poi_entrance_round"
     },
@@ -1742,7 +1736,6 @@
       "id": "truckShop",
       "name": "Commercial Vehicle Sales",
       "description": "Tractors and Trailers",
-      "associatedOrganization": "commercialVehicleSales",
       "preview": "commercialGarage_dealership.jpg",
       "stock": 20,
       "range": [
@@ -1751,15 +1744,13 @@
         1.15,
         1.3
       ],
+      "associatedOrganization": "commercialVehicleSales",
       "doors": [
         [
           "truckshop_area_1",
           "truckshop_icon_1",
           30
         ]
-      ],
-      "screens": [
-        "commercialOfficeComputer_screen_1"
       ],
       "parkingSpotNames": [
         "truckShop1"
@@ -1780,9 +1771,6 @@
           }
         },
         "blackList": {
-          "hasLoad": [
-            true
-          ],
           "Config Type": [
             "Frame"
           ],
@@ -1795,11 +1783,15 @@
           "Body Style": [
             "Ambulance",
             "Pickup"
+          ],
+          "hasLoad": [
+            true
           ]
         }
       },
       "subFilters": [
         {
+          "probability": 5,
           "whiteList": {
             "Body Style": [
               "Semi Truck",
@@ -1810,16 +1802,15 @@
               "Truck",
               "Forklift"
             ]
-          },
-          "probability": 5
+          }
         },
         {
+          "probability": 1,
           "whiteList": {
             "Body Style": [
               "Bus"
             ]
-          },
-          "probability": 1
+          }
         }
       ],
       "fees": 1449,
@@ -1831,7 +1822,10 @@
       },
       "iconOffsetHeight": 0.24,
       "iconLift": 0.24,
-      "playModeIconName": "poi_entrance_round"
+      "playModeIconName": "poi_entrance_round",
+      "screens": [
+        "commercialOfficeComputer_screen_1"
+      ]
     },
     {
       "id": "importDealer",
@@ -1941,6 +1935,68 @@
         "configSearchText": {}
       },
       "salesTax": 0.15
+    },
+    {
+      "id": "raceTab",
+      "name": "RaceTab",
+      "description": "All things RaceTab",
+      "stock": 10,
+      "range": [
+        0.8,
+        0.9,
+        1.15,
+        1.3
+      ],
+      "doors": [
+        [
+          "raceTab_area_1",
+          "raceTab_icon_82",
+          30
+        ]
+      ],
+      "parkingSpotNames": [
+        "raceTabParking1"
+      ],
+      "filter": {
+        "whiteList": {
+          "Config Type": [
+            "RaceTab"
+          ]
+        },
+        "blackList": {
+          "Type": [
+            "Trailer"
+          ]
+        }
+      },
+      "subFilters": [
+        {
+          "probability": 1,
+          "whiteList": {
+            "Mileage": {
+              "min": 0,
+              "max": 16093440
+            }
+          }
+        }
+      ],
+      "subFilterNames": [
+        "Sub-Filter 1"
+      ],
+      "fees": 500,
+      "containsStarterVehicles": false,
+      "testDrive": {
+        "abandonFees": 250,
+        "timeLimit": 120,
+        "licencePlate": ""
+      },
+      "ui": {
+        "showMatchingConfigs": [
+          true
+        ],
+        "configSearchText": {}
+      },
+      "salesTax": 0.07
     }
   ],
   "privateSellers": [
@@ -1954,9 +2010,7 @@
             "min": 25000000,
             "max": 380000000
           },
-          "Value": {
-            "min": 950
-          }
+          "Value": {}
         },
         "blackList": {
           "Type": [
