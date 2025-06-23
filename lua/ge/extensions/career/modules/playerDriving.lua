@@ -206,11 +206,11 @@ local function resetPursuit()
 end
 
 local function onPursuitAction(vehId, action, data)
-  if vehId ~= be:getPlayerVehicleID(0) then
+  local playerIsCop = getPlayerIsCop()
+  if vehId ~= be:getPlayerVehicleID(0) and not playerIsCop then
     return
   end
 
-  local playerIsCop = getPlayerIsCop()
   local inventoryId = career_modules_inventory.getInventoryIdFromVehicleId(vehId)
   if action == "start" then -- pursuit started
     gameplay_parking.disableTracking(vehId)
