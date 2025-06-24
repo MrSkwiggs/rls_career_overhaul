@@ -12,13 +12,8 @@ local function togglePhone(reason)
         isPhoneOpen = false
         guihooks.trigger('closePhone')
     else
-        if gameplay_cab.inCab then
-            guihooks.trigger('ChangeState', {state = 'phone-main'})
-            return
-        end
-
         local playerSpeed = math.abs(be:getObjectVelocityXYZ(be:getPlayerVehicleID(0))) * speedUnit
-        if playerSpeed > 5 then
+        if not gameplay_cab.inCab and playerSpeed > 5 then
             if reason then
                 ui_message(reason, 5, "info", "info")
             else

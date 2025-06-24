@@ -158,6 +158,7 @@ export default {
     listVehicles: (inventoryIds) => [Array],
     openMenu: () => {},
     removeVehicleListing: inventoryId => Number,
+    toggleNotifications: newValue => Boolean,
   },
 
   career_modules_testDrive: {
