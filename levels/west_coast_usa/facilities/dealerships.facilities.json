@@ -681,7 +681,11 @@
         }
       ],
       "filter": {
-        "whiteList": {},
+        "whiteList": {
+          "Config Type": [
+            "Gizamn"
+          ]
+        },
         "blackList": {
           "Type": [
             "Trailer"
@@ -698,10 +702,7 @@
             "Mileage": {
               "min": 11000,
               "max": 17600056
-            },
-            "Config Type": [
-              "Gizamn"
-            ]
+            }
           }
         }
       ],
@@ -1045,7 +1046,7 @@
       "name": "Trailer Dealer",
       "description": "Trailer Sales",
       "preview": "trailerDealership.jpg",
-      "stock": 10,
+      "stock": 20,
       "doors": [
         [
           "trailershop_area",
@@ -1070,7 +1071,11 @@
             "Trailer"
           ]
         },
-        "blackList": {}
+        "blackList": {
+          "Config Type": [
+            "Frame"
+          ]
+        }
       },
       "subFilters": [
         {
@@ -1634,8 +1639,7 @@
           "Mileage": {
             "min": 25000000,
             "max": 380000000
-          },
-          "Value": {}
+          }
         },
         "blackList": {
           "Type": [
@@ -1667,7 +1671,11 @@
         },
         {
           "probability": 1,
-          "whiteList": {}
+          "whiteList": {          "Years": {
+            "min": 1900,
+            "max": 2025
+          }
+}
         }
       ]
     }
