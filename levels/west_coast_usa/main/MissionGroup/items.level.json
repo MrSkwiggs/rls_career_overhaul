@@ -39,7 +39,7 @@
 {"name":"trafficCameras_wip","class":"SimGroup","persistentId":"3affc3ba-8eab-4490-a516-fc5ad05f39ce","__parent":"MissionGroup"}
 {"name":"shuffleboard_conversion_area","class":"SimGroup","__parent":"MissionGroup"}
 {"name":"spearleafShuffleboard","class":"SimGroup","__parent":"MissionGroup"}
-{"name":"driftZones","class":"SimGroup","__parent":"MissionGroup","hidden":true}
+{"name":"driftZones","class":"SimGroup","__parent":"MissionGroup"}
 {"name":"dragTunnel","class":"SimGroup","__parent":"MissionGroup"}
 {"name":"raceTrackParkingLotGrandStands","class":"SimGroup","__parent":"MissionGroup"}
 {"name":"skidpadTestTrack","class":"SimGroup","__parent":"MissionGroup"}
