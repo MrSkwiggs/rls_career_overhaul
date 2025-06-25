@@ -1529,14 +1529,6 @@
           "probability": 6,
           "whiteList": {
             "Country": [
-              "United States"
-            ]
-          }
-        },
-        {
-          "probability": 2,
-          "whiteList": {
-            "Country": [
               "Poland",
               "Italy",
               "France",
@@ -1544,10 +1536,6 @@
               "Japan"
             ]
           }
-        },
-        {
-          "probability": 1,
-          "whiteList": {}
         }
       ],
       "fees": 1500,
