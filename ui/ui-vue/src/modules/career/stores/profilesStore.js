@@ -8,7 +8,7 @@ export const PROFILE_NAME_PATTERN = /^[a-zA-Z0-9_]+$/
 
 export const useProfilesStore = defineStore("profiles", () => {
   async function loadProfile(profileName, tutorialEnabled, isAdd = false, hardcoreMode = false) {
-    console.log("loadProfile", profileName, tutorialEnabled, isAdd, hardcoreMode)
+    console.log("profileStore.loadProfile", profileName, tutorialEnabled, isAdd, hardcoreMode)
     if (!profileName) {
       console.warn("profileStore.loadProfile: profileName is required. Not loading profile.")
       return false

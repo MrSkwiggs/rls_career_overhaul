@@ -18,7 +18,9 @@
           externalLabel="Save Name"
           @keydown.enter="onEnter" />
         <BngSwitch v-model="hardcoreMode" label-before :inline="false"> Hardcore Mode </BngSwitch>
-        <BngSwitch v-model="tutorialChecked" label-before :inline="false">{{ $ctx_t("ui.career.tutorialCheckDesc") }}</BngSwitch>
+        <BngSwitch v-model="tutorialChecked" label-before :inline="false" :label-alignment="LABEL_ALIGNMENTS.START">{{
+          $ctx_t("ui.career.tutorialCheckDesc")
+        }}</BngSwitch>
         <span class="tutorial-desc" :class="{ checked: tutorialChecked }">{{ $ctx_t("ui.career.tutorialOnDesc") }}</span>
       </template>
       <div v-else class="create-content-cover" @click="setActive(true)">
@@ -43,13 +45,11 @@ const cardFooterStyles = {
 <script setup>
 import { inject, nextTick, ref } from "vue"
 import { vBngOnUiNav, vBngScopedNav, vBngBlur, vBngSoundClass } from "@/common/directives"
-import { BngButton, BngCard, BngInput, BngSwitch } from "@/common/components/base"
-import { PROFILE_NAME_MAX_LENGTH, useProfilesStore } from "../../stores/profilesStore"
+import { BngButton, BngCard, BngInput, BngSwitch, LABEL_ALIGNMENTS } from "@/common/components/base"
+import { PROFILE_NAME_MAX_LENGTH } from "../../stores/profilesStore"
 import { setFocus } from "@/services/uiNavFocus"
 
 const emit = defineEmits(["card:activate", "load"])
-
-const store = useProfilesStore()
 
 const profileName = defineModel("profileName", { required: true })
 const hardcoreMode = ref(false)
@@ -74,9 +74,7 @@ const validateFn = name => {
   return !res
 }
 
-async function load() {
-  await store.loadProfile(profileName.value, tutorialChecked.value, true, hardcoreMode.value)
-}
+const load = () => emit("load", profileName.value, tutorialChecked.value, null, hardcoreMode.value)
 
 function onActivated(event) {
   const data = event.detail
@@ -102,8 +100,24 @@ function onEnter(event) {
 </script>
 
 <style lang="scss" scoped>
+@use "@/styles/modules/mixins" as *;
+
 .profile-create-card {
+  font-size: calc-ui-rem();
   color: white;
+
+  // temp
+  :deep(.card-cnt) {
+    border-radius: calc-ui-rem(0.5) !important;
+  }
+  :deep(.bng-button) {
+    font-size: calc-ui-rem() !important;
+    line-height: calc-ui-rem(1.5) !important;
+    margin: calc-ui-rem(0.25) !important;
+    &, .background {
+      border-radius: calc-ui-rem(0.25) !important;
+    }
+  }
 }
 
 .create-content-container {
