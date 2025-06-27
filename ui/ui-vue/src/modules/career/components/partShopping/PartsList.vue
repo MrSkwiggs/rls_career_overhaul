@@ -127,7 +127,7 @@ onUnmounted(() => {
 .parts-list {
   width: 100%;
   height: auto;
-  max-height: 100%;
+  max-height: 90%;
   padding: 0 1em;
   overflow: hidden auto;
 }
