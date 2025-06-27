@@ -479,8 +479,10 @@ local function removeVehicleObject(inventoryId, skipPartConditions)
   local vehId = inventoryIdToVehId[inventoryId]
   if vehId then
     local obj = getObjectByID(vehId)
-    if obj then
+    if obj and not skipPartConditions then
       career_modules_damageManager.saveDamageState(inventoryId, nil, true) -- remove vehicle
+    elseif obj and skipPartConditions then
+      obj:delete()
     end
     vehIdToInventoryId[vehId] = nil
   end
