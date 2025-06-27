@@ -3,35 +3,52 @@ import { defineStore } from "pinia"
 import { lua } from "@/bridge"
 import { $translate } from "@/services"
 
+export const PROFILE_NAME_MAX_LENGTH = 100
+export const PROFILE_NAME_PATTERN = /^[a-zA-Z0-9_]+$/
+
 export const useProfilesStore = defineStore("profiles", () => {
   async function loadProfile(profileName, tutorialEnabled, isAdd = false, hardcoreMode = false) {
-    console.log("loadProfile", profileName, tutorialEnabled, isAdd, hardcoreMode)
-    if (!profileName) return false
+    console.log("profileStore.loadProfile", profileName, tutorialEnabled, isAdd, hardcoreMode)
+    if (!profileName) {
+      console.warn("profileStore.loadProfile: profileName is required. Not loading profile.")
+      return false
+    }
+
+    if (profileName.length > PROFILE_NAME_MAX_LENGTH && isAdd) {
+      console.warn("profileStore.loadProfile: profileName is too long. Not loading profile.")
+      return false
+    }
 
     const isGarageActive = await lua.extensions.gameplay_garageMode.isActive()
-    if (isGarageActive) await lua.extensions.gameplay_garageMode.stop()
+    if (isGarageActive) {
+      console.log("profileStore.loadProfile: garage mode is active, stopping")
+      await lua.extensions.gameplay_garageMode.stop()
+      console.log("profileStore.loadProfile: garage mode is stopped")
+    }
 
-    window.bngVue.gotoGameState("fadeScreen", { params: { fadeIn: 0.5, fadeOut: 2, pause: 5 } })
+    console.log("profileStore.loadProfile: enabling tutorial", tutorialEnabled)
+    const enableTutorialResult = await lua.career_career.enableTutorial(tutorialEnabled)
+    const enableHardcoreModeResult = await lua.career_career.enableHardcoreMode(hardcoreMode)
+    console.log("profileStore.loadProfile: enableTutorialResult", enableTutorialResult)
+    console.log("profileStore.loadProfile: enableHardcoreModeResult", enableHardcoreModeResult)
 
-    const fadeTimeout = setTimeout(async () => {
-      await lua.career_career.enableTutorial(tutorialEnabled)
-      await lua.career_career.enableHardcoreMode(hardcoreMode)
-      await lua.career_career.createOrLoadCareerAndStart(profileName)
+    console.log("profileStore.loadProfile: creating or loading career and starting", profileName)
+    if (/^ +| +$/.test(profileName)) profileName = profileName.replace(/^ +| +$/g, "")
+    const createOrLoadCareerAndStartResult = await lua.career_career.createOrLoadCareerAndStart(profileName)
+    console.log("profileStore.loadProfile: createOrLoadCareerAndStartResult", createOrLoadCareerAndStartResult)
 
-      const toastrMessage = isAdd ? "added" : "loaded"
+    const toastrMessage = isAdd ? "added" : "loaded"
 
-      window.globalAngularRootScope.$broadcast("toastrMsg", {
-        type: "info",
-        msg: $translate.contextTranslate(`ui.career.notification.${toastrMessage}`),
-        config: {
-          positionClass: "toast-top-right",
-          toastClass: "beamng-message-toast",
-          timeOut: 5000,
-          extendedTimeOut: 1000,
-        },
-      })
-      clearTimeout(fadeTimeout)
-    }, 1000)
+    window.globalAngularRootScope.$broadcast("toastrMsg", {
+      type: "info",
+      msg: $translate.contextTranslate(`ui.career.notification.${toastrMessage}`),
+      config: {
+        positionClass: "toast-top-right",
+        toastClass: "beamng-message-toast",
+        timeOut: 5000,
+        extendedTimeOut: 1000,
+      },
+    })
   }
 
   return { loadProfile }

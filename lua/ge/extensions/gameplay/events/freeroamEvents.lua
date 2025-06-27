@@ -29,7 +29,6 @@ local checkpointsHit = 0
 local totalCheckpoints = 0
 local currentExpectedCheckpoint = 1
 local invalidLap = false
-local delayTrafficRestore = nil
 
 local mInventoryId = nil
 local newBestSession = false
@@ -205,9 +204,6 @@ local function payoutRace()
                 },
                 beamXP = {
                     amount = math.floor(xp / 10)
-                },
-                vouchers = {
-                    amount = (oldTime == 0 or oldTime > time) and in_race_time < time and 1 or 0
                 }
             }
             for _, type in ipairs(race.type) do
@@ -289,9 +285,6 @@ local function payoutDragRace(raceName, finishTime, finishSpeed, vehId)
         },
         beamXP = {
             amount = math.floor(xp / 10)
-        },
-        vouchers = {
-            amount = newBestTime and 1 or 0
         }
     }
 
@@ -379,7 +372,10 @@ local function exitRace()
         Assets:hideAllAssets()
         checkpointManager.removeCheckpoints()
         utils.displayMessage("You exited the race zone, Race cancelled", 3)
-        delayTrafficRestore = 10
+        core_jobsystem.create(function(job)
+            job.sleep(10)
+            utils.restoreTrafficAmount()
+        end)
         newBestSession = false
         if gameplay_drift_general.getContext() == "inChallenge" then
             gameplay_drift_general.setContext("inFreeRoam")
@@ -668,7 +664,10 @@ local function onBeamNGTrigger(data)
             mSplitTimes = {}
             mActiveRace = nil
             utils.setActiveLight(raceName, "red")
-            delayTrafficRestore = 10
+            core_jobsystem.create(function(job)
+                job.sleep(10)
+                utils.restoreTrafficAmount()
+            end)
             if career_career.isActive() then
                 career_modules_pauseTime.enablePauseCounter()
             end
@@ -714,13 +713,6 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         in_race_time = in_race_time + dtSim
     else
         in_race_time = 0
-    end
-    if delayTrafficRestore ~= nil then
-        delayTrafficRestore = delayTrafficRestore - dtSim
-        if delayTrafficRestore <= 0 then
-            utils.restoreTrafficAmount()
-            delayTrafficRestore = nil
-        end
     end
 end
 

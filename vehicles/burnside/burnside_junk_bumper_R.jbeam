@@ -3,7 +3,7 @@
     "information":{
         "authors":"BeamNG",
         "name":"Loose Rear Bumper",
-        "value":100,
+        "value":115,
     },
     "slotType" : "burnside_bumper_R",
      "flexbodies": [
@@ -59,7 +59,7 @@
           {"breakGroupType":0},
           {"beamPrecompression":1, "beamType":"|NORMAL", "beamLongBound":1, "beamShortBound":1},
           {"beamDeform":26617.5,"beamStrength":"FLT_MAX"},
-          {"beamSpring":975975,"beamDamp":97.5},
+          {"beamSpring":455975,"beamDamp":97.5},
           {"deformLimitExpansion":1.1},
           //bumper_R main shape widthwise
           ["rb1rr","rb1r"],
@@ -217,8 +217,8 @@
 
           //attach
           {"deformLimitExpansion":""},
-          {"beamSpring":2000,"beamDamp":195},
-          {"beamDeform":9000,"beamStrength":32630},
+          {"beamSpring":500,"beamDamp":195},
+          {"beamDeform":9000,"beamStrength":500},
           //r
           {"breakGroup":"bumper_R_R"},
           ["rb1r","f9rr"],
@@ -234,13 +234,13 @@
           ["rb2r","f9"],
           ["rb2r","f18"],
 
-          {"beamSpring":2000,"beamDamp":150},
-          {"beamDeform":4500,"beamStrength":32630},
+          {"beamSpring":500,"beamDamp":150},
+          {"beamDeform":4500,"beamStrength":500},
           ["rb2r","f17rr"],
           ["rb1r","f8rr"],
           //l
-          {"beamSpring":2000,"beamDamp":195},
-          {"beamDeform":9000,"beamStrength":32630},
+          {"beamSpring":500,"beamDamp":195},
+          {"beamDeform":9000,"beamStrength":500},
           {"breakGroup":"bumper_R_L"},
           ["rb1l","f9ll"],
           ["rb1l","f18ll"],
@@ -255,18 +255,19 @@
           ["rb2l","f9"],
           ["rb2l","f18"],
 
-          {"beamSpring":2000,"beamDamp":150},
-          {"beamDeform":4500,"beamStrength":32630},
+          {"beamSpring":500,"beamDamp":150},
+          {"beamDeform":4500,"beamStrength":500},
           ["rb2l","f17ll"],
           ["rb1l","f8ll"],
           {"breakGroup":""},
 
           //support beams
-          {"beamType":"|SUPPORT","beamLongBound":4},
-          {"beamSpring":2000,"beamDamp":97.5},
-          {"beamDeform":9773,"beamStrength":101680},
+          {"beamType":"|SUPPORT","beamLongBound":55},
+          {"beamSpring":500,"beamDamp":97.5},
+          {"beamDeform":9773,"beamStrength":500},
           {"beamPrecompression":0.99},
           {"optional":false},
+          {"breakGroup":"bumper_R_supportBeams"},
           ["rb1rrr","q13r"],
           ["rb1lll","q13l"],
           ["rb2rrr","q13r"],
@@ -321,12 +322,13 @@
           ["rb4r","f18rr"],
           ["rb4l","f18ll"],
           {"optional":false},
+          {"breakGroup":""},
           {"beamPrecompression":1, "beamType":"|NORMAL", "beamLongBound":1, "beamShortBound":1},
 
     ],
     "triangles": [
             ["id1:","id2:","id3:"],
-            {"dragCoef":7},
+            {"dragCoef":12.6},
             {"group":"burnside_bumper_R"},
             ["rb1","rb3","rb3r"],
             ["rb1","rb3r","rb4r"],
@@ -362,4 +364,5 @@
             //["rb2rrr","rb2rr","rb2r"],
     ],
 },
+
 }

@@ -2,13 +2,14 @@
 "burnside_junk_hood": {
     "information":{
         "authors":"BeamNG",
-        "name":"Slam It Like Its the 50s Hood",
-        "value":100,
+        "name":"Better Slam It Hood",
+        "value":150,
     },
     "slotType" : "burnside_hood",
     "slots": [
         ["type", "default", "description"],
-        ["burnside_badge_hood","burnside_badge_hood","Hood Badge"],
+        ["burnside_badge_hood","burnside_badge_hood","Burnside Badge"],
+        ["burnside_badge_hood_alt","","V8 Badge"],
     ],
     "flexbodies": [
          ["mesh", "[group]:", "nonFlexMaterials"],
@@ -32,23 +33,23 @@
         "breakSoundEvent":""
         "openForceMagnitude": 150,
         "openForceDuration": 1,
-        "closeForceMagnitude": 2500,
+        "closeForceMagnitude": 2025,
         "closeForceDuration": 0.1
     }
-    "triggers":[
-        ["id", "label", "idRef:", "idX:", "idY:", "type", "size", "baseRotation", "rotation", "translation", "baseTranslation"],
-        ["hood", "", "h6","h6r","h5", "box", {"x":0.08, "y":0.08, "z":0.08}, {"x":0, "y":3, "z":7}, {"x":0, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":-0.04, "y":-0.06, "z":-0.05}],
-        ["hood_int", "", "b5ll","b5l","b7ll", "box", {"x":0.08, "y":0.08, "z":0.08}, {"x":20, "y":-18, "z":-30}, {"x":0, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":0.2, "y":0.0, "z":-0.2}],
-        ],
-    "triggerEventLinks":[
-        ["triggerId:triggers", "action", "targetEventId:events"],
+    "triggers2":[
+        ["id", "idRef:", "idX:", "idY:", "type", "size", "baseRotation", "rotation", "translation", "baseTranslation"],
+        ["hood", "h6","h6r","h5", "box", {"x":0.08, "y":0.08, "z":0.08}, {"x":0, "y":3, "z":7}, {"x":0, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":-0.04, "y":-0.06, "z":-0.05}],
+        ["hood_int", "b5ll","b5l","b7ll", "box", {"x":0.08, "y":0.08, "z":0.08}, {"x":20, "y":-18, "z":-30}, {"x":0, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":0.2, "y":0.0, "z":-0.2}],
+    ],
+    "actionsEnabled": [
+        ["id"],
+        ["hoodCatch"],
+        ["hoodRelease"],
+    ],
+    "triggerEventLinks2":[
+        ["triggerId:triggers2", "triggerInput", "inputAction"],
         ["hood", "action0", "hoodCatch"],
         ["hood_int", "action0", "hoodRelease"],
-    ],
-    "events":[
-        ["id", "title", "desc"],
-        ["hoodCatch", "ui.inputActions.barstow.hoodCatch.title", "ui.inputActions.barstow.hoodCatch.description", {"onDown":"controller.getControllerSafe('hoodCatchCoupler').toggleGroupConditional({{'hoodLatchCoupler','attached','vehicle.advancedCouplerControl.releaseHoodFirstInterior'}})"}],
-        ["hoodRelease", "ui.inputActions.barstow.hoodLatch.title", "ui.inputActions.barstow.hoodLatch.description", {"onDown":"controller.getControllerSafe('hoodLatchCoupler').toggleGroup()"}],
     ],
     "nodes": [
          ["id", "posX", "posY", "posZ"],
@@ -57,7 +58,7 @@
          {"frictionCoef":0.5},
          {"collision":true},
          {"selfCollision":true},
-         {"group":"burnside_hood"},
+         {"group":["burnside_hood","burnside_hood_stock"]},
          {"nodeWeight":1.219},
          ["h2rr",-0.81, -0.77, 1.045],
          ["h2r",-0.32, -0.955, 1.135],
@@ -368,10 +369,11 @@
 
           {"beamPrecompression":1, "beamType":"|NORMAL", "beamLongBound":1, "beamShortBound":1},
           //hood support beams
-          {"beamType":"|SUPPORT", "beamLongBound":8},
+          {"beamType":"|SUPPORT", "beamLongBound":24},
           {"beamSpring":780975,"beamDamp":58.5},
           {"beamDeform":22815,"beamStrength":912599.9},
           {"optional":true},
+          {"breakGroup":"hood_supportBeams"},
           {"beamPrecompression":0.55},
           ["h2r","b6r"],
           ["h2l","b6l"],
@@ -383,7 +385,7 @@
           ["h2rr","b6rr"],
           ["h2ll","b6ll"],
 
-          {"beamPrecompression":0.995, "beamLongBound":15},
+          {"beamPrecompression":0.995, "beamLongBound":30},
           ["h5rr","s1rr"],
           ["h5r","s1r"],
           ["h5","s1"],
@@ -394,6 +396,7 @@
           //["h6rr","f25r"],
           ["h6ll","f25ll"],
           //["h6ll","f25l"],
+          {"breakGroup":""},
 
           //inter part triangle breaking triggers
           {"beamType":"|SUPPORT", "beamLongBound":2},
@@ -414,7 +417,7 @@
             ["id1:","id2:","id3:"],
             //hood
             {"group":"burnside_hood"},
-            {"dragCoef":14},
+            {"dragCoef":25.2},
             ["h2rr","h3rr","h3r"],
             ["h2rr","h3r","h2r"],
             ["h2r","h3r","h3"],
@@ -432,7 +435,7 @@
             ["h3ll","h3l","h4l"],
             ["h4ll","h3ll","h4l"],
 
-            {"dragCoef":4},
+            {"dragCoef":7.2},
             ["h4rr","h5rr","h5r"],
             ["h4rr","h5r","h4r"],
             ["h4r","h5r","h5"],

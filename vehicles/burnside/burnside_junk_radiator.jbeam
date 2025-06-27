@@ -2,21 +2,21 @@
 "burnside_junk_radiator": {
     "information":{
         "authors":"BeamNG",
-        "name":"Junk Radiator",
-        "value":45,
+        "name":"Junk V8 Radiator",
+        "value":100,
     },
     "slotType" : "burnside_radiator",
     "flexbodies": [
          ["mesh", "[group]:", "nonFlexMaterials"],
-         ["burnside_radiator", ["burnside_radiator","burnside_radsupport"]],
+         ["burnside_radiator_stock", ["burnside_radiator","burnside_radsupport"]],
     ],
     "mainEngine":{
-        "radiatorArea":0.35,
-        "radiatorEffectiveness":1000,
-        "coolantVolume":3.5,
+        "radiatorArea":0.37,
+        "radiatorEffectiveness":4500,
+        "coolantVolume":12.5,
         "radiatorFanType":"mechanical",
-        "radiatorFanMaxAirSpeed":25,
-        "thermostatTemperature":150,
+        "radiatorFanMaxAirSpeed":30,
+        "thermostatTemperature":100,
 
         //damage deformGroups
         "deformGroups_radiator":["radiator_damage", "radhose_damage"]
@@ -31,7 +31,7 @@
          {"group":"burnside_radiator"},
          {"nodeWeight":4.875},
            {"engineGroup":"radiator"},
-         {"chemEnergy":200,"burnRate":0.4,"flashPoint":250,"specHeat":0.8,"smokePoint":150,"selfIgnitionCoef":false},
+         {"chemEnergy":200,"burnRate":0.4,"flashPoint":250,"specHeat":0.8,"smokePoint":125,"selfIgnitionCoef":false},
          ["rad1", 0.0, -1.94, 0.45],
          {"chemEnergy":false,"burnRate":false,"flashPoint":false,"specHeat":false,"smokePoint":false,"selfIgnitionCoef":false},
          ["rad2", 0.0, -1.92, 0.92],
@@ -42,7 +42,7 @@
     "beams": [
           ["id1:", "id2:"],
           {"beamType":"|NORMAL", "beamLongBound":1.0, "beamShortBound":1.0},
-          {"beamSpring":1619309,"beamDamp":163.8},
+          {"beamSpring":819309,"beamDamp":163.8},
           {"beamDeform":11407.5,"beamStrength":"FLT_MAX"},
           {"deformGroup":"radiator_damage","deformationTriggerRatio":0.05},
           {"deformLimitExpansion":1.2},
@@ -65,6 +65,7 @@
           {"beamSpring":97919.25,"beamDamp":98.28},
           {"beamDeform":2091.38,"beamStrength":6692.4},
           {"optional":true},
+          {"deformGroup":"radhose_damage","deformationTriggerRatio":0.02},
           //duplicate beams for better flexbody breaking
           ["rad1","e4r"],
           ["rad1","e4l"],
@@ -79,7 +80,7 @@
     ],
     "triangles": [
             ["id1:","id2:","id3:"],
-            {"dragCoef":2.1},
+            {"dragCoef":3.78},
             {"group":"burnside_radsupport"},
             ["rad2","s1r","s1"],
             ["rad2","s1","s1l"],

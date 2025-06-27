@@ -1,7 +1,7 @@
 <template>
   <BngList layout-selector v-bng-disabled="!vehicleInventoryStore" @layout-change="onLayoutChange" :layout="LIST_LAYOUTS.TILES">
     <VehicleTile v-if="listStatus" :data="{ _message: listStatus }" :layout="itemLayout" v-bng-disabled />
-    <VehicleTile v-else v-for="vehicle in listView"
+    <VehicleTile v-else v-for="vehicle in listView" :key="vehicle.id"
       :data="vehicle" :layout="itemLayout" :selected="vehSelected && vehSelected.id === vehicle.id"
       :is-tutorial="vehicleInventoryStore && vehicleInventoryStore.vehicleInventoryData.tutorialActive"
       :money="vehicleInventoryStore ? vehicleInventoryStore.vehicleInventoryData.playerMoney : 0"
@@ -17,6 +17,7 @@
         </BngButton>
         <BngButton v-else-if="isFunctionAvailable(vehSelected, buttonData)"
           :accent="ACCENTS.menu"
+          v-bng-on-ui-nav:ok.focusRequired.asMouse
           @click="vehicleInventoryStore.chooseVehicle(vehSelected.id, index)">
           {{ buttonData.buttonText }}
         </BngButton>
@@ -24,6 +25,7 @@
       <BngButton
         v-if="vehicleInventoryStore.vehicleInventoryData.buttonsActive.returnLoanerEnabled && vehSelected.returnLoanerPermission.allow"
         :accent="ACCENTS.menu"
+        v-bng-on-ui-nav:ok.focusRequired.asMouse
         @click="confirmReturnVehicle()">
         Return loaned vehicle
       </BngButton>
@@ -31,6 +33,7 @@
         v-if="vehSelected.delayReason === 'repair'"
         :accent="ACCENTS.menu"
         :disabled="vehSelected.expediteRepairCost > vehicleInventoryStore.vehicleInventoryData.playerMoney"
+        v-bng-on-ui-nav:ok.focusRequired.asMouse
         @click="confirmExpediteRepair(vehSelected)">
         Expedite Repair
         <BngUnit :money="vehSelected.expediteRepairCost" />
@@ -39,13 +42,15 @@
         v-if="vehSelected.delayReason !== 'repair' && vehicleInventoryStore.vehicleInventoryData.buttonsActive.repairEnabled"
         :accent="ACCENTS.menu"
         :disabled="!vehSelected.repairPermission.allow"
+        v-bng-on-ui-nav:ok.focusRequired.asMouse
         @click="openRepairMenu()">
         Repair
       </BngButton>
       <BngButton
-        v-if="vehicleInventoryStore.vehicleInventoryData.buttonsActive.storingEnabled"
+        v-if="vehicleInventoryStore.vehicleInventoryData.buttonsActive.storingEnabled && !vehSelected.inStorage"
         :accent="ACCENTS.menu"
         :disabled="!vehSelected.storePermission.allow"
+        v-bng-on-ui-nav:ok.focusRequired.asMouse
         @click="storeVehicle()">
         Put in storage
       </BngButton>
@@ -58,6 +63,7 @@
       <BngButton
         v-if="!vehSelected.ownsRequiredInsurance"
         :disabled="vehSelected.policyInfo.initialBuyPrice > vehicleInventoryStore.vehicleInventoryData.playerMoney"
+        v-bng-on-ui-nav:ok.focusRequired.asMouse
         @click="buyInsurance(vehSelected.policyInfo.id)">
         Purchase insurance
         <BngUnit :money="vehSelected.policyInfo.initialBuyPrice" />
@@ -66,41 +72,45 @@
         v-if="vehicleInventoryStore.vehicleInventoryData.buttonsActive.favoriteEnabled"
         :accent="ACCENTS.menu"
         :disabled="!vehSelected.favoritePermission.allow || vehSelected.favorite"
+        v-bng-on-ui-nav:ok.focusRequired.asMouse
         @click="setFavoriteVehicle()">
         Set as Favorite
       </BngButton>
       <BngButton
         :accent="ACCENTS.menu"
         :disabled="!vehSelected.licensePlateChangePermission.allow"
+        v-bng-on-ui-nav:ok.focusRequired.asMouse
         @click="personalizeLicensePlate(vehSelected)">
         Personalize license plate
       </BngButton>
       <BngButton
-        v-if="vehicleInventoryStore.vehicleInventoryData.buttonsActive.sellEnabled && !vehiclesForSale.includes(vehSelected.id)"
         :accent="ACCENTS.menu"
-        :disabled="!vehSelected.sellPermission.allow"
-        @click="confirmSellVehicle()">
-        Instant Sell
+        v-bng-on-ui-nav:ok.focusRequired.asMouse
+        @click="renameVehicle()">
+        Rename vehicle
       </BngButton>
       <BngButton
-        v-if="vehicleInventoryStore.vehicleInventoryData.buttonsActive.sellEnabled && !vehiclesForSale.includes(vehSelected.id)"
+        v-if="vehicleInventoryStore.vehicleInventoryData.buttonsActive.sellEnabled && !vehSelected.listedForSale"
         :accent="ACCENTS.menu"
         :disabled="!vehSelected.sellPermission.allow"
-        @click="confirmListForSale()">
-        List for Sale
+        v-bng-on-ui-nav:ok.focusRequired.asMouse
+        @click="listVehicleForSale()">
+        List vehicle for sale
       </BngButton>
       <BngButton
-        v-if="vehiclesForSale.includes(vehSelected.id)"
+        v-if="vehicleInventoryStore.vehicleInventoryData.buttonsActive.sellEnabled && vehSelected.listedForSale"
         :accent="ACCENTS.menu"
-        @click="confirmRemoveFromSale()">
-        Remove Listing
+        :disabled="!vehSelected.sellPermission.allow"
+        v-bng-on-ui-nav:ok.focusRequired.asMouse
+        @click="lookAtVehicleListing()">
+        Go to vehicle listing
       </BngButton>
     </BngPopoverMenu>
   </BngList>
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted } from "vue"
+import { ref, computed, nextTick } from "vue"
 import { lua, useBridge } from "@/bridge"
 import { BngList, BngButton, BngPopoverMenu, BngUnit, ACCENTS, LIST_LAYOUTS } from "@/common/components/base"
 import { vBngDisabled, vBngPopover, vBngOnUiNav } from "@/common/directives"
@@ -111,34 +121,20 @@ import { $translate } from "@/services/translation"
 import { usePopover } from "@/services/popover"
 import { uniqueId } from "@/services/uniqueId"
 
-const { units, events } = useBridge()
+const { units } = useBridge()
 
 const popover = usePopover()
 const popId = uniqueId("veh_options")
 const popHide = () => popover.hide(popId)
+const licensePlateTextValid = ref(true)
+const vehicleNameValid = ref(true)
 
 const vehicleInventoryStore = useVehicleInventoryStore()
 const selectedVehId = ref()
 
-const vehiclesForSale = ref([])
-const hardcoreMode = ref(false)
-
-onMounted(async () => {
-   await lua.career_modules_vehicleMarketplace.requestInitialData()
-   hardcoreMode.value = await lua.career_modules_hardcore.isHardcoreMode()
-});
-
-events.on("marketplaceUpdate", (data) => {
-  vehiclesForSale.value = Object.keys(data).map(id => Number(id))
-})
-
 const vehSelected = computed(() => {
-  if (typeof selectedVehId.value != "number" ) return
-  for (const vehicle of listView.value) {
-    if (vehicle.id == selectedVehId.value) return vehicle
-  }
-
-  return
+  if (typeof selectedVehId.value !== "number") return undefined
+  return listView.value.find(v => v.id === selectedVehId.value)
 })
 
 const careerStatusData = ref({})
@@ -234,35 +230,16 @@ const isFunctionAvailable = (vehicle, buttonData) => !(
   (buttonData.ownedRequired && !vehicle.owned)
 )
 
-const confirmSellVehicle = async () => {
+const listVehicleForSale = () => {
   const vehicle = vehSelected.value
   popHide()
-  const hardcoreMultiplier = hardcoreMode.value ? 0.33 : 0.66
-  const res = await openConfirmation("", `Do you want to sell this vehicle for ${units.beamBucks(vehicle.value * hardcoreMultiplier)}?`, [
-    { label: $translate.instant("ui.common.yes"), value: true, extras: { default: true } },
-    { label: $translate.instant("ui.common.no"), value: false, extras: { accent: ACCENTS.secondary } },
-  ])
-  if (res) lua.career_modules_inventory.sellVehicleFromInventory(vehicle.id)
+  lua.career_modules_marketplace.listVehicles([vehicle.id]).then(() => {
+    lua.career_modules_marketplace.openMenu(vehicleInventoryStore.vehicleInventoryData.originComputerId)
+  })
 }
 
-const confirmListForSale = async () => {
-  const vehicle = vehSelected.value
-  popHide()
-  const res = await openConfirmation("", `Do you want to list this vehicle for sale?`, [
-    { label: $translate.instant("ui.common.yes"), value: true, extras: { default: true } },
-    { label: $translate.instant("ui.common.no"), value: false, extras: { accent: ACCENTS.secondary } },
-  ])
-  if (res) lua.career_modules_inventory.listVehicleForSale(vehicle.id)
-}
-
-const confirmRemoveFromSale = async () => {
-  const vehicle = vehSelected.value
-  popHide()
-  const res = await openConfirmation("", `Do you want to remove this vehicles listing?`, [
-    { label: $translate.instant("ui.common.yes"), value: true, extras: { default: true } },
-    { label: $translate.instant("ui.common.no"), value: false, extras: { accent: ACCENTS.secondary } },
-  ])
-  if (res) lua.career_modules_inventory.removeVehicleFromSale(vehicle.id)
+const lookAtVehicleListing = () => {
+  lua.career_modules_marketplace.openMenu(vehicleInventoryStore.vehicleInventoryData.originComputerId)
 }
 
 const confirmReturnVehicle = async () => {
@@ -279,13 +256,25 @@ const personalizeLicensePlate = async () => {
   const vehicle = vehSelected.value
   popHide()
   updateCareerStatusData()
-  const res = await openPrompt("Enter your new license plate text:", "Personalize License Plate",  { maxLength: 10, defaultValue: vehicle.config.licenseName, buttons: [
-    { label: $translate.instant("ui.common.cancel"), value: false, extras: { cancel: true, accent: ACCENTS.secondary } },
-    { label: $translate.instant("ui.common.okay") + ` (Cost: ${units.beamBucks(300)})`, value: text => text, extras: {
-      disabled: cantPayLicensePlate,
-      accent: ACCENTS.primary,
-    } },
-  ]})
+  const res = await openPrompt("Enter your new license plate text:", "Personalize License Plate",
+  {
+    maxLength: 10, defaultValue: vehicle.config.licenseName,
+    buttons: [
+      { label: $translate.instant("ui.common.cancel"), value: false, extras: { cancel: true, accent: ACCENTS.secondary } },
+      { label: $translate.instant("ui.common.okay") + ` (Cost: ${units.beamBucks(300)})`, value: text => text, extras: {
+        disabled: cantPayLicensePlate,
+        accent: ACCENTS.primary
+      } },
+    ],
+    validate: text => {
+      lua.career_modules_inventory.isLicensePlateValid(text).then(valid => {
+        licensePlateTextValid.value = valid
+      })
+      return licensePlateTextValid.value
+    } ,
+    errorMessage: "Invalid character in license plate text",
+    disableWhenInvalid: true,
+  })
 
   if (res != false)  {
     lua.career_modules_inventory.purchaseLicensePlateText(vehicle.id, res, 300)
@@ -344,5 +333,33 @@ const buyInsurance = () => {
   popHide()
   lua.career_modules_insurance.purchasePolicy(vehicle.id)
   lua.career_modules_inventory.sendDataToUi()
+}
+
+const renameVehicle = async () => {
+  const vehicle = vehSelected.value
+  popHide()
+  const res = await openPrompt("Enter new vehicle name:", "Rename Vehicle",
+  {
+    maxLength: 30, defaultValue: vehicle.niceName,
+    buttons: [
+      { label: $translate.instant("ui.common.cancel"), value: false, extras: { cancel: true, accent: ACCENTS.secondary } },
+      { label: $translate.instant("ui.common.okay"), value: text => text, extras: {
+        accent: ACCENTS.primary
+      } },
+    ],
+    validate: text => {
+      lua.career_modules_inventory.isVehicleNameValid(text).then(valid => {
+        vehicleNameValid.value = valid
+      })
+      return vehicleNameValid.value
+    } ,
+    errorMessage: "Invalid characters in vehicle name",
+    disableWhenInvalid: true,
+  })
+
+  if (res != false) {
+    lua.career_modules_inventory.renameVehicle(vehicle.id, res)
+    vehicle.niceName = res
+  }
 }
 </script>

@@ -151,6 +151,21 @@ end
 local function getPartValue(part)
   local mileage   = part.partCondition and part.partCondition.odometer or 0 -- convert to miles
   local baseValue = part.value or 0
+  local value = getDepreciatedPartValue(baseValue, mileage)
+
+  if part.primered then
+    value = value * 0.95
+  end
+
+  if part.repairCount then
+    value = value - value * (part.repairCount/(part.repairCount + 1)) * 0.2
+  end
+  return value
+end
+
+local function getPartValue(part)
+  local mileage   = part.partCondition and part.partCondition.odometer or 0 -- convert to miles
+  local baseValue = part.value or 0
   
   return getDepreciatedPartValue(baseValue, mileage)
 end
@@ -289,8 +304,22 @@ local function getNumberOfBrokenParts(partConditions)
   return counter
 end
 
+local function isPartException(partPath)
+  for _, exception in ipairs(repairExceptions) do
+    if string.find(partPath, exception) then
+      return true
+    end
+  end
+end
+
 local function partConditionsNeedRepair(partConditions)
   return getNumberOfBrokenParts(partConditions) >= brokenPartsThreshold
+  --[[ for partPath, info in pairs(partConditions) do
+    if info.integrityValue and info.integrityValue == 0 and not isPartException(partPath) then
+      return true
+    end
+  end
+  return false ]]
 end
 
 local function getBrokenPartsThreshold()

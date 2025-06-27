@@ -9,6 +9,7 @@
       :player-money="partShoppingStore.partShoppingData.playerMoney"
       :apply="applyShopping"
       :cancel="confirmCancel"
+      :confirm-button-text="'Confirm'"
     />
   </ComputerWrapper>
 </template>

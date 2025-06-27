@@ -3,39 +3,20 @@
     "information":{
         "authors":"BeamNG",
         "name":"Loose Front Right Fender",
-        "value":75,
+        "value":125,
     },
     "slotType" : "burnside_fender_R",
      "flexbodies": [
          ["mesh", "[group]:", "nonFlexMaterials"],
-         //body
          ["burnside_fender_R", ["burnside_fender_R"],[],{"pos":{"x":0.0, "y":0.0, "z":0.0}}],
-         {"deformGroup":"fendersignal_R_break", "deformMaterialBase":"burnside_lights", "deformMaterialDamaged":"burnside_lights_dmg"},
-         ["burnside_fendersignal_R", ["burnside_fender_R"],[],{"pos":{"x":0.0, "y":0.0, "z":0.0}, "deformSound":"event:>Destruction>Vehicle>Glass>glassbreaksound1", "deformVolume":0.2}],
-         {"deformGroup":""},
      ],
     "slots": [
         ["type", "default", "description"],
         ["burnside_headlight_R","burnside_headlight_R", "Right Headlight"],
         ["burnside_fenderlettering_R","burnside_fenderlettering_R", "Front Right Fender Lettering"],
-        ["burnside_fendertrim_R","burnside_fendertrim_R", "Front Right Fender Trim"],
         ["burnside_innerfender_R","burnside_innerfender_R", "Front Right Inner Fender"],
+        ["burnside_fendersignal_R","burnside_fendersignal_R", "Front Right Fender Signal"],
     ],
-     "props": [
-        ["func"      , "mesh"              , "idRef:", "idX:", "idY:"            , "baseRotation"        , "rotation"                 , "translation"        , "min", "max", "offset", "multiplier"],
-        //fender signals
-        {
-            "lightInnerAngle":0,
-            "lightOuterAngle":120,
-            "lightRange":8,
-            "lightColor":{"r":255, "g":225, "b":0, "a":255},
-            "lightAttenuation":{"x":0, "y":1, "z":1},
-            "lightCastShadows":false,
-            "flareName":"vehicleBrakeLightFlare",
-        },
-        ["signal_R" ,         "SPOTLIGHT"        , "fe10r", "fe20r", "fe5r", {"x":0, "y":0, "z":180} , {"x":0, "y":0, "z":0}    , {"x":0, "y":0, "z":0}, 0, 0, 0, 1, {"baseTranslation":{"x":0.37, "y":1.14, "z":0.05},"flareScale":0.02,"lightBrightness":0.03,"deformGroup":"fendersignal_R_break"}],
-        ["lowhighbeam" ,         "SPOTLIGHT"        , "fe10r", "fe20r", "fe5r", {"x":0, "y":0, "z":180} , {"x":0, "y":0, "z":0}    , {"x":0, "y":0, "z":0}, 0, 0, 0, 1, {"baseTranslation":{"x":0.37, "y":1.14, "z":0.05},"flareScale":0.013,"lightBrightness":0.010,"deformGroup":"fendersignal_R_break"}],
-     ],
      "nodes": [
          ["id", "posX", "posY", "posZ"],
          {"group":"burnside_fender_R"},
@@ -76,7 +57,7 @@
           {"breakGroupType":0},
           {"beamPrecompression":1, "beamType":"|NORMAL", "beamLongBound":1, "beamShortBound":1},
           {"beamDeform":19012.5,"beamStrength":"FLT_MAX"},
-          {"beamSpring":975975,"beamDamp":58.5},
+          {"beamSpring":460975,"beamDamp":58.5},
           {"deformationTriggerRatio":0.03},
           {"deformLimitExpansion":1.1},
           //fender main shape lengthwise
@@ -192,8 +173,8 @@
           {"deformGroup":""},
 
           //attach
-          {"beamSpring":100,"beamDamp":97.5},
-          {"beamDeform":6152,"beamStrength":34546},
+          {"beamSpring":500,"beamDamp":47.5},
+          {"beamDeform":6152,"beamStrength":500},
           //front
           {"optional":false},
           {"breakGroup":"fender_a_R"},
@@ -218,7 +199,7 @@
           ["fe14r","s3rr"],
 
           //to body
-          {"beamDeform":13000,"beamStrength":39546},
+          {"beamDeform":13000,"beamStrength":500},
           {"breakGroup":"fender_b_R"},
           ["fe1r","b6rr"],
           ["fe16r","b6rr"],
@@ -234,10 +215,11 @@
           {"breakGroup":""},
 
           //fender support beams
-          {"beamType":"|SUPPORT","beamLongBound":6},
-          {"beamSpring":100,"beamDamp":58.5},
-          {"beamDeform":13689,"beamStrength":304200},
+          {"beamType":"|SUPPORT","beamLongBound":12},
+          {"beamSpring":500,"beamDamp":29.5},
+          {"beamDeform":13689,"beamStrength":500},
           {"beamPrecompression":0.98},
+          {"breakGroup":"fender_R_supportBeams"},
           ["fe1r","p2rr"],
           ["fe1r","b5rr"],
           ["fe6r","b6rr"],
@@ -285,12 +267,13 @@
           ["fe10r","fw1r"],
           {"optional":false},
           {"beamPrecompression":1},
+          {"breakGroup":""},
           {"beamType":"|NORMAL", "beamLongBound":1, "beamShortBound":1},
     ],
     "triangles": [
             ["id1:","id2:","id3:"],
             {"group":"burnside_fender_R"},
-            {"dragCoef":7},
+            {"dragCoef":12.6},
             ["fe1r","fe6r","fe7r"],
             ["fe1r","fe7r","fe2r"],
             ["fe2r","fe7r","fe8r"],
@@ -324,40 +307,21 @@
     "information":{
         "authors":"BeamNG",
         "name":"Loose Front Left Fender",
-        "value":75,
+        "value":125,
     },
     "slotType" : "burnside_fender_L",
      "flexbodies": [
          ["mesh", "[group]:", "nonFlexMaterials"],
-         //body
          ["burnside_fender_L", ["burnside_fender_L"],[],{"pos":{"x":0.0, "y":0.0, "z":0.0}}],
-         {"deformGroup":"fendersignal_L_break", "deformMaterialBase":"burnside_lights", "deformMaterialDamaged":"burnside_lights_dmg"},
-         ["burnside_fendersignal_L", ["burnside_fender_L"],[],{"pos":{"x":0.0, "y":0.0, "z":0.0}, "deformSound":"event:>Destruction>Vehicle>Glass>glassbreaksound2", "deformVolume":0.2}],
-         {"deformGroup":""},
-     ],
+    ],
     "slots": [
         ["type", "default", "description"],
         ["burnside_headlight_L","burnside_headlight_L", "Left Headlight"],
         ["burnside_fenderlettering_L","burnside_fenderlettering_L", "Front Left Fender Lettering"],
-        ["burnside_fendertrim_L","burnside_fendertrim_L", "Front Left Fender Trim"],
         ["burnside_innerfender_L","burnside_innerfender_L", "Front Left Inner Fender"],
+        ["burnside_fendersignal_L","burnside_fendersignal_L", "Front Left Fender Signal"],
     ],
-     "props": [
-        ["func"      , "mesh"              , "idRef:", "idX:", "idY:"            , "baseRotation"        , "rotation"                 , "translation"        , "min", "max", "offset", "multipliel"],
-        //fender signals
-        {
-            "lightInnerAngle":0,
-            "lightOuterAngle":120,
-            "lightRange":8,
-            "lightColor":{"r":255, "g":225, "b":0, "a":255},
-            "lightAttenuation":{"x":0, "y":1, "z":1},
-            "lightCastShadows":false,
-            "flareName":"vehicleBrakeLightFlare",
-        },
-        ["signal_L" ,         "SPOTLIGHT"        , "fe10l", "fe20l", "fe5l", {"x":0, "y":0, "z":0} , {"x":0, "y":0, "z":0}    , {"x":0, "y":0, "z":0}, 0, 0, 0, 1, {"baseTranslation":{"x":0.37, "y":1.14, "z":-0.05},"flareScale":0.02,"lightBrightness":0.03,"deformGroup":"fendersignal_L_break"}],
-        ["lowhighbeam" ,         "SPOTLIGHT"        , "fe10l", "fe20l", "fe5l", {"x":0, "y":0, "z":0} , {"x":0, "y":0, "z":0}    , {"x":0, "y":0, "z":0}, 0, 0, 0, 1, {"baseTranslation":{"x":0.37, "y":1.14, "z":-0.05},"flareScale":0.013,"lightBrightness":0.010,"deformGroup":"fendersignal_L_break"}],
-     ],
-     "nodes": [
+    "nodes": [
          ["id", "posX", "posY", "posZ"],
          {"group":"burnside_fender_L"},
          {"selfCollision":true},
@@ -398,7 +362,7 @@
           {"breakGroupType":0},
           {"beamPrecompression":1, "beamType":"|NORMAL", "beamLongBound":1, "beamShortBound":1},
           {"beamDeform":11407.5,"beamStrength":"FLT_MAX"},
-          {"beamSpring":975975,"beamDamp":58.5},
+          {"beamSpring":460975,"beamDamp":58.5},
           {"deformationTriggerRatio":0.03},
           //fender main shape lengthwise
           {"deformLimitExpansion":1.1},
@@ -514,8 +478,8 @@
           {"deformGroup":""},
 
           //attach
-          {"beamSpring":100,"beamDamp":97.5},
-          {"beamDeform":6152,"beamStrength":34546},
+          {"beamSpring":500,"beamDamp":47.5},
+          {"beamDeform":6152,"beamStrength":500},
           //front
           {"optional":false},
           {"breakGroup":"fender_a_L"},
@@ -540,7 +504,7 @@
           ["fe14l","s3ll"],
 
           //to body
-          {"beamDeform":13000,"beamStrength":39546},
+          {"beamDeform":13000,"beamStrength":500},
           {"breakGroup":"fender_b_L"},
           ["fe1l","b6ll"],
           ["fe16l","b6ll"],
@@ -556,10 +520,11 @@
           {"breakGroup":""},
 
           //fender support beams
-          {"beamType":"|SUPPORT","beamLongBound":6},
-          {"beamSpring":100,"beamDamp":58.5},
-          {"beamDeform":13689,"beamStrength":304200},
+          {"beamType":"|SUPPORT","beamLongBound":12},
+          {"beamSpring":500,"beamDamp":29.5},
+          {"beamDeform":13689,"beamStrength":500},
           {"beamPrecompression":0.98},
+          {"breakGroup":"fender_L_supportBeams"},
           ["fe1l","p2ll"],
           ["fe1l","b5ll"],
           ["fe6l","b6ll"],
@@ -607,12 +572,13 @@
           ["fe10l","fw1l"],
           {"optional":false},
           {"beamPrecompression":1},
+          {"breakGroup":""},
           {"beamType":"|NORMAL", "beamLongBound":1, "beamShortBound":1},
     ],
     "triangles": [
             ["id1:","id2:","id3:"],
             {"group":"burnside_fender_L"},
-            {"dragCoef":7},
+            {"dragCoef":12.6},
             ["fe6l","fe1l","fe7l"],
             ["fe7l","fe1l","fe2l"],
             ["fe7l","fe2l","fe8l"],

@@ -3,22 +3,21 @@
     "information":{
         "authors":"BeamNG",
         "name":"Junk Sedan Body",
-        "value":5150,
+        "value":3500,
     },
     "slotType" : "burnside_body",
     "slots": [
         ["type", "default", "description"],
+        ["burnside_quarterpanels", "burnside_quarterpanels", "Quarter Panels", {"coreSlot":true}],
         ["burnside_interior", "burnside_interior", "Interior", {"coreSlot":true}],
-        ["burnside_wheelskirts_R","", "Rear Wheel Skirts"],
+        ["burnside_trim","burnside_trim", "Chrome Trim"],
+        ["burnside_rollcage","", "Roll Cage"],
         ["burnside_roof_accessory","", "Roof Accessory"],
-        ["burnside_deck_accessory","", "Rear Deck Accessory"],
         ["burnside_spotlight_R", "", "Right Spotlight"],
         ["burnside_spotlight_L", "", "Left Spotlight"],
         ["burnside_beaconlight","", "Beacon Light"],
-        ["burnside_taillight","burnside_taillight", "Taillights"],
         ["burnside_glass_F","burnside_glass_F", "Windshield"],
         ["burnside_glass_R","burnside_glass_R", "Backlight"],
-        ["burnside_trunk","burnside_trunk", "Trunk"],
         ["burnside_hood","burnside_hood", "Hood"],
         ["burnside_fender_L","burnside_fender_L", "Front Left Fender"],
         ["burnside_fender_R","burnside_fender_R", "Front Right Fender"],
@@ -26,7 +25,6 @@
         ["burnside_door_FR","burnside_door_FR", "Front Right Door"],
         ["burnside_door_RL","burnside_door_RL", "Rear Left Door"],
         ["burnside_door_RR","burnside_door_RR", "Rear Right Door"],
-        ["burnside_licenseplate_R","burnside_licenseplate_R", "Rear License Plate"],
         ["burnside_grille","burnside_grille", "Grille"],
         ["burnside_bumper_F","burnside_bumper_F", "Front Bumper"],
         ["burnside_bumper_R","burnside_bumper_R", "Rear Bumper"],
@@ -36,6 +34,8 @@
     "flexbodies": [
          ["mesh", "[group]:", "nonFlexMaterials"],
          ["burnside_body", ["burnside_body","burnside_floor","burnside_roof"]],
+         ["burnside_bumper_R_support_a", ["burnside_body","burnside_floor","burnside_roof"]],
+
     ],
     "sounds": {
         "cabinFilterCoef": 0.10
@@ -1272,7 +1272,7 @@
             ["id1:","id2:","id3:"],
             //right side
             {"groundModel":"metal"},
-            {"dragCoef":11},
+            {"dragCoef":19.8},
             {"group":"burnside_rightside"},
             ["rf4rr","p10r","p9r"],
             ["rf4rr","p9r","rf3rr"],
@@ -1347,22 +1347,30 @@
             //trunk opening
             {"dragCoef":0},
             {"group":"burnside_rear"},
-            ["tb2ll","tb3l","tb2l"],
-            ["tb2l","tb3l","tb3r"],
-            ["tb2l","tb3r","tb2r"],
-            ["tb2r","tb3r","tb2rr"],
-            ["q4l","tb3l","tb2ll"],
-            ["q4r","tb2rr","tb3r"],
-            ["q4l","tb5ll","tb3l"],
-            ["q4r","tb3r","tb5rr"],
-            ["tb3l","tb5ll","tb5l"],
+            ["tb2rr","q4r","q3r"],
+            ["tb5rr","q4r","tb2rr"],
+            ["tb5rr","tb2rr","q5r"],
+            ["tb2ll","q3l","q4l"],
+            ["tb5ll","tb2ll","q4l"],
+            ["tb5ll","q5l","tb2ll"],
+
+            ["tb3r","tb5","tb5r"],
             ["tb3r","tb5r","tb5rr"],
+            ["tb3r","tb5rr","q5r"],
             ["tb3l","tb5l","tb5"],
-            ["tb5r","tb3r","tb5"],
-            ["tb3l","tb5","tb3r"],
+            ["tb3l","tb5ll","tb5l"],
+            ["tb3l","q5l","tb5ll"],
+
+            ["tb5","tb3r","tb3l"],
+            ["tb3r","q5r","q5l"],
+            ["tb3l","tb3r","q5l"],
+            ["q5r","tb2rr","tb2r"],
+            ["q5l","tb2l","tb2ll"],
+            ["q5r","tb2r","q5l"],
+            ["q5l","tb2r","tb2l"],
 
             //rear
-            {"dragCoef":15},
+            {"dragCoef":27},
             ["q4l","q9l","tb5ll"],
             ["q9l","q14l","tb5ll"],
             ["tb5ll","q14l","tb4ll"],
@@ -1380,7 +1388,7 @@
             ["tb5r","tb5","tb4"],
 
             //bottom
-            {"dragCoef":12},
+            {"dragCoef":21.6},
             {"group":"burnside_bottom"},
             {"breakGroup":"body_frame_F"},
             ["b1ll", "f10l", "f1l"],
@@ -1443,7 +1451,7 @@
             {"breakGroup":""},
 
             //rear window
-            {"dragCoef":4},
+            {"dragCoef":7.2},
             {"group":"burnside_roof"},
             ["rf4r","p10r","rf4rr"],
             ["rf4ll","p10l","rf4l"],
@@ -1467,7 +1475,7 @@
             ["b6l","b7l","b7ll"],
 
             //roof
-            {"dragCoef":8},
+            {"dragCoef":14.4},
             ["rf2r","rf2rr","rf1rr"],
             ["rf2r","rf1rr","rf1r"],
             ["rf3r","rf3rr","rf2rr"],
@@ -1490,7 +1498,7 @@
             ["rf3l","rf3ll","rf4l"],
 
             //firewall
-            {"dragCoef":12},
+            {"dragCoef":21.6},
             ["b7rr","b5rr","b1rr"],
             ["b7rr","b5r","b7r"],
             ["b7rr","b1rr","b5r"],
@@ -1505,7 +1513,7 @@
             ["b5r","b1l","b5l"],
 
             //windshield
-            {"dragCoef":2},
+            {"dragCoef":3.6},
             ["rf1rr","p1r","rf1r"],
             ["rf1l","p1l","rf1ll"],
             ["rf1r","p1r","b6r"],

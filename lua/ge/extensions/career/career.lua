@@ -75,7 +75,7 @@ local function debugMenu()
 
   local debugSettings = settings.getValue('careerDebugSettings')
   imgui.SetNextWindowSize(imgui.ImVec2(300, 300), imgui.Cond_FirstUseEver)
-  imgui.Begin("Career Debug", nil, imgui.WindowFlags_MenuBar)
+  imgui.Begin("Career Debug (Save File: " .. career_saveSystem.getCurrentSaveSlot() .. ")###Career Debug", nil, imgui.WindowFlags_MenuBar)
   imgui.BeginMenuBar()
   if imgui.BeginMenu("File") then
     local currentSaveSlot, currentSavePath = career_saveSystem.getCurrentSaveSlot()
@@ -244,6 +244,7 @@ local function activateCareer(removeVehicles)
       removeNonTrafficVehicles()
     end
     toggleCareerModules(true, true)
+    M.closeAllMenus()
     M.onUpdate = onUpdate
   end
 
@@ -584,7 +585,7 @@ local function onVehicleAddedToInventory(data)
   -- if data.vehicleInfo is present, then the vehicle was bought
   if not boughtStarterVehicle and data.vehicleInfo then
     boughtStarterVehicle = true
-    career_modules_vehicleShopping.generateVehicleList()
+    career_modules_vehicleShopping.updateVehicleList(true)
   end
 end
 

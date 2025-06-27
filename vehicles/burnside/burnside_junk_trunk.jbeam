@@ -2,7 +2,7 @@
 "burnside_junk_trunk": {
     "information":{
         "authors":"BeamNG",
-        "name":"Broken Trunk Latch",
+        "name":"Demonic Trunk",
         "value":150,
     },
     "slotType" : "burnside_trunk",
@@ -22,7 +22,7 @@
         "groupType": "autoCoupling",
         "couplerNodes":[
             ["cid1",    "cid2",     "autoCouplingStrength",    "autoCouplingRadius",   "autoCouplingLockRadius",   "autoCouplingSpeed", "couplingStartRadius",  "breakGroup"]
-            ["tb5",     "t6",        0,                     0.00,                   0.000,                      0.0,                 0.0,                   "trunk_latch"]
+            ["tb5",     "t6",        40000,                     0.01,                   0.005,                      0.2,                 0.1,                   "trunk_latch"]
         ]
         "attachSoundVolume":1,
         "detachSoundVolume":1,
@@ -30,22 +30,22 @@
         "attachSoundEvent": "event:>Vehicle>Latches>Trunk>vintage_01_close",
         "detachSoundEvent": "event:>Vehicle>Latches>Trunk>modern_04_open",
         "breakSoundEvent":""
-        "openForceMagnitude": 1000,
+        "openForceMagnitude": 2000,
         "openForceDuration": 0.1,
-        "closeForceMagnitude": 888,
-        "closeForceDuration": 0.1,
+        "closeForceMagnitude": 85,
+        "closeForceDuration": 1.0,
     }
-    "triggers":[
-        ["id", "label", "idRef:", "idX:", "idY:", "type", "size", "baseRotation", "rotation", "translation", "baseTranslation"],
-        ["trunk", "", "t4","t4r","t3", "box", {"x":0.08, "y":0.08, "z":0.08}, {"x":0, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":-0.04, "y":-0.04, "z":-0.02}],
+    "triggers2":[
+        ["id", "idRef:", "idX:", "idY:", "type", "size", "baseRotation", "rotation", "translation", "baseTranslation"],
+        ["trunk", "t4","t4r","t3", "box", {"x":0.08, "y":0.08, "z":0.08}, {"x":0, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":-0.04, "y":-0.04, "z":-0.02}],
     ],
-    "triggerEventLinks":[
-        ["triggerId:triggers", "action", "targetEventId:events"],
-        ["trunk", "action0", "trunkLatch"],
+    "actionsEnabled": [
+        ["id"],
+        ["trunk"],
     ],
-    "events":[
-        ["id", "title", "desc"],
-        ["trunkLatch", "ui.inputActions.burnside.trunkLatch.title", "ui.inputActions.burnside.trunkLatch.description", {"onUp":"controller.getControllerSafe('trunkCoupler').toggleGroup()"}],
+    "triggerEventLinks2":[
+        ["triggerId:triggers2", "triggerInput", "inputAction"],
+        ["trunk", "action0", "trunk"],
     ],
     "nodes": [
          ["id", "posX", "posY", "posZ"],
@@ -252,7 +252,7 @@
 
           //opening springs
           {"beamType":"|NORMAL", "beamLongBound":1.0, "beamShortBound":1.0}
-          {"beamSpring":750,"beamDamp":50},
+          {"beamSpring":425,"beamDamp":50},
           {"beamDeform":4000,"beamStrength":10000},
           {"beamPrecompression":0.5},
           ["t3rr", "p10r", {"breakGroup":"trunkhinge_R"}],
@@ -264,10 +264,11 @@
           {"deformLimitExpansion":1.1},
 
           //trunk support beams
-          {"beamType":"|SUPPORT", "beamLongBound":9},
+          {"beamType":"|SUPPORT", "beamLongBound":12},
           {"beamSpring":1073475,"beamDamp":58.5},
           {"beamDeform":19012.5,"beamStrength":912599.9},
           {"beamPrecompression":0.99},
+          {"breakGroup":"trunk_supportBeams"},
           ["t4rr","tb4rr"],
           ["t4r","tb4r"],
           ["t4","tb4"],
@@ -288,8 +289,6 @@
           {"beamPrecompression":0.95},
           ["t4rr","q9r"],
           ["t4ll","q9l"],
-          ["t3rr","q4r"],
-          ["t3ll","q4l"],
 
           //weak
           {"beamPrecompression":0.99},
@@ -305,22 +304,28 @@
           ["t3ll","q3l"],
           ["t2rr","q2r"],
           ["t2ll","q2l"],
-
-          {"beamDeform":6084,"beamStrength":912599.9},
+          {"beamSpring":5000,"beamDamp":258.5},
+          {"beamDeform":19012.5,"beamStrength":912599.9},
           {"beamPrecompression":0.95},
+          ["t2rr","q1r"],
+          ["t2ll","q1l"],
+          {"beamSpring":1073475,"beamDamp":58.5},
+          {"beamDeform":6084,"beamStrength":912599.9},
+          {"beamPrecompression":0.90},
           ["t2rr","q1r"],
           ["t2ll","q1l"],
           {"beamPrecompression":0.45},
           ["t2r","tb1r"],
           ["t2l","tb1l"],
           {"optional":false},
+          {"breakGroup":""},
           {"beamPrecompression":1, "beamType":"|NORMAL", "beamLongBound":1.0, "beamShortBound":1.0},
     ],
     "triangles": [
             ["id1:","id2:","id3:"],
             //trunk
             {"group":"burnside_trunk"},
-            {"dragCoef":12},
+            {"dragCoef":21.6},
             ["t2l","t1l","t1ll"],
             ["t2ll","t2l","t1ll"],
             ["t1r","t1l","t2l"],

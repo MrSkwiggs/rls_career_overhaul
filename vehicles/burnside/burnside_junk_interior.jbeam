@@ -2,13 +2,21 @@
 "burnside_junk_seats_F": {
     "information":{
         "authors":"BeamNG",
-        "name":"Loose Front Seats",
-        "value":250,
+        "name":"Loose Front Bench Seats",
+        "value":150,
     },
     "slotType" : "burnside_seats_F",
     "flexbodies": [
         ["mesh", "[group]:", "nonFlexMaterials"],
         ["burnside_seats_F", ["burnside_floor","burnside_seats_F"],[],{"pos":{"x":0.0, "y":0.0, "z":0.0}}],
+    ],
+    "camerasInternal":[
+        ["type", "x", "y", "z", "fov", "id1:", "id2:", "id3:", "id4:", "id5:", "id6:"],
+        {"nodeWeight":3.471},
+        {"beamSpring":731.25,"beamDamp":117},
+        {"selfCollision":true},
+        {"collision":true},
+        ["dash", 0.469, 0.23, 1.355, 55, "b1r","b1ll","b4r","b2ll","b4l","b4ll", {"beamDeform":2800560,"beamStrength":"FLT_MAX","idBack:":"b3r", "idUp:":"b12r", "idLeft:":"b2l", "idRef:":"b2r"}],
     ],
     "nodes": [
          ["id", "posX", "posY", "posZ"],
@@ -64,14 +72,14 @@
         ["sf3ll", "sf1ll"],
 
         //damper
-        {"beamSpring":0,"beamDamp":800},
+        {"beamSpring":0,"beamDamp":400},
         ["sf3", "b4r"],
         ["sf3", "b4l"],
         ["sf3rr", "b4rr"],
         ["sf3ll", "b4ll"],
 
         //attach
-        {"beamSpring":10000,"beamDamp":37.6},
+        {"beamSpring":10000,"beamDamp":18.6},
         {"beamDeform":6000,"beamStrength":"FLT_MAX"},
         ["sf2", "b3r"],
         ["sf2", "b2r"],
@@ -95,6 +103,8 @@
         {"beamSpring":470000,"beamDamp":141},
         {"beamPrecompression":0.98},
         {"beamDeform":6000,"beamStrength":"FLT_MAX"},
+        {"optional":true},
+        //sdean
         ["sf3", "p5r"],
         ["sf3", "p6r"],
         ["sf3", "p5l"],
@@ -103,10 +113,16 @@
         ["sf2", "p4r"],
         ["sf2", "p3l"],
         ["sf2", "p4l"],
+        //c
+        ["sf3", "q10r"],
+        ["sf3", "q10l"],
+        ["sf2", "q15r"],
+        ["sf2", "q15l"],
+        //both
         ["sf2", "b3rr"],
         ["sf2", "b3ll"],
         {"beamPrecompression":1},
-
+        {"optional":false},
         {"beamType":"|NORMAL", "beamLongBound":1.0, "beamShortBound":1.0},
         {"deformLimitExpansion":""},
     ],
@@ -126,11 +142,12 @@
         ["sf3", "sf2", "sf2ll"],
     ],
 },
+
 "burnside_junk_seats_R": {
     "information":{
         "authors":"BeamNG",
         "name":"Loose Rear Seats",
-        "value":200,
+        "value":75,
     },
     "slotType" : "burnside_seats_R",
     "slots": [
@@ -156,9 +173,11 @@
          ["sr1ll", 0.71, 0.64, 0.69],
          ["sr1", 0.0, 0.64, 0.69],
          ["sr1rr", -0.71, 0.64, 0.69],
-         ["sr2ll", 0.71, 1.08, 0.63],
-         ["sr2", 0.0, 1.08, 0.63],
-         ["sr2rr", -0.71, 1.08, 0.63],
+         {"selfCollision":false},
+         ["sr2ll", 0.71, 1.05, 0.63],
+         ["sr2", 0.0, 1.01, 0.63],
+         ["sr2rr", -0.71, 1.05, 0.63],
+         {"selfCollision":true},
          ["sr3ll", 0.7, 1.22, 1.13],
          ["sr3", 0.0, 1.23, 1.18],
          ["sr3rr", -0.7, 1.22, 1.13],
@@ -201,14 +220,14 @@
         ["sr3ll", "sr1ll"],
 
         //damper
-        {"beamSpring":0,"beamDamp":800},
+        {"beamSpring":0,"beamDamp":400},
         ["sr3", "b3r"],
         ["sr3", "b3l"],
         ["sr3rr", "b3rr"],
         ["sr3ll", "b3ll"],
 
         //attach
-        {"beamSpring":10000,"beamDamp":37.6},
+        {"beamSpring":10000,"beamDamp":18.6},
         {"beamDeform":6000,"beamStrength":"FLT_MAX"},
         ["sr2", "b4r"],
         ["sr2", "b3r"],

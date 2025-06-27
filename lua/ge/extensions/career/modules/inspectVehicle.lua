@@ -151,18 +151,18 @@ local function leaveSaleCallback()
 
   core_jobsystem.create(function(job)
     if not didLeaveSale then
-    setInspectScreen(false)
-    job.sleep(0.1)
-      didLeaveSale = true
-    -- always inform the player that they left the sale
-    if career_modules_testDrive.isActive() then
-      -- end testdrive, no TP, just stop
-      career_modules_testDrive.abandonTestDrive()
-    else
-      ui_message("You have left the sale.")
-    end
-    resetSomeData()
-    checkDamage()
+      setInspectScreen(false)
+      job.sleep(0.1)
+        didLeaveSale = true
+      -- always inform the player that they left the sale
+      if career_modules_testDrive.isActive() then
+        -- end testdrive, no TP, just stop
+        career_modules_testDrive.abandonTestDrive()
+      else
+        ui_message("You have left the sale.")
+      end
+      resetSomeData()
+      checkDamage()
     end
   end,1)
   career_modules_tether.removeTether(leaveSaleTether)

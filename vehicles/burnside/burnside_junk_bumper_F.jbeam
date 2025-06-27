@@ -3,13 +3,14 @@
     "information":{
         "authors":"BeamNG",
         "name":"Loose Front Bumper",
-        "value":100,
+        "value":125,
     },
     "slotType" : "burnside_bumper_F",
     "slots": [
         ["type", "default", "description"],
         ["burnside_licenseplate_F","burnside_licenseplate_F", "Front License Plate"],
         ["burnside_flashers","", "Police Flashers"],
+        ["burnside_valance","burnside_valance", "Front Bumper Valance"],
     ],
      "flexbodies": [
          ["mesh", "[group]:", "nonFlexMaterials"],
@@ -62,7 +63,7 @@
           {"breakGroupType":0},
           {"beamPrecompression":1, "beamType":"|NORMAL", "beamLongBound":1, "beamShortBound":1},
           {"beamDeform":30420,"beamStrength":"FLT_MAX"},
-          {"beamSpring":1073475,"beamDamp":97.5},
+          {"beamSpring":543475,"beamDamp":97.5},
           {"deformLimitExpansion":1.1},
           //bumper_F main shape widthwise
           ["fb1rr","fb1r"],
@@ -221,7 +222,7 @@
           //attach
           {"deformLimitExpansion":""},
           {"beamSpring":750,"beamDamp":195},
-          {"beamDeform":8000,"beamStrength":32630},
+          {"beamDeform":8000,"beamStrength":750},
           //r
           {"breakGroup":"bumper_F_R"},
           ["fb1r","f22rr"],
@@ -251,11 +252,12 @@
           {"breakGroup":""},
 
           //support beams
-          {"beamType":"|SUPPORT","beamLongBound":4},
+          {"beamType":"|SUPPORT","beamLongBound":10},
           {"beamSpring":750,"beamDamp":97.5},
-          {"beamDeform":7500,"beamStrength":101680},
+          {"beamDeform":7500,"beamStrength":750},
           {"optional":false},
           {"beamPrecompression":0.99},
+          {"breakGroup":"bumper_F_supportBeams"},
           ["fb1","g1"],
           ["fb1r","g1r"],
           ["fb1l","g1l"],
@@ -300,7 +302,7 @@
           ["fb3","v1"],
           */
           //to frame
-          {"beamDeform":25000,"beamStrength":125000},
+          {"beamDeform":25000,"beamStrength":750},
           {"beamPrecompression":0.6},
           ["fb1", "f21"],
           ["fb2", "f21"],
@@ -321,11 +323,12 @@
           ["fb2lll","fh1l"],
           ["fb2lll","fh2l"],
           {"optional":false},
+          {"breakGroup":""},
           {"beamPrecompression":1, "beamType":"|NORMAL", "beamLongBound":1, "beamShortBound":1},
     ],
     "triangles": [
             ["id1:","id2:","id3:"],
-            {"dragCoef":6},
+            {"dragCoef":10.8},
             {"group":"burnside_bumper_F"},
             ["fb1","fb3","fb3l"],
             ["fb1","fb3l","fb4l"],
@@ -362,5 +365,5 @@
 
             //["fb2","fb2r","fb2l"],
     ],
-},
+}
 }

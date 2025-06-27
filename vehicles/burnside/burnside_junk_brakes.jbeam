@@ -3,7 +3,7 @@
     "information":{
         "authors":"BeamNG",
         "name":"Worn Front Drum Brakes",
-        "value":20,
+        "value":30,
     },
     "slotType" : "burnside_brake_F",
     "slots": [
@@ -34,16 +34,16 @@
         {"brakeMass":8.5},
         {"brakeType":"drum"},
         {"rotorMaterial":"steel"},
-        {"brakeVentingCoef":0.1},
+        {"brakeVentingCoef":0.3},
         //brake sounds
-        {"squealCoefNatural": 4.0, "squealCoefLowSpeed": 4.0}
+        {"squealCoefNatural": 4.0, "squealCoefLowSpeed": 3.7}
     ],
 },
 "burnside_junk_brake_R": {
     "information":{
         "authors":"BeamNG",
         "name":"Worn Rear Drum Brakes",
-        "value":15,
+        "value":20,
     },
     "slotType" : "burnside_brake_R",
     "slots": [
@@ -62,10 +62,10 @@
         ["name","hubGroup","group","node1:","node2:","nodeS","nodeArm:","wheelDir"],
         //brakes
         {"enableABS":false},
-        {"brakeTorque":"$=$brakestrength*500"},
+        {"brakeTorque":"$=$brakestrength*650"},
         {"brakeInputSplit":0.5},
         {"brakeSplitCoef":0.5},
-        {"parkingTorque":800},
+        {"parkingTorque":1600},
         {"brakeSpring":125},
 
         //brake thermals
@@ -74,9 +74,9 @@
         {"brakeMass":6.0},
         {"brakeType":"drum"},
         {"rotorMaterial":"steel"},
-        {"brakeVentingCoef":0.1},
+        {"brakeVentingCoef":0.2},
         //brake sounds
-        {"squealCoefNatural": 3.0, "squealCoefLowSpeed": 3.0}
+        {"squealCoefNatural": 3.5, "squealCoefLowSpeed": 3.2}
     ],
 },
 }

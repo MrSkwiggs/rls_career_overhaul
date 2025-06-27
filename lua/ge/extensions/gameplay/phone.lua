@@ -13,7 +13,7 @@ local function togglePhone(reason)
         guihooks.trigger('closePhone')
     else
         local playerSpeed = math.abs(be:getObjectVelocityXYZ(be:getPlayerVehicleID(0))) * speedUnit
-        if playerSpeed > 5 then
+        if (not gameplay_cab or not gameplay_cab.inCab()) and playerSpeed > 5 then
             if reason then
                 ui_message(reason, 5, "info", "info")
             else
@@ -22,7 +22,7 @@ local function togglePhone(reason)
             return
         end
         isPhoneOpen = true
-        if career_modules_taxi.isTaxiJobActive() then
+        if gameplay_taxi.isTaxiJobActive() then
             guihooks.trigger('ChangeState', {state = 'phone-taxi'})
         else
             guihooks.trigger('ChangeState', {state = 'phone-main'})
@@ -41,7 +41,7 @@ local function onUpdate(dt)
         updateTimer = 0
         if isPhoneOpen then
             local playerSpeed = math.abs(be:getObjectVelocityXYZ(be:getPlayerVehicleID(0))) * speedUnit
-            if playerSpeed > 5 then
+            if (not gameplay_cab or not gameplay_cab.inCab()) and playerSpeed > 5 then
                 isPhoneOpen = false
                 ui_message("Phone closed due to player movement.", 3, "info", "info")
                 guihooks.trigger('closePhone')

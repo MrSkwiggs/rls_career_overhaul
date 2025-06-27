@@ -1,33 +1,37 @@
 <template>
   <BngCard
-    v-bng-panel
+    v-bng-scoped-nav="{ activated: isActive }"
     v-bng-blur
     v-bng-sound-class="'bng_hover_generic'"
     :hideFooter="!isActive"
     :footerStyles="cardFooterStyles"
     class="profile-create-card"
-    @panelopen="isActive = true"
-    @panelclose="isActive = false">
-    <div class="create-content-container">
+    @activate="onActivated"
+    @deactivate="onDeactivated">
+    <div :class="{ 'create-active': isActive }" class="create-content-container">
       <template v-if="isActive">
-        <div class="save-name-container">
-          <BngInput v-model="profileName" externalLabel="Save Name" />
-        </div>
-        <div class="tutorial-check-container">
-          <BngSwitch v-model="hardcoreMode"> Hardcore Mode </BngSwitch>
-          <BngSwitch v-model="tutorialChecked">{{ $ctx_t("ui.career.tutorialCheckDesc") }}</BngSwitch>
-          <span class="tutorial-desc" :class="{ checked: tutorialChecked }">{{ $ctx_t("ui.career.tutorialOnDesc") }}</span>
-        </div>
+        <BngInput
+          v-model="profileName"
+          :maxlength="PROFILE_NAME_MAX_LENGTH"
+          :validate="validateFn"
+          :errorMessage="nameError"
+          externalLabel="Save Name"
+          @keydown.enter="onEnter" />
+        <BngSwitch v-model="hardcoreMode" label-before :inline="false"> Hardcore Mode </BngSwitch>
+        <BngSwitch v-model="tutorialChecked" label-before :inline="false" :label-alignment="LABEL_ALIGNMENTS.START">{{
+          $ctx_t("ui.career.tutorialCheckDesc")
+        }}</BngSwitch>
+        <span class="tutorial-desc" :class="{ checked: tutorialChecked }">{{ $ctx_t("ui.career.tutorialOnDesc") }}</span>
       </template>
-      <div v-else class="create-content-cover">
-        <div class="cover-plus-container" @click="toggleIsActive">
+      <div v-else class="create-content-cover" @click="setActive(true)">
+        <div class="cover-plus-container">
           <div class="cover-plus-button">+</div>
         </div>
       </div>
     </div>
     <template #buttons>
-      <BngButton v-bng-focus-if="true" :disabled="saveDisabled" @click="load">Start</BngButton>
-      <BngButton accent="outlined" @click="toggleIsActive">Cancel</BngButton>
+      <BngButton ref="startButton" v-bng-on-ui-nav:ok.asMouse.focusRequired :disabled="nameError !== null" @click="load">Start</BngButton>
+      <BngButton ref="cancelButton" v-bng-on-ui-nav:ok.asMouse.focusRequired accent="outlined" @click="setActive(false)">Cancel</BngButton>
     </template>
   </BngCard>
 </template>
@@ -39,45 +43,96 @@ const cardFooterStyles = {
 </script>
 
 <script setup>
-import { computed, inject, ref, watch } from "vue"
-import { vBngPanel, vBngBlur, vBngSoundClass, vBngFocusIf } from "@/common/directives"
-import { BngButton, BngCard, BngInput, BngSwitch } from "@/common/components/base"
-import { useProfilesStore } from "../../stores/profilesStore"
+import { inject, nextTick, ref } from "vue"
+import { vBngOnUiNav, vBngScopedNav, vBngBlur, vBngSoundClass } from "@/common/directives"
+import { BngButton, BngCard, BngInput, BngSwitch, LABEL_ALIGNMENTS } from "@/common/components/base"
+import { PROFILE_NAME_MAX_LENGTH } from "../../stores/profilesStore"
+import { setFocus } from "@/services/uiNavFocus"
 
-const store = useProfilesStore()
-
-const emit = defineEmits(["activeStateChange"])
+const emit = defineEmits(["card:activate", "load"])
 
 const profileName = defineModel("profileName", { required: true })
 const hardcoreMode = ref(false)
 const tutorialChecked = ref(true)
 const isActive = ref(false)
 
-const isSaveNameValid = inject("isSaveNameValidFn")
+const validateName = inject("validateName")
+const nameError = ref(null)
 
-const saveDisabled = computed(() => !isSaveNameValid(profileName.value))
+const startButton = ref(null)
+const cancelButton = ref(null)
 
-watch(
-  () => isActive.value,
-  value => emit("activeStateChange", value)
-)
+// TODO: seems hacky but will be updated when input validation has been improved
+const validateFn = name => {
+  const res = validateName(name)
+  if (!res) {
+    nameError.value = null
+  } else {
+    nameError.value = res
+  }
 
-const toggleIsActive = () => (isActive.value = !isActive.value)
+  return !res
+}
 
-async function load() {
-  await store.loadProfile(profileName.value, tutorialChecked.value, true, hardcoreMode.value)
+const load = () => emit("load", profileName.value, tutorialChecked.value, hardcoreMode.value)
+
+function onActivated(event) {
+  const data = event.detail
+  if (data.activationType === "full") {
+    setActive(true)
+  }
+}
+
+function onDeactivated(event) {
+  setActive(false)
+}
+
+function setActive(value) {
+  isActive.value = value
+  emit("card:activate", value)
+}
+
+function onEnter(event) {
+  event.preventDefault()
+  const focusButton = nameError.value ? cancelButton : startButton
+  if (focusButton.value) nextTick(() => setFocus(focusButton.value.$el))
 }
 </script>
 
 <style lang="scss" scoped>
+@use "@/styles/modules/mixins" as *;
+
 .profile-create-card {
+  font-size: calc-ui-rem();
   color: white;
+
+  // temp
+  :deep(.card-cnt) {
+    border-radius: calc-ui-rem(0.5) !important;
+  }
+  :deep(.bng-button) {
+    font-size: calc-ui-rem() !important;
+    line-height: calc-ui-rem(1.5) !important;
+    margin: calc-ui-rem(0.25) !important;
+    &, .background {
+      border-radius: calc-ui-rem(0.25) !important;
+    }
+  }
 }
 
 .create-content-container {
   display: flex;
   flex-direction: column;
   height: 100%;
+  padding: 0.75em 1em;
+
+  > * {
+    margin-bottom: 1.5em;
+  }
+
+  &.create-active {
+    background: hsla(217, 22%, 12%, 1);
+  }
 }
 
 .create-content-cover {
@@ -87,7 +142,7 @@ async function load() {
   justify-content: center;
   padding: 1em 0;
   flex: 1 0.0001 auto;
-  border-radius: 0.25em 0.25em 0 0;
+  border-radius: var(--bng-corners-1) var(--bng-corners-1) 0 0;
   overflow: hidden;
 
   > .cover-plus-container {
@@ -109,30 +164,15 @@ async function load() {
   }
 }
 
-.save-name-container {
-  flex: 1 1 auto;
-  justify-content: start;
-  padding: 1em;
-  height: 52%;
-  background: hsla(217, 22%, 12%, 1);
-}
+.tutorial-desc {
+  padding-top: 1.5em;
+  text-align: left;
+  color: var(--bng-cool-gray-400);
+  margin-top: auto;
+  padding-top: 0;
 
-.tutorial-check-container {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  flex: auto;
-  padding: 1em 1em;
-  background: hsla(217, 22%, 12%, 1);
-
-  > .tutorial-desc {
-    padding-top: 1.5em;
-    text-align: left;
-    color: var(--bng-cool-gray-400);
-
-    &.checked {
-      color: #fff !important;
-    }
+  &.checked {
+    color: #fff !important;
   }
 }
 </style>

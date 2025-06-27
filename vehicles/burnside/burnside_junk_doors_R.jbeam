@@ -2,12 +2,13 @@
 "burnside_junk_door_RR": {
     "information":{
         "authors":"BeamNG",
-        "name":"Broken Rear Right Door Latch",
-        "value":100,
+        "name":"Demonic Rear Right Door",
+        "value":666,
     },
     "slotType" : "burnside_door_RR",
     "slots": [
         ["type", "default", "description"],
+        ["burnside_doorhandle_RR","burnside_doorhandle_RR", "Rear Right Door Handle"],
         ["burnside_doorglass_RR","burnside_doorglass_RR", "Rear Right Door Glass"],
         ["burnside_doorpanel_RR","burnside_doorpanel_RR", "Rear Right Door Panel"],
     ],
@@ -20,12 +21,12 @@
     },
     "controller": [
         ["fileName"],
-        ["advancedCouplerControl", {"name":"doorRRCoupler"}],
+        ["advancedCouplerControl", {"name":"door_RR_coupler"}],
     ]
-    "doorRRCoupler":{
+    "door_RR_coupler":{
         "couplerNodes":[
             ["cid1",    "cid2",     "autoCouplingStrength",    "autoCouplingRadius",   "autoCouplingLockRadius",   "autoCouplingSpeed", "couplingStartRadius","breakGroup"]
-            ["q1r",    "d27rr",    0,                  0.00,                   0.000,                      0.0,                                       0.0,"doorRR_latch"]
+            ["q1r",    "d27rr",    35000,                  0.01,                   0.005,                      0.2,                                       0.1,"doorRR_latch"]
         ]
         "groupType": "autoCoupling",
         "attachSoundVolume":1,
@@ -34,24 +35,22 @@
         "attachSoundEvent": "event:>Vehicle>Latches>Door>vintage_03_close",
         "detachSoundEvent": "event:>Vehicle>Latches>Door>vintage_03_open",
         "breakSoundEvent":""
-        "openForceMagnitude": 30,
-        "openForceDuration": 0.5,
-        "closeForceMagnitude": 65,
-        "closeForceDuration": 0.5
+        "openForceMagnitude": 666,
+        "openForceDuration": 0.1,
+        "closeForceMagnitude": 1500,
+        "closeForceDuration": 0.1
     }
-    "triggers":[
-        ["id", "label", "idRef:", "idX:", "idY:", "type", "size", "baseRotation", "rotation", "translation", "baseTranslation"],
-        ["door_RR", "", "d21r","d20r","d18r", "box", {"x":0.175, "y":0.05, "z":0.04}, {"x":12, "y":2, "z":0}, {"x":0, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":-0.004, "y":-0.048, "z":-0.058}],
-        ["door_RR_int", "", "d19r","d20r","d17r", "box", {"x":0.12, "y":0.03, "z":0.03}, {"x":-10, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":0.412, "y":-0.04, "z":0.12}],
+    "triggers2":[
+        ["id", "idRef:", "idX:", "idY:", "type", "size", "baseRotation", "rotation", "translation", "baseTranslation"],
+        ["door_RR_int", "d19r","d20r","d17r", "box", {"x":0.12, "y":0.03, "z":0.03}, {"x":-10, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":0.412, "y":-0.04, "z":0.12}],
     ],
-    "triggerEventLinks":[
-        ["triggerId:triggers", "action", "targetEventId:events"],
-        ["door_RR", "action0", "doorLatch_RR"],
-        ["door_RR_int", "action0", "doorLatch_RR"],
+    "actionsEnabled": [
+        ["id"],
+        ["door_RR"],
     ],
-    "events":[
-        ["id", "title", "desc"],
-        ["doorLatch_RR", "ui.inputActions.burnside.doorLatch_RR.title", "ui.inputActions.burnside.doorLatch_RR.description", {"onUp":"controller.getControllerSafe('doorRRCoupler').toggleGroup()"}],
+    "triggerEventLinks2":[
+        ["triggerId:triggers2", "triggerInput", "inputAction"],
+        ["door_RR_int", "action0", "door_RR"],
     ],
     "nodes": [
          ["id", "posX", "posY", "posZ"],
@@ -169,7 +168,7 @@
           {"deformGroup":""},
 
           //rear door hinge
-          {"beamSpring":2001000,"beamDamp":125},
+          {"beamSpring":1001000,"beamDamp":75},
           {"beamDeform":25857,"beamStrength":51714},
           {"breakGroup":"doorhinge_a_RR"},
           ["d15r","b3rr"],
@@ -185,10 +184,11 @@
           {"breakGroup":""},
 
           //rear door support beams
-          {"beamType":"|SUPPORT","beamLongBound":25},
-          {"beamSpring":875000,"beamDamp":65},
+          {"beamType":"|SUPPORT","beamLongBound":40},
+          {"beamSpring":475000,"beamDamp":35},
           {"beamDeform":11407.5,"beamStrength":121680},
           {"disableTriangleBreaking":true},
+          {"breakGroup":"door_RR_supportBeams"},
           //width
           ["d23r","rf2r", {"beamPrecompression":0.98}],
           ["d24r","rf3r", {"beamPrecompression":0.98}],
@@ -223,6 +223,31 @@
           //["d26r","rf4rr", {"beamPrecompression":0.98}],
           //["d26r","p9r", {"beamPrecompression":0.98}],
           {"disableTriangleBreaking":false},
+          {"breakGroup":""},
+          //door seal
+          {"beamType":"|SUPPORT","beamLongBound":30},
+          {"beamSpring":0,"beamDamp":150},
+          {"beamDeform":9999,"beamStrength":102000},
+          {"beamPrecompression":1.01},
+          {"optional":true}
+          ["d23r", "rf2r"],
+          ["d23r", "rf3r"],
+          ["d24r", "rf3r"],
+          ["d25r", "rf3r"],
+          ["d25r", "rf4r"],
+          ["d22r", "p8r",{"beamPrecompression":1.1}],
+          ["d22r", "p7r",{"beamPrecompression":1.1}],
+          ["d19r", "p6r",{"beamPrecompression":1.1}],
+          ["d19r", "p5r",{"beamPrecompression":1.1}],
+          ["d16r", "p4r",{"beamPrecompression":1.1}],
+          ["d16r", "p3r",{"beamPrecompression":1.1}],
+          ["d15r", "b13r"],
+          ["d16r", "b14r"],
+          ["d18r", "b14r"],
+          ["d21r", "tb1r"],
+          ["d21r", "b14r"],
+          {"optional":false}
+          {"beamPrecompression":1.0},
           {"beamPrecompression":1, "beamType":"|NORMAL", "beamLongBound":1.0, "beamShortBound":1.0},
 
           //latch node
@@ -252,7 +277,7 @@
             ["id1:","id2:","id3:"],
             //rear right door
             {"group":"burnside_door_RR"},
-            {"dragCoef":14},
+            {"dragCoef":25.2},
             ["d17r","d16r","d15r"],
             ["d17r","d18r","d16r"],
             ["d19r","d18r","d17r"],
@@ -282,16 +307,16 @@
             {"group":""},
     ],
 },
-
 "burnside_junk_door_RL": {
     "information":{
         "authors":"BeamNG",
-        "name":"Broken Rear Left Door Latch",
-        "value":100,
+        "name":"Demonic Rear Left Door",
+        "value":666,
     },
     "slotType" : "burnside_door_RL",
     "slots": [
         ["type", "default", "description"],
+        ["burnside_doorhandle_RL","burnside_doorhandle_RL", "Rear Left Door Handle"],
         ["burnside_doorglass_RL","burnside_doorglass_RL", "Rear Left Door Glass"],
         ["burnside_doorpanel_RL","burnside_doorpanel_RL", "Rear Left Door Panel"],
     ],
@@ -304,12 +329,12 @@
     },
     "controller": [
         ["fileName"],
-        ["advancedCouplerControl", {"name":"doorRLCoupler"}],
+        ["advancedCouplerControl", {"name":"door_RL_coupler"}],
     ]
-    "doorRLCoupler":{
+    "door_RL_coupler":{
         "couplerNodes":[
             ["cid1",    "cid2",     "autoCouplingStrength",    "autoCouplingRadius",   "autoCouplingLockRadius",   "autoCouplingSpeed", "couplingStartRadius","breakGroup"]
-            ["q1l",    "d27ll",    0,                  0.00,                   0.000,                      0.0,                                       0.0,"doorRL_latch"]
+            ["q1l",    "d27ll",    35000,                  0.01,                   0.005,                      0.2,                                       0.1,"doorRL_latch"]
         ]
         "groupType": "autoCoupling",
         "attachSoundVolume":1,
@@ -318,24 +343,22 @@
         "attachSoundEvent": "event:>Vehicle>Latches>Door>vintage_03_close",
         "detachSoundEvent": "event:>Vehicle>Latches>Door>vintage_03_open",
         "breakSoundEvent":""
-        "openForceMagnitude": 30,
-        "openForceDuration": 0.5,
-        "closeForceMagnitude": 65,
-        "closeForceDuration": 0.5
+        "openForceMagnitude": 666,
+        "openForceDuration": 0.1,
+        "closeForceMagnitude": 1500,
+        "closeForceDuration": 0.1
     }
-    "triggers":[
-        ["id", "label", "idRef:", "idX:", "idY:", "type", "size", "baseRotation", "rotation", "translation", "baseTranslation"],
-        ["door_RL", "", "d21l","d20l","d18l", "box", {"x":0.175, "y":0.05, "z":0.04}, {"x":-12, "y":2, "z":0}, {"x":0, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":-0.0045, "y":-0.04, "z":0.008}],
-        ["door_RL_int", "", "d19l","d20l","d17l", "box", {"x":0.12, "y":0.03, "z":0.03}, {"x":10, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":0.412, "y":-0.043, "z":-0.15}],
+    "triggers2":[
+        ["id", "idRef:", "idX:", "idY:", "type", "size", "baseRotation", "rotation", "translation", "baseTranslation"],
+        ["door_RL_int", "d19l","d20l","d17l", "box", {"x":0.12, "y":0.03, "z":0.03}, {"x":10, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":0, "y":0, "z":0}, {"x":0.412, "y":-0.043, "z":-0.15}],
     ],
-    "triggerEventLinks":[
-        ["triggerId:triggers", "action", "targetEventId:events"],
-        ["door_RL", "action0", "doorLatch_RL"],
-        ["door_RL_int", "action0", "doorLatch_RL"],
+    "actionsEnabled": [
+        ["id"],
+        ["door_RL"],
     ],
-    "events":[
-        ["id", "title", "desc"],
-        ["doorLatch_RL", "ui.inputActions.burnside.doorLatch_RL.title", "ui.inputActions.burnside.doorLatch_RL.description", {"onUp":"controller.getControllerSafe('doorRLCoupler').toggleGroup()"}],
+    "triggerEventLinks2":[
+        ["triggerId:triggers2", "triggerInput", "inputAction"],
+        ["door_RL_int", "action0", "door_RL"],
     ],
     "nodes": [
          ["id", "posX", "posY", "posZ"],
@@ -453,7 +476,7 @@
           {"deformGroup":""},
 
           //rear door hinge
-          {"beamSpring":2001000,"beamDamp":125},
+          {"beamSpring":1001000,"beamDamp":75},
           {"beamDeform":25857,"beamStrength":51714},
           {"breakGroup":"doorhinge_a_RL"},
           ["d15l","b3ll"],
@@ -469,10 +492,11 @@
           {"breakGroup":""},
 
           //rear door support beams
-          {"beamType":"|SUPPORT","beamLongBound":25},
-          {"beamSpring":875000,"beamDamp":65},
+          {"beamType":"|SUPPORT","beamLongBound":40},
+          {"beamSpring":475000,"beamDamp":35},
           {"beamDeform":11407.5,"beamStrength":121680},
           {"disableTriangleBreaking":true},
+          {"breakGroup":"door_RL_supportBeams"},
           //width
           ["d23l","rf2l", {"beamPrecompression":0.98}],
           ["d24l","rf3l", {"beamPrecompression":0.98}],
@@ -507,6 +531,31 @@
           //["d26l","rf4ll", {"beamPrecompression":0.98}],
           //["d26l","p9l", {"beamPrecompression":0.98}],
           {"disableTriangleBreaking":false},
+          {"breakGroup":""},
+          //door seal
+          {"beamType":"|SUPPORT","beamLongBound":30},
+          {"beamSpring":0,"beamDamp":150},
+          {"beamDeform":9999,"beamStrength":102000},
+          {"beamPrecompression":1.01},
+          {"optional":true}
+          ["d23l", "rf2l"],
+          ["d23l", "rf3l"],
+          ["d24l", "rf3l"],
+          ["d25l", "rf3l"],
+          ["d25l", "rf4l"],
+          ["d22l", "p8l",{"beamPrecompression":1.1}],
+          ["d22l", "p7l",{"beamPrecompression":1.1}],
+          ["d19l", "p6l",{"beamPrecompression":1.1}],
+          ["d19l", "p5l",{"beamPrecompression":1.1}],
+          ["d16l", "p4l",{"beamPrecompression":1.1}],
+          ["d16l", "p3l",{"beamPrecompression":1.1}],
+          ["d15l", "b13l"],
+          ["d16l", "b14l"],
+          ["d18l", "b14l"],
+          ["d21l", "tb1l"],
+          ["d21l", "b14l"],
+          {"optional":false}
+          {"beamPrecompression":1.0},
           {"beamPrecompression":1, "beamType":"|NORMAL", "beamLongBound":1.0, "beamShortBound":1.0},
 
           //latch node
@@ -536,7 +585,7 @@
             ["id1:","id2:","id3:"],
             //rear left door
             {"group":"burnside_door_RL"},
-            {"dragCoef":14},
+            {"dragCoef":25.2},
             ["d17l","d15l","d16l"],
             ["d17l","d16l","d18l"],
             ["d19l","d17l","d18l"],

@@ -1,5 +1,3 @@
-{"name":"joesJunk_area","class":"BeamNGGameplayArea","__parent":"dealership_interaction","position":[151.379181,775.328186,104.019295],"rotationMatrix":[0.000834882259,0.999999702,0,-0.999999702,0.000834882259,0,0,0,1],"scale":[1.11546314,1.0414114,2.05547523]}
-{"name":"joesJunk_icon","class":"BeamNGPointOfInterest","__parent":"dealership_interaction","position":[151.328781,775.384766,102.979462],"rotationMatrix":[0.939079762,0.343699396,0,-0.343699396,0.939079762,0,0,0,1]}
 {"name":"garageDealership_icon_1","class":"BeamNGPointOfInterest","persistentId":"76d0aaa4-0216-4f0b-9a63-de2de6c3e9cf","__parent":"dealership_interaction","position":[828.969116,-529.32605,165.621506]}
 {"name":"garageDealership_area_1","class":"BeamNGGameplayArea","persistentId":"d2edb232-a5fe-4b63-8329-c3331496c418","__parent":"dealership_interaction","position":[829.175049,-531.52771,165.163498],"scale":[1.76308584,4.06415987,1.42131352]}
 {"name":"jerryRigs_icon_1","class":"BeamNGPointOfInterest","persistentId":"5555cb20-f293-4145-b302-07008f43fc89","__parent":"dealership_interaction","position":[-84.1818008,-19.956295,120.355293]}

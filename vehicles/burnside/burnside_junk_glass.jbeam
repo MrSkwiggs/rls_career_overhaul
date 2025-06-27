@@ -2,8 +2,119 @@
 "burnside_junk_glass_F": {
     "information":{
         "authors":"BeamNG",
-        "name":"Broken Windshield",
-        "value":20,
+        "name":"Broken Windshield ( Not Tinted )",
+        "value":0,
+    },
+    "slotType" : "burnside_glass_F",
+    "flexbodies": [
+         ["mesh", "[group]:", "nonFlexMaterials"],
+         {"deformGroup":"windshield_break", "deformMaterialBase":"burnside_glass_notint", "deformMaterialDamaged":"burnside_windshield_dmg_notint"},
+         ["burnside_windshield", ["burnside_windshield"],[]{"deformSound":"event:>Destruction>Vehicle>Glass>impact_glass_windscreen_01", "deformVolume":0.0, "materialOverride":[["burnside_glass","burnside_glass_notint"]]}],
+
+         {"deformGroup":"windshield_break", "deformMaterialBase":"glass_invisible", "deformMaterialDamaged":"glass_mirror"},
+         ["burnside_windshield_dmg", ["burnside_windshield"]],
+
+         {"deformGroup":"windshield_break", "deformMaterialBase":"burnside_glass_int_notint", "deformMaterialDamaged":"burnside_glass_int_notint"},
+         ["burnside_windshield_int", ["burnside_windshield"], [], {"materialOverride":[["burnside_glass_int","burnside_glass_int_notint"]]}],
+         {"deformGroup":""},
+    ],
+    "sounds": {
+        "$+cabinFilterCoef": 0.00
+    },
+    "nodes": [
+         ["id", "posX", "posY", "posZ"],
+         {"selfCollision":true},
+         {"collision":true},
+         {"frictionCoef":0.5},
+         {"nodeMaterial":"|NM_GLASS"},
+         {"nodeWeight":2.2},
+         {"group":["burnside_windshield","gps"]},
+         //windshield node
+         ["wi1r", -0.32, -0.60, 1.33],
+         ["wi1l", 0.32, -0.60, 1.33],
+         {"nodeMaterial":"|NM_METAL"},
+
+          //--ADD WEIGHT--
+          //windshield
+          {"nodeWeight":2.4},
+          //a pillar
+          ["p1r", -0.78, -0.49, 1.27, {"group":["burnside_body","gps","burnside_windshield"]}],
+          ["p1l", 0.78, -0.49, 1.27, {"group":["burnside_body","gps","burnside_windshield"]}],
+          //roof
+          {"nodeWeight":3.1},
+          {"group":"burnside_roof"},
+          ["rf1rr",-0.735, -0.29, 1.48, {"group":["burnside_roof","gps","burnside_windshield"]}],
+          ["rf1r",-0.35, -0.36, 1.56, {"group":["burnside_roof","gps","burnside_windshield"],"nodeWeight":2.6}],
+          ["rf1l", 0.35, -0.36, 1.56, {"group":["burnside_roof","gps","burnside_windshield"],"nodeWeight":2.6}],
+          ["rf1ll", 0.735, -0.29, 1.48, {"group":["burnside_roof","gps","burnside_windshield"]}],
+          //cowl
+          {"nodeWeight":3.2},
+          {"group":"burnside_body"},
+          ["b6rr",-0.84, -0.58, 1.05, {"group":["burnside_body","gps","burnside_windshield","burnside_dash"]}],
+          ["b6r",-0.40, -0.75, 1.12, {"group":["burnside_body","gps","burnside_windshield","burnside_dash"]}],
+          ["b6l", 0.40, -0.75, 1.12, {"group":["burnside_body","gps","burnside_windshield","burnside_dash"]}],
+          ["b6ll", 0.84, -0.58, 1.05, {"group":["burnside_body","gps","burnside_windshield","burnside_dash"]}],
+          {"group":""},
+    ],
+
+    "beams": [
+          ["id1:", "id2:"],
+          {"beamType":"|NORMAL", "beamPrecompression":1, "beamLongBound":1.0, "beamShortBound":1.0},
+          //windshield
+          {"disableMeshBreaking":true,"disableTriangleBreaking":true},
+          {"beamSpring":971909.3,"beamDamp":81.9},
+          {"beamDeform":7224.75,"beamStrength":"FLT_MAX"},
+          {"beamPrecompression":1, "beamType":"|NORMAL", "beamLongBound":1.0, "beamShortBound":1.0},
+          {"deformGroup":"windshield_break","deformationTriggerRatio":0.05},
+          ["wi1r","wi1l"],
+
+          ["wi1r","rf1r"],
+          ["wi1l","rf1l"],
+          ["wi1r","rf1rr"],
+          ["wi1l","rf1ll"],
+
+          ["wi1r","p1r"],
+          ["wi1l","p1l"],
+          ["wi1r","p2r"],
+          ["wi1l","p2l"],
+
+          ["wi1r","b6r"],
+          ["wi1l","b6l"],
+          ["wi1r","b6rr"],
+          ["wi1l","b6ll"],
+
+          ["wi1r","b6l"],
+          ["wi1l","b6r"],
+
+          ["wi1r", "rf1l"],
+          ["wi1l", "rf1r"],
+
+          ["wi1r","p2rr"],
+          ["wi1l","p2ll"],
+
+          {"beamDeform":3422.25,"beamStrength":10},
+          ["rf1r","b6r"],
+          ["rf1l","b6l"],
+
+          ["rf1r","b6rr"],
+          ["rf1l","b6ll"],
+
+          ["rf1rr","b6rr"],
+          ["rf1ll","b6ll"],
+
+          ["rf1rr","b6r"],
+          ["rf1ll","b6l"],
+
+          {"breakGroup":""},
+          {"disableMeshBreaking":false,"disableTriangleBreaking":false},
+          {"deformGroup":""},
+    ],
+},
+"burnside_junk_glass_F_tintable": {
+    "information":{
+        "authors":"BeamNG",
+        "name":"Broken Windshield ( Tinted )",
+        "value":0,
     },
     "slotType" : "burnside_glass_F",
     "flexbodies": [
@@ -19,7 +130,7 @@
          {"deformGroup":""},
     ],
     "sounds": {
-        "$+cabinFilterCoef": 0.05
+        "$+cabinFilterCoef": 0.00
     },
     "nodes": [
          ["id", "posX", "posY", "posZ"],
@@ -114,7 +225,7 @@
     "information":{
         "authors":"BeamNG",
         "name":"Broken Backlight",
-        "value":0,
+        "value":10,
     },
     "slotType" : "burnside_glass_R",
     "flexbodies": [
@@ -186,8 +297,10 @@
           ["rf4r","tb2l"],
           ["rf4l","tb2r"],
 
-          ["rf4r","p6r"],
-          ["rf4l","p6l"],
+          ["rf4r","p6r", {"optional":true}], //sedan
+          ["rf4l","p6l", {"optional":true}], //sedan
+          ["rf4r","q10r", {"optional":true}], //
+          ["rf4l","q10l", {"optional":true}], //
 
           //["p6r","p6l"],
           //["tb2r","p6l"],

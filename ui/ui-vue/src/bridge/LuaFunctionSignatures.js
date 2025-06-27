@@ -42,6 +42,8 @@ export default {
   quit: () => {},
   checkFSErrors: () => {},
 
+
+
   guihooks: {
     // can take multiple params - just add them individually after the hook name
     trigger: withMocked(hookName => String, sendGUIHook),
@@ -50,6 +52,7 @@ export default {
   simTimeAuthority: {
     togglePause: () => {},
     getPause: () => {},
+    pause: (state) => Boolean,
   },
 
   commands: {
@@ -129,7 +132,6 @@ export default {
     installPartByPartShopId: id => Number,
     removePartBySlot: slot => String,
     sendShoppingDataToUI: () => {},
-    keepUsedPartBySlot: slot => String
   },
 
   career_modules_vehicleShopping: {
@@ -146,6 +148,17 @@ export default {
     sendPurchaseDataToUi: () => {},
     removeTradeInVehicle: () => {},
     onShoppingMenuClosed: () => {},
+  },
+
+  career_modules_marketplace: {
+    getListings: () => {},
+    menuOpened: open => Boolean,
+    acceptOffer: (inventoryId, offerIndex) => [Number, Number],
+    declineOffer: (inventoryId, offerIndex) => [Number, Number],
+    listVehicles: (inventoryIds) => [Array],
+    openMenu: () => {},
+    removeVehicleListing: inventoryId => Number,
+    toggleNotifications: newValue => Boolean,
   },
 
   career_modules_testDrive: {
@@ -186,10 +199,11 @@ export default {
     isEmpty: () => {},
     setLicensePlateText: (inventoryId, text) => [Number, String],
     purchaseLicensePlateText: (inventoryId, text, money) => [Number, String, Number],
-    listVehicleForSale: id => Number,
+    isLicensePlateValid: text => String,
+    isVehicleNameValid: text => String,
+    renameVehicle: (inventoryId, name) => [Number, String],
     getVehiclesForSale: () => {},
     removeVehicleFromSale: id => Number,
-    requestListedVehicles: () => {},
     deliverVehicle: (id, money) => [Number, Number],
     storeVehicle: id => Number,
   },
@@ -204,7 +218,6 @@ export default {
     openMenu: computerId => Any,
     closeMenu: () => {},
     sendUIData: () => {},
-    movePart: (location, partId) => [Number, Number],
     sellParts: ids => Array,
     partInventoryClosed: () => {},
   },
@@ -309,9 +322,18 @@ export default {
     getHistory: saveFile => [Object],
   },
 
-  gameplay_drift_general : {
+  gameplay_drift_general: {
     onMainUIAppMounted: () => {},
     onMainUIAppUnmounted: () => {},
+  },
+
+  gameplay_crashTest_scenarioManager: {
+    nextStepFromUI: () => {},
+  },
+
+  gameplay_discover: {
+    getDiscoverCards: () => {},
+    startDiscover: discoverId => String,
   },
 
   freeroam_organizations: {
@@ -333,6 +355,8 @@ export default {
     pause: () => {},
     seek: positionPercent => Number,
     acceptRename: (oldFilename, newFilename) => [String, String],
+    saveMissionReplay: filename => {},
+    removeMissionSavedReplay: filename => {},
   },
 
   core_gamestate: {
@@ -365,10 +389,12 @@ export default {
     contextAction: (id, buttonDown, actionIndex) => [Number, Boolean, Number],
     back: () => {},
     setEnabled: (enabled, level, force) => [Boolean, String, Boolean],
-    openFavoriteSelection: index => Number,
-    getFavoriteSelectionUIData: () => {},
-    addActionToQuickAccess: (level, title, index) => [String, String, Number],
-    removeActionFromQuickAccess: index => Number,
+    openDynamicSlotConfigurator: index => Number,
+    getDynamicSlotConfigurationData: () => {},
+    setDynamicSlotConfiguration: (key, data) => [String, Object],
+    toggle: () => [],
+    tryAction: action => String,
+
   },
 
   freeroam_bigMapMode: {
@@ -381,6 +407,7 @@ export default {
   },
 
   extensions: {
+    isExtensionLoaded: extensionName => Boolean,
     load: extensionName => String,
     unload: extensionName => String,
     hook: hook => String,
@@ -411,6 +438,8 @@ export default {
       highlightParts: (parts, vehID) => [Object, Number],
       loadLocal: filename => String,
       resetPartsToLoadedConfig: () => {},
+      resetVarsToLoadedConfig: () => {},
+      resetAllToLoadedConfig: () => {},
       openConfigFolderInExplorer: () => {},
       removeLocal: configName => String,
       savedefault: () => {},
@@ -422,10 +451,10 @@ export default {
       setConfigVars: vars => Object,
       setPartsConfig: config => Object, // deprecated
       setPartsTreeConfig: config => Object, // there's also second "respawn" argument for this
-      showHighlightedParts: (vehID) => Number,
-      setDynamicTextureMaterials: () => { },
+      showHighlightedParts: vehID => Number,
+      setDynamicTextureMaterials: () => {},
       partsSelectorChanged: parts => Object,
-      sendPartsSelectorStateToUI: () => { },
+      sendPartsSelectorStateToUI: () => {},
     },
 
     core_vehicle_mirror: {
@@ -447,15 +476,19 @@ export default {
       requestStartingOptionsForUserSettings: (id, userSettings) => [String, Object],
       isAnyMissionActive: () => {},
       isMissionStartOrEndScreenActive: () => {},
-      openAPMChallenges:(branch, skill) => [String, String],
-      navigateToMission: (id) => [String],
-      setPreselectedMissionId: (id) => [String],
-      showMissionRules: (id) => [String],
+      openAPMChallenges: (branch, skill) => [String, String],
+      navigateToMission: id => [String],
+      setPreselectedMissionId: id => [String],
+      showMissionRules: id => [String],
       getMissionTiles: () => {},
-      activateSound: (soundLabel, active) => {},
+      activateSound: (soundLabel, active, frequency) => {},
       activateSoundBlur: active => {
         Boolean
       },
+    },
+
+    gameplay_missions_missionManager: {
+      getCurrentTaskdataTypeOrNil: () => {},
     },
 
     gameplay_garageMode: {
@@ -507,7 +540,7 @@ export default {
     },
 
     ui_liveryEditor: {
-      save: (filename) => String,
+      save: filename => String,
       setup: () => {},
       deactivate: () => {},
       setDecalTexture: texturePath => String,
@@ -725,12 +758,12 @@ export default {
     },
 
     ui_router: {
+      addOrUpdateRoute: (route, config, options) => [String, Object, Object],
       push: (routeName, params) => [String, Object],
-      push: (replace, params) => [String, Object],
-      goPrevious: () => {},
-      goNext: () => {},
-      setup: () => {},
-      addRoute: route => Object,
+      back: () => {},
+      forward: () => {},
+      loadComplete: uiType => String,
+      routeChangeComplete: uiType => String,
     },
 
     editor_api_dynamicDecals: {
@@ -768,6 +801,19 @@ export default {
     performActivityAction: id => {},
     closeDialogue: () => {},
   },
+
+  ui_apps_genericMissionData: {
+    sendAllData: () => {},
+    setData: args => Object,
+    clearData: () => {},
+  },
+  ui_apps_pointsBar: {
+    requestAllData: () => {},
+  },
+  ui_gameplayAppContainers: {
+    getContainerContext: (containerId) => String,
+  },
+
 
   scenetree: {
     "maincef:setMaxFPSLimit": fps => Integer, // This name is problematic and need to use [] syntax to call - intellisense should pick it up
@@ -807,6 +853,9 @@ export default {
     spawnNewVehicle: (model, args) => [String, Object],
     replaceVehicle: (model, args) => [String, Object],
     getVehicleTiles: () => {},
+    isLicensePlateValid: text => Any,
+    getVehicleTileCount: () => Number,
+    getVehicleTilesFromTo: (from, to) => Array,
   },
 
   core_vehicle_manager: {
@@ -835,16 +884,6 @@ export default {
     startLevel: () => {},
   },
 
-  bdebug: {
-    toggleEnabled: () => {},
-    requestState: () => {},
-    setState: (state, stateNoReset, notSendBack) => [Object, Object, Boolean],
-    resetModes: () => {},
-    partsSelectedChanged: () => {},
-    syncSelectedPartsWithPartsList: () => {},
-    showOnlySelectedPartsMeshChanged: () => {},
-  },
-
   util_screenshotCreator: {
     startWork: workOptions => Any,
   },
@@ -856,6 +895,12 @@ export default {
   scenario_scenariosLoader: {
     getList: () => {},
     start: scenario => Object,
+  },
+
+  ui_apps_sdfMinimap: {
+    setDrawTransform: (x, y, width, height) => [Number, Number, Number, Number],
+    hide: () => {},
+    toggleOptions: () => {},
   },
 
   WinInput: {
@@ -940,10 +985,13 @@ export default {
     requestGarageData: () => {},
     canPay: () => {},
     buyGarage: () => {},
-    cancelGaragePurchase: () => {}
+    cancelGaragePurchase: () => {},
+    getGaragePrice: () => {},
+    canSellGarage: () => {},
+    sellGarage: () => {}
   },
 
-  career_modules_taxi: {
+  gameplay_taxi: {
     prepareTaxiJob: () => {},
     acceptJob: () => {},
     rejectJob: () => {},
@@ -951,14 +999,6 @@ export default {
     stopTaxiJob: () => {},
     getTaxiJob: () => {},
     requestTaxiState: () => {}
-  },
-
-  career_modules_vehicleMarketplace: {
-    openMenu: () => {},
-    requestInitialData: () => {},
-    acceptOffer: (vehicleId, customer) => [String, String],
-    declineOffer: (vehicleId, customer) => [String, String],
-    toggleNotifications: (newValue) => Boolean
   },
 
   career_modules_hardcore: {
@@ -972,5 +1012,13 @@ export default {
     cancelJob: () => {},
     completeJob: () => {},
     isRepoVehicle: () => {}
+  },
+
+  careerMaps: {
+    getOtherAvailableMaps: () => {}
+  },
+
+  career_modules_switchMap: {
+    switchMap: (level) => {}
   }
 }

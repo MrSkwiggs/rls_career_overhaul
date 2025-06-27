@@ -2,14 +2,14 @@
 "burnside_junk_exhaust": {
     "information":{
         "authors":"BeamNG",
-        "name":"Junk Dual Exhaust",
-        "value":50,
+        "name":"Loose Dual Exhaust",
+        "value":125,
     },
     "slotType" : "burnside_exhaust",
     "flexbodies": [
          ["mesh", "[group]:", "nonFlexMaterials"],
-         ["burnside_exhaust_R", ["burnside_exhaust_R"]],
-         ["burnside_exhaust_L", ["burnside_exhaust_L"]],
+         ["burnside_exhaust_R2", ["burnside_exhaust_R"]],
+         ["burnside_exhaust_L2", ["burnside_exhaust_L"]],
     ],
     "mainEngine":{
         "torqueModExhaust":[
@@ -50,7 +50,7 @@
          {"selfCollision":true},
          ["ex5r",-0.3, 1.5, 0.42],
          ["ex5rr",-0.59, 1.71, 0.25],
-         ["ex6r",-0.51, 2.577, 0.21, {"afterFireAudioCoef":0.33, "afterFireVisualCoef":0.33, "afterFireVolumeCoef":0.33, "afterFireMufflingCoef":0.25, "exhaustAudioMufflingCoef":0.25, "exhaustAudioGainChange":-4}],
+         ["ex6r",-0.51, 2.577, 0.21, {"afterFireAudioCoef":0.33, "afterFireVisualCoef":0.33, "afterFireVolumeCoef":0.33, "afterFireMufflingCoef":0.25, "exhaustAudioMufflingCoef":0.25, "exhaustAudioGainChange":-5.5}],
          //rigidifier
          {"selfCollision":false},
          {"collision":false},
@@ -78,7 +78,7 @@
          {"selfCollision":true},
          ["ex5l", 0.3, 1.5, 0.42],
          ["ex5ll", 0.59, 1.71, 0.25],
-         ["ex6l", 0.51, 2.577, 0.21, {"afterFireAudioCoef":0.33, "afterFireVisualCoef":0.33, "afterFireVolumeCoef":0.33, "afterFireMufflingCoef":0.25, "exhaustAudioMufflingCoef":0.25, "exhaustAudioGainChange":-5}],
+         ["ex6l", 0.51, 2.577, 0.21, {"afterFireAudioCoef":0.33, "afterFireVisualCoef":0.33, "afterFireVolumeCoef":0.33, "afterFireMufflingCoef":0.25, "exhaustAudioMufflingCoef":0.25, "exhaustAudioGainChange":-5.5}],
          //rigidifier
          {"selfCollision":false},
          {"collision":false},
@@ -96,7 +96,7 @@
           ["id1:", "id2:"],
           {"beamPrecompression":1, "beamType":"|NORMAL", "beamLongBound":1, "beamShortBound":1},
           //--EXHAUST--
-          {"beamSpring":1463475,"beamDamp":195},
+          {"beamSpring":703475,"beamDamp":195},
           {"beamDeform":9886.5,"beamStrength":"FLT_MAX"},
           {"deformLimitExpansion":1.2},
           //r
@@ -215,8 +215,8 @@
           ["ex5l","ex9l"],
           ["ex5ll","ex9l"],
           //attach
-          {"beamSpring":500,"beamDamp":146.25},
-          {"beamDeform":11407.5,"beamStrength":68445},
+          {"beamSpring":1000,"beamDamp":146.25},
+          {"beamDeform":11407.5,"beamStrength":1000},
           //r
           {"breakGroup":"exhaust_a_R"},
           ["ex1r","e1r", {"isExhaust":"mainEngine"}],
@@ -238,8 +238,8 @@
 
           //["ex1r","f1r"],
           //["ex1rr","f1r"],
-          {"beamSpring":500,"beamDamp":292.5},
-          {"beamDeform":2661.75,"beamStrength":22815},
+          {"beamSpring":1000,"beamDamp":292.5},
+          {"beamDeform":2661.75,"beamStrength":1000},
           ["ex2rr","e3l"],
           ["ex2rr","e3r"],
           {"breakGroup":"exhaust_b_R"},
@@ -279,8 +279,8 @@
 
           //["ex1l","f1l"],
           //["ex1ll","f1l"],
-          {"beamSpring":500,"beamDamp":292.5},
-          {"beamDeform":2661.75,"beamStrength":22815},
+          {"beamSpring":1000,"beamDamp":292.5},
+          {"beamDeform":2661.75,"beamStrength":1000},
           ["ex2ll","e3l"],
           ["ex2ll","e3r"],
           {"breakGroup":"exhaust_b_L"},
@@ -299,11 +299,12 @@
           {"breakGroup":""},
 
           //support beams
-          {"beamPrecompression":0.5, "beamType":"|SUPPORT", "beamLongBound":15},
-          {"beamDeform":500,"beamStrength":64642.5},
-          {"beamSpring":488475,"beamDamp":146.25},
+          {"beamPrecompression":0.5, "beamType":"|SUPPORT", "beamLongBound":8},
+          {"beamDeform":19012.5,"beamStrength":500},
+          {"beamSpring":500,"beamDamp":146.25},
           //r
-          {"optional":false},
+          {"breakGroup":"exhaust_R_supportBeams"},
+          {"optional":true},
           ["ex4r","axshr"],
           ["ex4r","ax1"],
           {"beamPrecompression":0.95},
@@ -325,7 +326,8 @@
           {"optional":false},
 
           //l
-          {"optional":false},
+          {"breakGroup":"exhaust_L_supportBeams"},
+          {"optional":true},
           ["ex4l","axshl"],
           ["ex4l","ax1"],
           {"beamPrecompression":0.95},
@@ -345,6 +347,7 @@
           ["ex5ll","b7"],
           ["ex5l","b7"],
           {"optional":false},
+          {"breakGroup":""},
           {"beamPrecompression":1, "beamType":"|NORMAL", "beamLongBound":1, "beamShortBound":1},
     ],
     "triangles": [

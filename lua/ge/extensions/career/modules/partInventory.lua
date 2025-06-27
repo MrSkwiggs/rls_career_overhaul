@@ -18,6 +18,7 @@ local coreSlots = {}
 local partsBefore = {}
 local partsAfter
 local slotToPartIdMap = {}
+local partPathToPartIdMap = {}
 local partInventoryOpen = false
 local closeMenuAfterSaving
 
@@ -209,35 +210,6 @@ local function generateAndGetPartsFromVehicle(inventoryId)
   return result
 end
 
--- TODO maybe also save for each part taken off the subparts that are attached to it
--- option 2: when detaching a part, put all the subparts seperately into the inventory and whenever you attach a part, all it's slots will be made empty
-
-local function movePart(to, partId)
-  local part = partInventory[partId]
-  if not part then return end
-
-  local from = part.location
-  if from == to then return end
-
-  -- we cant change parts of inaccessible vehicles
-  local vehicles = career_modules_inventory.getVehicles()
-  if vehicles[from] and vehicles[from].timeToAccess then return end
-
-  if from >= 1 then
-    if coreSlots[from][part.containingSlot] then return end
-  end
-
-  if to >= 1 then return end
-
-  if from >= 1 then
-    partsBefore = getPartIdsFromVehicle(from)
-    removePart(partId, from)
-    career_modules_vehiclePerformance.invalidateCertification(from)
-  end
-
-  career_modules_log.addLog(string.format("Moved part %d from %d to %d", partId, from, to), "partInventory")
-end
-
 local function updateVehicleMaps()
   -- Build a map of core slots
   table.clear(coreSlots)
@@ -255,9 +227,15 @@ local function updateVehicleMaps()
   -- TODO does this need to be cached?
   -- Make a map from slot to its part
   table.clear(slotToPartIdMap)
+  table.clear(partPathToPartIdMap)
   for partId, part in pairs(partInventory) do
     slotToPartIdMap[part.location] = slotToPartIdMap[part.location] or {}
     slotToPartIdMap[part.location][part.containingSlot] = partId
+
+    if part.location > 0 then
+      partPathToPartIdMap[part.location] = partPathToPartIdMap[part.location] or {}
+      partPathToPartIdMap[part.location][part.partPath] = partId
+    end
   end
 end
 
@@ -320,11 +298,6 @@ local function debugMenu()
         if coreSlots[part.location][part.slotType] then
           imgui.BeginDisabled()
           disabled = true
-        end
-        if part.description.description then
-          if imgui.Button(part.description.description .. "##inVehicle") then
-            movePart(0, partId)
-          end
         end
         if disabled then imgui.EndDisabled() end
       end
@@ -444,6 +417,28 @@ local function onVehicleSaveFinished(currentSavePath, oldSaveDate)
     part.description = nil
   end
   jsonWriteFile(currentSavePath .. "/career/partInventory.json", {serialize(partInventoryCopy)}, true)
+  local splitPartInventory = {}
+  for partId, part in pairs(partInventoryCopy) do
+    if not splitPartInventory[part.location] then
+      splitPartInventory[part.location] = {}
+    end
+    table.insert(splitPartInventory[part.location], part)
+  end
+  for location, parts in pairs(splitPartInventory) do
+    if career_modules_inventory.getVehicles()[location] then
+      print("Saving parts for vehicle " .. location)
+      jsonWriteFile(currentSavePath .. "/career/vehicles/parts/" .. location .. ".json", parts, true)
+    end
+  end
+  local rlsFiles = FS:findFiles(currentSavePath .. "/career/vehicles/parts/", '*.json', 0, false, false)
+  for _, file in ipairs(rlsFiles) do
+    local dir, filename, ext = path.split(file)
+    local fileNameNoExt = string.sub(filename, 1, -6)
+    if tonumber(fileNameNoExt) ~= 0 and not career_modules_inventory.getVehicles()[tonumber(fileNameNoExt)] then
+      print("Removing parts for vehicle: " .. fileNameNoExt)
+      FS:removeFile(file)
+    end
+  end
 end
 
 local function updatePartDescriptionsWithJBeamInfo()
@@ -486,31 +481,41 @@ local function onExtensionLoaded()
   local saveInfo = savePath and jsonReadFile(savePath .. "/info.json")
   local outdated = not saveInfo or saveInfo.version < minimumVersion
 
-  local jsonData = savePath and jsonReadFile(savePath .. "/career/partInventory.json")
-  if jsonData and not outdated then
-    partInventory = deserialize(jsonData[1])
-
-    -- Not needed right now, because we sell all parts anyway
-    --[[ if saveInfo.version < 43 then
-      -- Update older versions to use "slotType" instead of "slot"
-      for partId, part in pairs(partInventory) do
-        part.slotType = part.slot
-        part.slot = nil
-      end
-    end ]]
-
-    if saveInfo.version < career_saveSystem.getSaveSystemVersion() then
-      -- Sell all parts that are not in a vehicle
-      local partsToSell = {}
-      for partId, part in pairs(partInventory) do
-        if part.location == 0 then
-          table.insert(partsToSell, partId)
-        end
-      end
-      sellParts(partsToSell)
+  local rlsFiles = FS:findFiles(savePath .. "/career/vehicles/parts/", '*.json', 0, false, false)
+  for i = 1, tableSize(rlsFiles) do
+    local partData = jsonReadFile(rlsFiles[i])
+    for _, part in ipairs(partData) do
+      table.insert(partInventory, part)
     end
-  else
-    partInventory = {}
+  end
+
+  if tableSize(rlsFiles) == 0 then
+    local jsonData = savePath and jsonReadFile(savePath .. "/career/partInventory.json")
+    if jsonData and not outdated then
+      partInventory = deserialize(jsonData[1])
+  
+      -- Not needed right now, because we sell all parts anyway
+      --[[ if saveInfo.version < 43 then
+        -- Update older versions to use "slotType" instead of "slot"
+        for partId, part in pairs(partInventory) do
+          part.slotType = part.slot
+          part.slot = nil
+        end
+      end ]]
+  
+      if saveInfo.version < career_saveSystem.getSaveSystemVersion() then
+        -- Sell all parts that are not in a vehicle
+        local partsToSell = {}
+        for partId, part in pairs(partInventory) do
+          if part.location == 0 then
+            table.insert(partsToSell, partId)
+          end
+        end
+        sellParts(partsToSell)
+      end
+    else
+      partInventory = {}
+    end
   end
   updatePartDescriptionsWithJBeamInfo()
   updateVehicleMaps()
@@ -532,6 +537,7 @@ local function onVehicleAdded(inventoryId)
 end
 
 local function onVehicleRemoved(inventoryId)
+  local savePath, _ = career_saveSystem.getCurrentSaveSlot()
   local partsToRemove = {}
   for partId, part in pairs(partInventory) do
     if part.location == inventoryId then
@@ -542,6 +548,17 @@ local function onVehicleRemoved(inventoryId)
   for partId, _ in pairs(partsToRemove) do
     partInventory[partId] = nil
   end
+  local locations = {}
+  for _, part in pairs(partInventory) do
+    if locations[part.location] then
+      locations[part.location] = locations[part.location] + 1
+    else
+      locations[part.location] = 1
+    end
+  end
+  print("Locations:")
+  dump(locations)
+  FS:removeFile(savePath .. "/career/vehicles/parts/" .. inventoryId .. ".json")
 end
 
 local function getPart(inventoryId, path)
@@ -617,6 +634,10 @@ local function getSlotToPartIdMap()
   return slotToPartIdMap
 end
 
+local function getPartPathToPartIdMap()
+  return partPathToPartIdMap
+end
+
 local function getInventory()
   return partInventory
 end
@@ -638,7 +659,6 @@ local function onComputerAddFunctions(menuData, computerFunctions)
 end
 
 M.generateAndGetPartsFromVehicle = generateAndGetPartsFromVehicle
-M.movePart = movePart
 M.changedPartsCallback = changedPartsCallback
 M.initConditionsCallback = initConditionsCallback
 M.sendUIData = sendUIData
@@ -646,6 +666,7 @@ M.openMenu = openMenu
 M.closeMenu = closeMenu
 M.partInventoryClosed = partInventoryClosed
 M.getSlotToPartIdMap = getSlotToPartIdMap
+M.getPartPathToPartIdMap = getPartPathToPartIdMap
 M.getInventory = getInventory
 M.addPartToInventory = addPartToInventory
 M.getPart = getPart
