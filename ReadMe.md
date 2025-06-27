@@ -6,7 +6,7 @@ Welcome to the **RLS Career Overhaul** mod for BeamNG.drive! This mod enhances v
 
 ## Table of Contents
 
-- [RLS Career Overhaul v2.4 (0.36)](#rls-career-overhaul-v231-0355)
+- [RLS Career Overhaul v2.4 (0.36.3)](#rls-career-overhaul-v24-0363)
   - [Table of Contents](#table-of-contents)
   - [Installation](#installation)
   - [Overview](#overview)
@@ -805,8 +805,6 @@ A new challenging gameplay setting:
 ### General Adjustments
 
 - **Fuel Price** multiplied by 10×.
-- **Sell Button** renamed to "Instant Sell" (66% of vehicle value).
-- Trade-Ins also \~66% of vehicle value.
 
 ---
 
