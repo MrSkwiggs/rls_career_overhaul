@@ -876,7 +876,8 @@ local function onComputerAddFunctions(menuData, computerFunctions)
     }
     -- vehicle broken
     if vehicleData.needsRepair then
-      computerFunctionData.label = "Part Customization (Experimental)"
+      computerFunctionData.label = "Part Customization"
+      computerFunctionData.disabled = true
     end
     -- tutorial active
     if menuData.tutorialTuningActive then
