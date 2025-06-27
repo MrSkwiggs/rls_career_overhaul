@@ -160,13 +160,13 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   justify-content: stretch;
-  flex: 1 1 auto; /* Allows it to grow but keeps it within bounds */
-  max-width: calc(100% - 100px); /* Adjust according to the button width */
-  overflow: hidden;
+  flex: 1 1 auto;
+  max-width: calc(100% - 120px);
+  overflow: auto;
 
   > * {
     max-width: 100%;
-    overflow: hidden;
+    overflow: auto;
   }
 }
 
