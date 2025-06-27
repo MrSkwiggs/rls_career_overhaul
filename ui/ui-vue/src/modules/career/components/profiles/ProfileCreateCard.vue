@@ -74,7 +74,7 @@ const validateFn = name => {
   return !res
 }
 
-const load = () => emit("load", profileName.value, tutorialChecked.value, null, hardcoreMode.value)
+const load = () => emit("load", profileName.value, tutorialChecked.value, hardcoreMode.value)
 
 function onActivated(event) {
   const data = event.detail
