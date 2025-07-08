@@ -161,17 +161,21 @@ local function onSaveCurrentSaveSlot(currentSavePath)
     local oldDamageDir = oldSavePath .. "/career/vehicles/damage/"
     local newDamageDir = currentSavePath .. "/career/vehicles/damage/"
 
+    print("oldDamageDir: " .. oldDamageDir)
+    print("newDamageDir: " .. newDamageDir)
+
     if not FS:directoryExists(newDamageDir) then
         FS:directoryCreate(newDamageDir)
     end
-    
+
     local oldFiles = {}
     local newFiles = {}
     
     if FS:directoryExists(oldDamageDir) then
         local oldDamageFiles = FS:findFiles(oldDamageDir, '*_damageState.json', 0, false, false)
         for _, oldFilePath in ipairs(oldDamageFiles) do
-            local fileName = path.split(oldFilePath)
+            local _, fileName, _ = path.split(oldFilePath)
+            print("oldFilePath: " .. oldFilePath)
             oldFiles[fileName] = oldFilePath
         end
     end
@@ -179,7 +183,8 @@ local function onSaveCurrentSaveSlot(currentSavePath)
     if FS:directoryExists(newDamageDir) then
         local newDamageFiles = FS:findFiles(newDamageDir, '*_damageState.json', 0, false, false)
         for _, newFilePath in ipairs(newDamageFiles) do
-            local fileName = path.split(newFilePath)
+            local _, fileName, _ = path.split(newFilePath)
+            print("newFilePath: " .. newFilePath)
             newFiles[fileName] = newFilePath
         end
     end
