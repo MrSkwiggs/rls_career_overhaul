@@ -161,9 +161,6 @@ local function onSaveCurrentSaveSlot(currentSavePath)
     local oldDamageDir = oldSavePath .. "/career/vehicles/damage/"
     local newDamageDir = currentSavePath .. "/career/vehicles/damage/"
 
-    print("oldDamageDir: " .. oldDamageDir)
-    print("newDamageDir: " .. newDamageDir)
-
     if not FS:directoryExists(newDamageDir) then
         FS:directoryCreate(newDamageDir)
     end

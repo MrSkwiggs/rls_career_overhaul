@@ -1,4 +1,4 @@
-# RLS Career Overhaul v2.4 (0.36.3)
+# RLS Career Overhaul v2.4.1 (0.36.4)
 
 Welcome to the **RLS Career Overhaul** mod for BeamNG.drive! This mod enhances various aspects of the game, including freeroam events, police interactions, the economy, deliveries, insurance, garage space, and dealerships. Dive into a more immersive and challenging career mode enriched with new features and improvements.
 
@@ -6,7 +6,7 @@ Welcome to the **RLS Career Overhaul** mod for BeamNG.drive! This mod enhances v
 
 ## Table of Contents
 
-- [RLS Career Overhaul v2.4 (0.36.3)](#rls-career-overhaul-v24-0363)
+- [RLS Career Overhaul v2.4.1 (0.36.4)](#rls-career-overhaul-v241-0364)
   - [Table of Contents](#table-of-contents)
   - [Installation](#installation)
   - [Overview](#overview)
@@ -31,18 +31,13 @@ Welcome to the **RLS Career Overhaul** mod for BeamNG.drive! This mod enhances v
       - [Jefferson Motors](#jefferson-motors)
       - [Rich's Motor Company](#richs-motor-company)
       - [Quarryside Auto Sales](#quarryside-auto-sales)
+      - [Smash Rollers](#smash-rollers)
       - [Online Brand Dealerships](#online-brand-dealerships)
       - [Commercial Vehicle Sales](#commercial-vehicle-sales)
+      - [Trailer Dealer](#trailer-dealer)
+      - [Service Dealership](#service-dealership)
       - [Private Sellers](#private-sellers)
-      - [JDM Imports](#jdm-imports)
-      - [EDM Imports](#edm-imports)
-      - [Other Imports](#other-imports)
-      - [Misc Imports](#misc-imports)
-      - [Rocking Rally](#rocking-rally)
-      - [Clockwise Drag Racing](#clockwise-drag-racing)
-      - [DriftGear Dealer](#driftgear-dealer)
       - [Gizamn's Rod Shop](#gizamns-rod-shop)
-      - [TJs Offroad World](#tjs-offroad-world)
       - [Trusted Auto Sales](#trusted-auto-sales)
       - [Joe's Junk](#joes-junk)
       - [Fast Automotive](#fast-automotive)
@@ -458,7 +453,7 @@ Experience a diverse range of dealerships, each with unique specialties and inve
 - **Specialization**: Cars (no trailers/ATVs/buggies)
 - **Vehicle Requirements**:
   - Factory configurations only
-  - Years 2007-2020+
+  - Years 2002-2025
   - Various mileage tiers
   - Max value \$65,000
 - **Dealer Fees**: \$749
@@ -466,9 +461,9 @@ Experience a diverse range of dealerships, each with unique specialties and inve
 #### Jefferson Motors
 
 - **Description**: Custom American cars
-- **Stock**: 10 vehicles
+- **Stock**: 16 vehicles
 - **Specialization**: Custom configurations
-- **Brands**: Bruckell, Burnside, Gavril
+- **Brands**: Bruckell, Burnside, Gavril, Soliad, and others
 - **Vehicle Types**: High mileage (5.5-164 miles / 8.8-264 km)
 - **Dealer Fees**: \$649
 
@@ -488,31 +483,46 @@ Experience a diverse range of dealerships, each with unique specialties and inve
 - **Stock**: 20 vehicles
 - **Specialization**: Pickups and vans
 - **Vehicle Types**:
-  - Both factory and custom configurations
+  - Factory configurations
   - High mileage vehicles
-- **Features**: Low dealer fees
+- **Dealer Fees**: \$249
+
+#### Smash Rollers
+
+- **Description**: The perfect start to your build
+- **Stock**: 7 vehicles
+- **Specialization**: Frame configurations
+- **Vehicle Types**: Very low mileage (10-100,000 miles)
+- **Dealer Fees**: None
 
 #### Online Brand Dealerships
 
 Brand-specific new vehicle dealers:
 
-- **Hirochi Online**:
+- **Bruckell Online Dealership**:
 
-  - Stock: 15 vehicles
+  - Stock: 10 vehicles
   - New vehicles only
   - Factory configurations
-  - Dealer Fees: \$5,000
+  - Dealer Fees: \$2,500
 
-- **Ibishu Online**:
+- **Gavril-Car Online Dealership**:
 
-  - Stock: 20 vehicles
-  - New vehicles only
+  - Stock: 10 vehicles
+  - New vehicles only (cars only)
   - Factory configurations
-  - Dealer Fees: \$5,000
+  - Dealer Fees: \$2,500
 
-- **Soliad Online**:
+- **Gavril-Truck Online Dealership**:
 
-  - Stock: 15 vehicles
+  - Stock: 10 vehicles
+  - New vehicles only (trucks and pickups)
+  - Factory configurations
+  - Dealer Fees: \$2,500
+
+- **Soliad Online Dealership**:
+
+  - Stock: 10 vehicles
   - New vehicles only
   - Factory configurations
   - Dealer Fees: \$2,500
@@ -526,7 +536,7 @@ All online dealerships feature:
 #### Commercial Vehicle Sales
 
 - **Description**: Tractors and Trailers dealership
-- **Stock**: 25 vehicles
+- **Stock**: 20 vehicles
 - **Specialization**:
   - Semi trucks
   - Tanker trucks
@@ -536,72 +546,29 @@ All online dealerships feature:
 - **Vehicle Types**: High mileage (1,093-602,700 miles / 1,760-970,000 km)
 - **Dealer Fees**: \$1,449
 
+#### Trailer Dealer
+
+- **Description**: Trailer Sales
+- **Stock**: 10 vehicles
+- **Specialization**: All types of trailers
+- **Vehicle Types**: Mixed mileage
+- **Dealer Fees**: \$449
+
+#### Service Dealership
+
+- **Description**: Purchase Service Vehicles here
+- **Stock**: 7 vehicles
+- **Specialization**: Service vehicles (non-commercial)
+- **Dealer Fees**: \$500
+
 #### Private Sellers
 
-- **Stock**: 10 vehicles
+- **Stock**: 30 vehicles
 - **Requirements**:
   - Mileage: 15,534-236,121 miles / 25,000-380,000 km
-  - Minimum value: \$450
+  - Minimum value: \$950
   - No trailers or semi trucks
 - **Features**: No dealer fees
-
-#### JDM Imports
-
-- **Description**: Imported Cars from Asia
-- **Stock**: 10 vehicles
-- **Specialization**: Custom Asian vehicles
-- **Brands**: Ibishu, Hirochi, Arima
-- **Vehicle Types**: High mileage (5.5-164 miles / 8.8-264 km)
-- **Dealer Fees**: \$2,500
-
-#### EDM Imports
-
-- **Description**: Imported Cars from Europe
-- **Stock**: 10 vehicles
-- **Specialization**: Custom European vehicles
-- **Brands**: Civetta, ETK, Cherrier
-- **Vehicle Types**: High mileage (5.5-164 miles / 8.8-264 km)
-- **Dealer Fees**: \$3,500
-
-#### Other Imports
-
-- **Description**: Imported Cars from anywhere else
-- **Stock**: 7 vehicles
-- **Brands**: Autobello, FPU
-- **Vehicle Types**: High mileage (5.5-164 miles / 8.8-264 km)
-- **Dealer Fees**: \$2,000
-
-#### Misc Imports
-
-- **Description**: Modded cars without a price
-- **Stock**: 5 vehicles
-- **Vehicle Types**: High mileage (1,895-559,234 miles / 3,050-900,000 km)
-- **Value Limit**: Under \$100
-- **Dealer Fees**: \$30,000
-
-#### Rocking Rally
-
-- **Description**: Best rally builds around
-- **Stock**: 7 vehicles
-- **Specialization**: Rally configurations
-- **Vehicle Types**: Low-medium mileage (6.8-10.9 miles / 11-17.6 km)
-- **Dealer Fees**: \$1,500
-
-#### Clockwise Drag Racing
-
-- **Description**: Building Drag cars around the clock
-- **Stock**: 7 vehicles
-- **Specialization**: Drag configurations (Auto, Manual, DCT, Sequential)
-- **Vehicle Types**: Low-medium mileage (6.8-10.9 miles / 11-17.6 km)
-- **Dealer Fees**: \$1,500
-
-#### DriftGear Dealer
-
-- **Description**: Pushing the limits of innovation... and tires
-- **Stock**: 7 vehicles
-- **Specialization**: Drift configurations (Auto, Manual, DCT, Sequential)
-- **Vehicle Types**: Low-medium mileage (6.8-10.9 miles / 11-17.6 km)
-- **Dealer Fees**: \$750
 
 #### Gizamn's Rod Shop
 
@@ -610,19 +577,10 @@ All online dealerships feature:
 - **Vehicle Types**: Low-medium mileage (6.8-10.9 miles / 11-17.6 km)
 - **Dealer Fees**: \$750
 
-#### TJs Offroad World
-
-- **Description**: The only choice in Offroad from East to West
-- **Stock**: 10 vehicles
-- **Specialization**: ATVs, Buggies, Custom Offroad
-- **Brands**: SP, Trackfab, HelTom Fab, DW
-- **Vehicle Types**: Low-medium mileage (6.8-10.9 miles / 11-17.6 km)
-- **Dealer Fees**: \$1,500
-
 #### Trusted Auto Sales
 
 - **Description**: Discounted cars
-- **Stock**: 30 vehicles
+- **Stock**: 25 vehicles
 - **Vehicle Types**: Very high mileage (189,520-382,765 miles / 305,000-616,000 km)
 - **Restrictions**: No ATVs, Buggies, Semi Trucks
 - **Dealer Fees**: None
@@ -630,7 +588,7 @@ All online dealerships feature:
 #### Joe's Junk
 
 - **Description**: "You think you hate it now, wait till you drive it"
-- **Stock**: 8 vehicles
+- **Stock**: 7 vehicles
 - **Specialization**: Junk configurations
 - **Vehicle Types**: Very high mileage (158,450-569,174 miles / 255,000-916,000 km)
 - **Dealer Fees**: None
@@ -638,17 +596,17 @@ All online dealerships feature:
 #### Fast Automotive
 
 - **Description**: Fastest race cars available
-- **Stock**: 10 vehicles
-- **Specialization**: Race configurations
+- **Stock**: 20 vehicles
+- **Specialization**: Race configurations, ATVs, Buggies, and specialty vehicles
 - **Vehicle Types**: Low-medium mileage (6.8-10.9 miles / 11-17.6 km)
 - **Dealer Fees**: \$2,000
 
 #### Police Dealership
 
 - **Description**: Purchase police vehicles here
-- **Stock**: 10 vehicles
+- **Stock**: 8 vehicles
 - **Specialization**: Police vehicles
-- **Dealer Fees**: Not specified
+- **Dealer Fees**: \$500
 
 ---
 
