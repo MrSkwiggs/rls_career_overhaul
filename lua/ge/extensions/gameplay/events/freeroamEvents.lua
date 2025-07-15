@@ -10,7 +10,7 @@ local leaderboardManager = require('gameplay/events/freeroam/leaderboardManager'
 local activeAssets = require('gameplay/events/freeroam/activeAssets')
 local checkpointManager = require('gameplay/events/freeroam/checkpointManager')
 local utils = require('gameplay/events/freeroam/utils')
-
+local pits = require('gameplay/events/freeroam/pits')
 local Assets = activeAssets.ActiveAssets.new()
 
 local timerActive = false
@@ -111,7 +111,7 @@ local function payoutRace()
     local driftScore = 0
     if race.driftGoal then
         driftScore = getDriftScore()
-        reward = utils.driftReward(mActiveRace, time, driftScore)
+        reward = utils.driftReward(races[mActiveRace], time, driftScore)
     else
         reward = utils.raceReward(time, reward, in_race_time)
     end
@@ -172,9 +172,8 @@ local function payoutRace()
         lapCount = invalidLap and 1 or lapCount
         if race.hotlap then
             -- Hotlap Multiplier
-            local hotlapMultiplier = (10 / (1 + math.exp(-0.07*(lapCount - 17)))) - 1.35
-            reward = reward * hotlapMultiplier
-            hotlapMessage = string.format("\nHotlap Multiplier: %.2f", hotlapMultiplier)
+            reward = reward * utils.hotlapMultiplier(lapCount)
+            hotlapMessage = string.format("\nHotlap Multiplier: %.2f", utils.hotlapMultiplier(lapCount))
         end
 
         if newBest and not newBestSession then
@@ -204,6 +203,9 @@ local function payoutRace()
                 },
                 beamXP = {
                     amount = math.floor(xp / 10)
+                },
+                vouchers = {
+                    amount = (oldTime == 0 or oldTime > time) and in_race_time < time and 1 or 0
                 }
             }
             for _, type in ipairs(race.type) do
@@ -285,6 +287,9 @@ local function payoutDragRace(raceName, finishTime, finishSpeed, vehId)
         },
         beamXP = {
             amount = math.floor(xp / 10)
+        },
+        vouchers = {
+            amount = newBestTime and 1 or 0
         }
     }
 
@@ -372,10 +377,8 @@ local function exitRace()
         Assets:hideAllAssets()
         checkpointManager.removeCheckpoints()
         utils.displayMessage("You exited the race zone, Race cancelled", 3)
-        core_jobsystem.create(function(job)
-            job.sleep(10)
-            utils.restoreTrafficAmount()
-        end)
+        utils.restoreTrafficAmount()
+        pits.clearSpeedLimit()
         newBestSession = false
         if gameplay_drift_general.getContext() == "inChallenge" then
             gameplay_drift_general.setContext("inFreeRoam")
@@ -664,14 +667,31 @@ local function onBeamNGTrigger(data)
             mSplitTimes = {}
             mActiveRace = nil
             utils.setActiveLight(raceName, "red")
-            core_jobsystem.create(function(job)
-                job.sleep(10)
-                utils.restoreTrafficAmount()
-            end)
+            utils.restoreTrafficAmount()
             if career_career.isActive() then
                 career_modules_pauseTime.enablePauseCounter()
             end
         end
+    elseif triggerType == "pits" then
+        if event == "enter" and mActiveRace == raceName then
+            -- Handle pit entry
+            local obj = be:getPlayerVehicle(0)
+            if obj then
+                obj:queueLuaCommand("obj:setGhostEnabled(true)")
+            end
+            if races[raceName].pitSpeedLimit then
+                pits.stopThenLimit(races[raceName].pitSpeedLimit, races[raceName].pitSpeedLimitUnit)
+            else
+                pits.stopThenLimit(37, "MPH")
+            end
+        elseif event == "exit" and mActiveRace == raceName then
+            -- Handle pit exit
+            pits.toggleSpeedLimit()
+            local obj = be:getPlayerVehicle(0)
+            if obj then
+                obj:queueLuaCommand("obj:setGhostEnabled(false)")
+            end
+        end    
     else
         -- print("Unknown trigger type: " .. triggerType)
     end
@@ -683,8 +703,29 @@ local function onWorldReadyState(state)
     end
 end
 
-local function onInit()
+local function loadExtensions()
+    print("Initializing Freeroam Events Modules")
+
+    local freeroamPath = "/lua/ge/extensions/gameplay/events/freeroam/"
+    local files = FS:findFiles(freeroamPath, "*.lua", -1, true, false)
+    
+    if files then
+        for _, filePath in ipairs(files) do
+            local filename = string.match(filePath, "([^/]+)%.lua$")
+
+            if filename then
+                local extensionName = "gameplay_events_freeroam_" .. filename
+                setExtensionUnloadMode(extensionName, "manual")
+                print("Loaded extension: " .. extensionName)
+            end
+        end
+    end
+    loadManualUnloadExtensions()
+end
+
+local function onExtensionLoaded()
     print("Initializing Freeroam Events Main")
+    loadExtensions()
     if getCurrentLevelIdentifier() then
         races = utils.loadRaceData()
         if races ~= {} then
@@ -769,6 +810,6 @@ M.payoutDragRace = payoutDragRace
 M.onWorldReadyState = onWorldReadyState
 M.getRace = function(raceName) return races[raceName] end
 
-M.onInit = onInit
+M.onExtensionLoaded = onExtensionLoaded
 
 return M
