@@ -34,6 +34,7 @@ local mInventoryId = nil
 local newBestSession = false
 
 local races = nil
+local isReplay = false
 
 local function rewardLabel(raceName, newBestTime)
     local raceLabel = races[raceName].label
@@ -391,7 +392,7 @@ local function exitRace()
 end
 
 local function onBeamNGTrigger(data)
-    if be:getPlayerVehicleID(0) ~= data.subjectID then
+    if be:getPlayerVehicleID(0) ~= data.subjectID or isReplay then
         return
     end
     if gameplay_walk.isWalking() then return end
@@ -802,6 +803,15 @@ function M.onGetRawPoiListForLevel(levelIdentifier, elements)
     end
 end
 
+local function onReplayStateChanged(state)
+    if not isReplay and state.state == "playback" then
+        isReplay = true
+    elseif isReplay and state.state == "inactive" then
+        isReplay = false
+    end
+end
+
+M.onReplayStateChanged = onReplayStateChanged
 M.onBeamNGTrigger = onBeamNGTrigger
 M.onUpdate = onUpdate
 
