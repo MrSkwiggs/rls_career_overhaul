@@ -3,7 +3,12 @@ local M = {}
 local isDev = true
 local levelsRoot = 'levels/'
 
+local function getSettings()
+    return rlsSettings.getSetting('mapDevMode')
+end
+
 local function clearLevels()
+    local isDev = getSettings()
     if not isDev then
         if not FS:directoryExists(levelsRoot) then
             print("Levels directory does not exist")

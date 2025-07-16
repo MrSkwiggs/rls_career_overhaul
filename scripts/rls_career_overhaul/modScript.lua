@@ -31,6 +31,8 @@ end
 
 deactivateBeamMP()
 
+setExtensionUnloadMode("rlsSettings", "manual")
+
 setExtensionUnloadMode("careerMaps", "manual")
 
 setExtensionUnloadMode("clearLevels", "manual")
