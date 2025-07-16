@@ -33,6 +33,8 @@ deactivateBeamMP()
 
 setExtensionUnloadMode("careerMaps", "manual")
 
+setExtensionUnloadMode("clearLevels", "manual")
+
 if not core_gamestate.state or core_gamestate.state.state ~= "career" then
     loadExtensions()
 end
