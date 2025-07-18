@@ -52,8 +52,8 @@ function M.saveDamageState(inventoryId, saveFile, removeVehicle)
     local vehicle = career_modules_inventory.getVehicles()[inventoryId]
     local spawnedVehicles = career_modules_inventory.getMapInventoryIdToVehId()
     if vehicle and spawnedVehicles[inventoryId] then
-        local damage = career_modules_valueCalculator.getNumberOfBrokenParts(vehicle.partConditions)
-        if damage > 0 then
+        local numberOfBrokenParts = career_modules_valueCalculator.getNumberOfBrokenParts(career_modules_inventory.getVehicles()[inventoryId].partConditions)
+        if numberOfBrokenParts > 0 and numberOfBrokenParts < career_modules_valueCalculator.getBrokenPartsThreshold() then
             print("Saving damage state for vehicle " .. inventoryId .. " to " .. saveFile)
             local vehId = career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)
             local object = be:getObjectByID(vehId)
@@ -72,6 +72,15 @@ function M.saveDamageState(inventoryId, saveFile, removeVehicle)
             end
             print("No damage state to save for vehicle " .. inventoryId)
             FS:removeFile(saveFile)
+            
+            -- Also clear the vehicle's internal damage tracking state since there's no damage to save
+            local vehId = career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)
+            if vehId then
+                local object = be:getObjectByID(vehId)
+                if object then
+                    object:queueLuaCommand("if individualRepair then individualRepair.reset(); end")
+                end
+            end
         end
     end
 end
@@ -87,6 +96,15 @@ end
 function M.clearDamageState(inventoryId)
     local saveFile = GetVehicleSaveFile(inventoryId)
     FS:removeFile(saveFile)
+    
+    -- Also clear the vehicle's internal damage tracking state if the vehicle is currently spawned
+    local vehId = career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)
+    if vehId then
+        local object = be:getObjectByID(vehId)
+        if object then
+            object:queueLuaCommand("if individualRepair then individualRepair.reset(); end")
+        end
+    end
 end
 
 function M.repairPartsAndReloadState(inventoryId, partsToRepair, partsToRemove)
@@ -137,6 +155,54 @@ function M.repairPartsAndReloadState(inventoryId, partsToRepair, partsToRemove)
     object:queueLuaCommand(command)
 end
 
+local function onSaveCurrentSaveSlot(currentSavePath)
+    local _, oldSavePath = career_saveSystem.getCurrentSaveSlot()
+
+    local oldDamageDir = oldSavePath .. "/career/vehicles/damage/"
+    local newDamageDir = currentSavePath .. "/career/vehicles/damage/"
+
+    if not FS:directoryExists(newDamageDir) then
+        FS:directoryCreate(newDamageDir)
+    end
+
+    local oldFiles = {}
+    local newFiles = {}
+    
+    if FS:directoryExists(oldDamageDir) then
+        local oldDamageFiles = FS:findFiles(oldDamageDir, '*_damageState.json', 0, false, false)
+        for _, oldFilePath in ipairs(oldDamageFiles) do
+            local _, fileName, _ = path.split(oldFilePath)
+            print("oldFilePath: " .. oldFilePath)
+            oldFiles[fileName] = oldFilePath
+        end
+    end
+    
+    if FS:directoryExists(newDamageDir) then
+        local newDamageFiles = FS:findFiles(newDamageDir, '*_damageState.json', 0, false, false)
+        for _, newFilePath in ipairs(newDamageFiles) do
+            local _, fileName, _ = path.split(newFilePath)
+            print("newFilePath: " .. newFilePath)
+            newFiles[fileName] = newFilePath
+        end
+    end
+    
+    for fileName, oldFilePath in pairs(oldFiles) do
+        local newFilePath = newDamageDir .. fileName
+        local damageData = jsonReadFile(oldFilePath)
+        if damageData then
+            jsonWriteFile(newFilePath, damageData, true)
+        end
+    end
+    
+    for fileName, newFilePath in pairs(newFiles) do
+        if not oldFiles[fileName] then
+            FS:removeFile(newFilePath)
+        end
+    end
+end
+
+
+M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
 M.getSpawnedVehicles = getSpawnedVehicles
 M.getDamagedVehicles = getDamagedVehicles
 return M

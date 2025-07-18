@@ -695,11 +695,8 @@ local function updateInstalledParts(addedParts, removedParts)
   core_vehicles.replaceVehicle(previewVehicle.model, spawnOptions, getCurrentVehicleObj())
   core_vehicleBridge.executeAction(getCurrentVehicleObj(), 'initPartConditions', previewVehicle.partConditions, nil, nil, nil, career_modules_painting.getPrimerColor())
 
-  dump(partPaths)
-  dump(partsToRemove)
-
   getCurrentVehicleObj():queueLuaCommand("extensions.load('individualRepair')")
-  career_modules_damageManager.repairPartsAndReloadState(currentVehicle, partPaths, partsToRemove)
+  --career_modules_damageManager.repairPartsAndReloadState(currentVehicle, partPaths, partsToRemove)
 
   -- Doing the callback immediately will result in wrong values for some parts, so we do it one frame later
   core_vehicleBridge.requestValue(getCurrentVehicleObj(),

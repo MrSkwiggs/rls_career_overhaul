@@ -11,8 +11,6 @@ local inputActionFilter = extensions.core_input_actionFilter
 local function startFreeroamHelper (level, startPointName, spawnVehicle)
   unloadAutoExtensions()
   loadPresetExtensions()
-  extensions.load("gameplay/events/freeroamEvents")
-  setExtensionUnloadMode("gameplay/events/freeroamEvents", "manual")
   M.state = {}
   M.state.freeroamActive = true
 
@@ -85,6 +83,15 @@ local function startFreeroam(level, startPointName, wasDelayed, spawnVehicle)
   if not delaying then
     startAssociatedFlowgraph(level)
   end
+end
+
+local function startFreeroamByName(levelName, startPointName, wasDelayed, spawnVehicle)
+  local level = core_levels.getLevelByName(levelName)
+  if level then
+    startFreeroam(level, startPointName, wasDelayed, spawnVehicle)
+    return true
+  end
+  return false
 end
 
 -- if this is anything other than nil, the next freeroam will load with traffic or without traffic depending on the value

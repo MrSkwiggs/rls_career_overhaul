@@ -17,7 +17,7 @@ local validPickupSpots = nil
 local passengers = {}
 local currentPassengerRating = 0
 local currentPassengerType = "Standard"
-local vehicleMultiplier = 0
+local vehicleMultiplier = 0.1
 local currentFare = nil
 local availableSeats = nil
 local updateTimer = 1
@@ -243,7 +243,7 @@ local function generateValueMultiplier()
     end
     vehicleMultiplier = (career_modules_valueCalculator.getInventoryVehicleValue(inventoryId) / 30000) ^ 0.5
     vehicleMultiplier = string.format("%.1f", vehicleMultiplier)
-    return vehicleMultiplier
+    return math.max(vehicleMultiplier, 0.1)
 end
 
 local function generateJob()
@@ -409,7 +409,7 @@ local function stopTaxiJob()
     dataToSend = {}
 end
 
-local function update(dt)
+local function update(_, dt)
     timer = timer + dt
     if timer < updateTimer then
         return
@@ -523,24 +523,34 @@ end
 
 function M.onVehicleSwitched()
     currentVehiclePartsTree = nil
-    if gameplay_walk.isWalking() then
-        state = "start"
-        currentFare = nil
-        core_groundMarkers.resetAll()
-        jobOfferTimer = 0
-        jobOfferInterval = math.random(5, 45)
-        cumulativeReward = 0
-        fareStreak = 0
-        dataToSend = {
-            state = state,
-            currentFare = currentFare,
-            availableSeats = availableSeats,
-            vehicleMultiplier = vehicleMultiplier,
-            cumulativeReward = cumulativeReward,
-            fareStreak = fareStreak
-        }
-        guihooks.trigger('updateTaxiState', dataToSend)
+    -- Reset taxi job state when switching vehicles
+    state = "start"
+    currentFare = nil
+    core_groundMarkers.resetAll()
+    jobOfferTimer = 0
+    jobOfferInterval = math.random(5, 45)
+    cumulativeReward = 0
+    fareStreak = 0
+    
+    -- Reset vehicle-specific values
+    availableSeats = 0
+    vehicleMultiplier = 0.1
+    
+    -- If there's a player vehicle, recalculate capacity and multiplier
+    if be:getPlayerVehicle(0) and not gameplay_walk.isWalking() then
+        calculateCapacity(be:getPlayerVehicle(0):getID())
+        generateValueMultiplier()
     end
+    
+    dataToSend = {
+        state = state,
+        currentFare = currentFare,
+        availableSeats = availableSeats,
+        vehicleMultiplier = vehicleMultiplier,
+        cumulativeReward = cumulativeReward,
+        fareStreak = fareStreak
+    }
+    guihooks.trigger('updateTaxiState', dataToSend)
 end
 
 M.onEnterVehicleFinished = onEnterVehicleFinished

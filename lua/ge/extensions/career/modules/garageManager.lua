@@ -133,6 +133,11 @@ local function onCareerModulesActivated()
   loadPurchasedGarages()
 end
 
+local function onExtensionLoaded()
+  loadPurchasedGarages()
+  buildGarageSizes()
+end
+
 local function getGaragePrice(garage)
   if career_modules_hardcore.isHardcoreMode() then
     return garage.defaultPrice
@@ -278,7 +283,6 @@ local function getGaragePrice(garageId, computerId)
   local garage = freeroam_facilities.getFacility("garage", garageId)
   if garage then
     if career_modules_hardcore.isHardcoreMode() then
-      print("Garage price: " .. garage.defaultPrice)
       return garage.defaultPrice
     else
       local price = garage.starterGarage and 0 or garage.defaultPrice
@@ -297,7 +301,9 @@ local function canSellGarage(computerId)
   if not garage then
     return false
   end
-  return {isGarageSpace(garageId)[2] == garage.capacity, garage.capacity - isGarageSpace(garageId)[2]}
+  local space = isGarageSpace(garageId)
+  local capacity = math.ceil(garage.capacity / (career_modules_hardcore.isHardcoreMode() and 2 or 1))
+  return {space[2] == capacity, capacity - space[2]}
 end
 
 local function sellGarage(computerId, sellPrice)
@@ -316,7 +322,7 @@ local function sellGarage(computerId, sellPrice)
   else
     soldMessage = soldMessage .. garageId
   end
-  career_modules_payment.reward({ money = { amount = sellPrice } }, { label = soldMessage })
+  career_modules_payment.reward({ money = { amount = sellPrice } }, { label = soldMessage }, true)
 end
 
 local function getNextAvailableSpace()
@@ -353,6 +359,7 @@ M.sellGarage = sellGarage
 
 M.getFreeSlots = getFreeSlots
 M.onCareerModulesActivated = onCareerModulesActivated
+M.onExtensionLoaded = onExtensionLoaded
 M.isPurchasedGarage = isPurchasedGarage
 M.addPurchasedGarage = addPurchasedGarage
 M.addDiscoveredGarage = addDiscoveredGarage
