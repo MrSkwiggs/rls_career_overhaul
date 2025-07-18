@@ -299,9 +299,16 @@ local function acceptOffer(inventoryId, offerIndex)
       if offer.expiredViewCounter then
         return -- Cannot accept expired offers
       end
-      table.remove(listing.offers, offerIndex)
-      career_modules_inventory.sellVehicle(inventoryId, offer.value)
-      Engine.Audio.playOnce('AudioGui','event:>UI>Career>Buy_01')
+      
+      -- Try to sell the vehicle and check if it was successful
+      local sellSuccess = career_modules_inventory.sellVehicle(inventoryId, offer.value)
+      if sellSuccess then
+        table.remove(listing.offers, offerIndex)
+        Engine.Audio.playOnce('AudioGui','event:>UI>Career>Buy_01')
+      else
+        -- Vehicle couldn't be sold (e.g., it's being rented), show error message
+        guihooks.trigger("toastrMsg", {type="error", title="Cannot sell vehicle", msg="This vehicle cannot be sold right now because it is currently being rented or is otherwise unavailable."})
+      end
       return
     end
   end
