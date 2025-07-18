@@ -296,6 +296,9 @@ local function acceptOffer(inventoryId, offerIndex)
   for i, listing in ipairs(listedVehicles) do
     if listing.id == inventoryId then
       local offer = listing.offers[offerIndex]
+      if offer.expiredViewCounter then
+        return -- Cannot accept expired offers
+      end
       table.remove(listing.offers, offerIndex)
       career_modules_inventory.sellVehicle(inventoryId, offer.value)
       Engine.Audio.playOnce('AudioGui','event:>UI>Career>Buy_01')
@@ -362,11 +365,22 @@ local function updateListings()
       end
     end
 
+    -- Handle offer expiration and removal
     for offerIndex = #listing.offers, 1, -1 do
       local offer = listing.offers[offerIndex]
-      if not offer.expiredViewCounter and timeNow - offer.timestamp > (offer.ttl or offerTTL) then
+      local timeSinceOffer = timeNow - offer.timestamp
+      local offerTTLToUse = offer.ttl or offerTTL
+      
+      if not offer.expiredViewCounter and timeSinceOffer > offerTTLToUse then
         offer.expiredViewCounter = 1
+        offer.expiredAt = timeNow
         offerCountDiff = offerCountDiff - 1
+      elseif offer.expiredViewCounter and offer.expiredAt then
+        -- Remove expired offers after 5 minutes (300 seconds)
+        local timeSinceExpired = timeNow - offer.expiredAt
+        if timeSinceExpired > 300 then
+          table.remove(listing.offers, offerIndex)
+        end
       end
     end
   end
