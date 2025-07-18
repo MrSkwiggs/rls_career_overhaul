@@ -523,24 +523,34 @@ end
 
 function M.onVehicleSwitched()
     currentVehiclePartsTree = nil
-    if gameplay_walk.isWalking() then
-        state = "start"
-        currentFare = nil
-        core_groundMarkers.resetAll()
-        jobOfferTimer = 0
-        jobOfferInterval = math.random(5, 45)
-        cumulativeReward = 0
-        fareStreak = 0
-        dataToSend = {
-            state = state,
-            currentFare = currentFare,
-            availableSeats = availableSeats,
-            vehicleMultiplier = vehicleMultiplier,
-            cumulativeReward = cumulativeReward,
-            fareStreak = fareStreak
-        }
-        guihooks.trigger('updateTaxiState', dataToSend)
+    -- Reset taxi job state when switching vehicles
+    state = "start"
+    currentFare = nil
+    core_groundMarkers.resetAll()
+    jobOfferTimer = 0
+    jobOfferInterval = math.random(5, 45)
+    cumulativeReward = 0
+    fareStreak = 0
+    
+    -- Reset vehicle-specific values
+    availableSeats = 0
+    vehicleMultiplier = 0.1
+    
+    -- If there's a player vehicle, recalculate capacity and multiplier
+    if be:getPlayerVehicle(0) and not gameplay_walk.isWalking() then
+        calculateCapacity(be:getPlayerVehicle(0):getID())
+        generateValueMultiplier()
     end
+    
+    dataToSend = {
+        state = state,
+        currentFare = currentFare,
+        availableSeats = availableSeats,
+        vehicleMultiplier = vehicleMultiplier,
+        cumulativeReward = cumulativeReward,
+        fareStreak = fareStreak
+    }
+    guihooks.trigger('updateTaxiState', dataToSend)
 end
 
 M.onEnterVehicleFinished = onEnterVehicleFinished
