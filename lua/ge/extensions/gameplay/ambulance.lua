@@ -7,7 +7,7 @@ M.dependencies = {'gameplay_sites_sitesManager', 'freeroam_facilities'}
 
 -- MODULE DEPENDENCIES
 local core_groundMarkers = require('core/groundMarkers')
-local core_vehicles = require('core.vehicles')
+local core_vehicles = require('core/vehicles')
 
 -- STATE VARIABLES
 local currentFare = nil
@@ -16,6 +16,10 @@ local parkingSpots = nil
 local pickupTimer = nil
 local pickupMessageShown = false
 local missionTriggeredForVehicle = false
+-- Stop-settle state
+local stopMonitorActive       = false
+local stopSettleTimer         = 0
+local stopSettleDelay         = 2.5
 
 -- Timers
 M.initDelay = nil
@@ -151,6 +155,7 @@ updateMarkers = function(dtReal, dtSim, dtRaw)
     local vehiclePos = playerVehicle:getPosition()
 
     local velocity = playerVehicle:getVelocity()
+    local speed = velocity:length()
     if lastVelocity then
         local deltaVel = velocity - lastVelocity
         local safeDt = (dtSim and dtSim > 0) and dtSim or 0.01  
@@ -167,68 +172,129 @@ updateMarkers = function(dtReal, dtSim, dtRaw)
     if state == "pickup" and currentFare.pickup then
         local distToPickup = (vehiclePos - currentFare.pickup.pos):length()
         if distToPickup <= 5 then
+            -- Must be fully stopped (reuse bus settle logic)
+            if speed > 0.5 then
+                ui_message("Come to a complete stop before securing the patient.", 2, "info", "info")
+                pickupTimer = nil
+                stopMonitorActive = false
+                stopSettleTimer = 0
+                return
+            end
+
+            if not stopMonitorActive then
+                stopMonitorActive = true
+                stopSettleTimer = 0
+                ui_message("Hold still to secure the patient...", 2.5, "info", "info")
+            else
+                stopSettleTimer = stopSettleTimer + (dtSim or 0)
+            end
+
+            if stopSettleTimer < stopSettleDelay then
+                pickupTimer = nil
+                return
+            end
+
             if not pickupMessageShown then
-                ui_message("Securing patient!", 5, "info", "info")
+                ui_message("Securing patient!", 12, "info", "info")
                 pickupMessageShown = true
                 currentFare.startTime = os.time()
             end
             if not pickupTimer then pickupTimer = 0 end
             pickupTimer = pickupTimer + (dtSim or 0)
-            if pickupTimer >= 5 then
+            if pickupTimer >= 12 then 
                 state = "enRoute"
                 core_groundMarkers.resetAll()
                 if currentFare.destination and currentFare.destination.pos then
                     core_groundMarkers.setPath(currentFare.destination.pos)
                 end
-                ui_message("Patient picked up, now enRoute", 5, "info", "info") 
+                ui_message("Patient picked up, now enRoute", 8, "info", "info")
                 pickupTimer = nil
+                stopMonitorActive = false
+                stopSettleTimer = 0
             end
         else
             pickupTimer = 0
+            stopMonitorActive = false
+            stopSettleTimer = 0
         end
     end
-
     -- DROPOFF PHASE
     if state == "enRoute" and currentFare.destination then
         local distToDropoff = (vehiclePos - currentFare.destination.pos):length()
-        if distToDropoff <= 3 then
-            local distToPickup = (currentFare.playerStartPos - currentFare.pickup.pos):length()
-            local distToHospital = (currentFare.pickup.pos - currentFare.destination.pos):length()
-            local distanceKM = (distToPickup + distToHospital) / 1000
-            local basePayout = math.floor(2200 * distanceKM)
-            local penalty = math.floor(roughRide * 0.1)
-            local finalPayout = math.max(0, basePayout - penalty)
+        if distToDropoff > 3 then
+            currentFare.dropoffTimer = nil
+            stopMonitorActive = false
+            stopSettleTimer = 0
+            return
+        end
 
-            if career_career and career_career.isActive() and career_modules_payment and career_modules_payment.reward then
-                career_modules_payment.reward({
-                    money = { amount = finalPayout },
-                    beamXP = { amount = math.floor(finalPayout / 10) },
-                    paramedicWorkReputation = { amount = math.floor(finalPayout / 100) }
-                }, {
-                    label = string.format("Ambulance fare: $%d | Rough ride penalty: $%d", finalPayout, penalty),
-                    tags = {"transport", "ambulance", "gameplay"}
-                }, true)
+        -- Must be fully stopped before dropoff
+        if speed > 0.5 then
+            ui_message("Come to a complete stop to offload the patient.", 2, "info", "info")
+            currentFare.dropoffTimer = nil
+            stopMonitorActive = false
+            stopSettleTimer = 0
+            return
+        end
+
+        if not stopMonitorActive then
+            stopMonitorActive = true
+            stopSettleTimer = 0
+            ui_message("Hold still to offload the patient...", 2.5, "info", "info")
+            return
+        else
+            stopSettleTimer = stopSettleTimer + (dtSim or 0)
+            if stopSettleTimer < stopSettleDelay then
+                return
             end
+        end
 
-            local repGain = math.floor(finalPayout / 100)
+        -- extra dropoff dwell after settling; adjust 6 to your desired seconds
+        currentFare.dropoffTimer = (currentFare.dropoffTimer or 0) + (dtSim or 0)
+        if currentFare.dropoffTimer < 6 then
+            ui_message(string.format("Stabilizing patient... %.1fs", math.max(0, 6 - currentFare.dropoffTimer)), 1, "info", "info")
+            return
+        end
 
-            ui_message(string.format(
-                "Patient delivered!\nDistance: %.2f km\nBase: $%d\nPenalty: $%d\nEarned: $%d\nReputation +%d",
-                distanceKM, basePayout, penalty, finalPayout, repGain
-            ), 6, "info", "info")
+        -- compute payout (original logic restored)
+        local distToPickup = (currentFare.playerStartPos - currentFare.pickup.pos):length()
+        local distToHospital = (currentFare.pickup.pos - currentFare.destination.pos):length()
+        local distanceKM = (distToPickup + distToHospital) / 1000
+        local basePayout = math.floor(2200 * distanceKM)
+        local penalty = math.floor(roughRide * 0.1)
+        local finalPayout = math.max(0, basePayout - penalty)
 
-            print(string.format(
-                "[ambulance] Patient delivered. Distance: %.2f km Base: $%d Penalty: $%d Earned: $%d Reputation +%d",
-                distanceKM, basePayout, penalty, finalPayout, repGain
-            ))
+        if career_career and career_career.isActive() and career_modules_payment and career_modules_payment.reward then
+            career_modules_payment.reward({
+                money = { amount = finalPayout },
+                beamXP = { amount = math.floor(finalPayout / 10) },
+                paramedicWorkReputation = { amount = math.floor(finalPayout / 100) }
+            }, {
+                label = string.format("Ambulance fare: $%d | Rough ride penalty: $%d", finalPayout, penalty),
+                tags = {"transport", "ambulance", "gameplay"}
+            }, true)
+        end
 
-            state = "completed"
-            core_groundMarkers.resetAll()
-            if not M.delayTimer then
-                M.delayTimer = 0
-                M.delayDuration = math.random(M.minDelay, M.maxDelay)
-                print("[ambulance] next mission will start in " .. M.delayDuration .. " seconds")
-            end
+        local repGain = math.floor(finalPayout / 100)
+
+        ui_message(string.format(
+            "Patient delivered!\nDistance: %.2f km\nBase: $%d\nPenalty: $%d\nEarned: $%d\nReputation +%d",
+            distanceKM, basePayout, penalty, finalPayout, repGain
+        ), 6, "info", "info")
+
+        print(string.format(
+            "[ambulance] Patient delivered. Distance: %.2f km Base: $%d Penalty: $%d Earned: $%d Reputation +%d",
+            distanceKM, basePayout, penalty, finalPayout, repGain
+        ))
+        currentFare.dropoffTimer = nil
+        state = "completed"
+        core_groundMarkers.resetAll()
+        stopMonitorActive = false
+        stopSettleTimer = 0
+        if not M.delayTimer then
+            M.delayTimer = 0
+            M.delayDuration = math.random(M.minDelay, M.maxDelay)
+            print("[ambulance] next mission will start in " .. M.delayDuration .. " seconds")
         end
     end
 
