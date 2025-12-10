@@ -4,6 +4,25 @@
 
 local C = {}
 
+-- Plates that should never be pursued by AI
+local IGNORED_PLATES = { ["911"]=true,["bus"]=true }
+
+-- Returns true if the vehicle should be ignored; caches the decision on veh.ignorePolice
+local function shouldIgnoreVehicle(id, veh)
+  if veh.ignorePolice then return true end
+
+  local obj = getObjectByID(id)
+  if not obj then return false end
+
+  local plate = core_vehicles.getVehicleLicenseText(obj)
+  if plate and IGNORED_PLATES[plate] then
+    veh.ignorePolice = true 
+    return true
+  end
+
+  return false
+end
+
 function C:init()
   self.class = 'emergency'
   self.keepActionOnRefresh = false
@@ -52,10 +71,9 @@ function C:init()
       self.flags.roadblock = nil
       self.flags.busy = 1
       self.cooldownTimer = -1
-      self.avoidSpeed = math.random(18, 24) * modeNum -- speed difference for crash avoidance
-      -- NOTE: maybe this crash avoidance should be in ai.lua
+      self.avoidSpeed = math.random(18, 24) * modeNum
 
-      if not self.flags.pursuit then -- only gets triggered once
+      if not self.flags.pursuit then
         self.veh:modifyRespawnValues(500)
         self.flags.pursuit = 1
       end
@@ -70,7 +88,7 @@ function C:init()
       self.flags.reset = 1
       self.flags.cooldown = 1
       self.cooldownTimer = math.max(10, gameplay_police.getPursuitVars().arrestTime + 5)
-      self.state = 'disabled' -- state is set to disabled until the cooldown timer resolves or the vehicle respawns
+      self.state = 'disabled'
 
       self.targetPursuitMode = 0
     end,
@@ -103,18 +121,20 @@ function C:init()
   self.baseActions = nil
 end
 
-function C:checkTarget() -- returns the ideal target id, comparing the pursuit scores of all vehicles
+function C:checkTarget()
   local traffic = gameplay_traffic.getTrafficData()
   local targetId
   local bestScore = 0
 
   for id, veh in pairs(traffic) do
-    if id ~= self.veh.id and veh.role.name ~= 'police' then
+    if shouldIgnoreVehicle(id, veh) then goto continue end
+    if id ~= self.veh.id and veh.role.name ~= 'police' and not veh.ignorePolice then
       if veh.pursuit.mode >= 1 and veh.pursuit.score > bestScore then
         bestScore = veh.pursuit.score
         targetId = id
       end
     end
+    ::continue::
   end
 
   return targetId
@@ -135,7 +155,6 @@ function C:onRefresh()
     self.flags.targetVisible = nil
     local targetVeh = gameplay_traffic.getTrafficData()[targetId]
     if not targetVeh.pursuit.roadblockPos or (targetVeh.pursuit.roadblockPos and getObjectByID(self.veh.id):getPosition():squaredDistance(targetVeh.pursuit.roadblockPos) > 400) then
-      -- ignores pursuit start if vehicle is at a roadblock
       self:setAction('pursuitStart', {targetId = targetId})
     end
     self.veh:modifyRespawnValues(750 - self.targetPursuitMode * 150)
@@ -151,17 +170,22 @@ function C:onRefresh()
 end
 
 function C:onTrafficTick(dt)
-  for id, veh in pairs(gameplay_traffic.getTrafficData()) do -- update data of potential targets
-    if id ~= self.veh.id and veh.role.name ~= 'police' and not veh.ignorePolice and not self.flags.cooldown then
+  for id, veh in pairs(gameplay_traffic.getTrafficData()) do
+    if shouldIgnoreVehicle(id, veh) then
+      self.validTargets[id] = nil
+      goto continue
+    end
+
+    if id ~= self.veh.id and veh.role.name ~= 'police' and not veh.ignorePolice then
       if not self.validTargets[id] then self.validTargets[id] = {} end
-      local interDist = self.veh:getInteractiveDistance(veh.pos, true) -- distance from this vehicle's look ahead point to the target vehicle
+      local interDist = self.veh:getInteractiveDistance(veh.pos, true)
 
       self.validTargets[id].dist = self.veh.pos:squaredDistance(veh.pos)
       self.validTargets[id].interDist = interDist
       self.validTargets[id].visible = interDist <= 10000 and self:checkTargetVisible(id)
 
       if self.flags.pursuit and self.validTargets[id].dist <= 100 and self.veh.speed < 2.5 and veh.speed < 2.5 then
-        self.validTargets[id].visible = true -- always true if stuck near the target vehicle during a pursuit (prevents evading instead of arresting)
+        self.validTargets[id].visible = true
       end
 
       if self.flags.pursuit and self.validTargets[id].visible and not self.flags.targetVisible then
@@ -174,125 +198,14 @@ function C:onTrafficTick(dt)
     else
       self.validTargets[id] = nil
     end
+    ::continue::
   end
 
   local targetVeh = self.targetId and gameplay_traffic.getTrafficData()[self.targetId]
-  if self.veh.isAi and targetVeh and self.state ~= 'disabled' and self.veh.state == 'active' then
-    if self.flags.pursuit then
-      if self.driveInLane and self.state ~= 'flee' and (self.veh.speed <= 1 or self.flags.targetVisible) then -- use all available lanes and racing lines
-        -- TODO: this is a hack; we should enable the vehicle AI to naturally overtake traffic in lane mode
-        getObjectByID(self.veh.id):queueLuaCommand('ai.driveInLane("off")')
-        self.driveInLane = false
-      end
-
-      if self.validTargets[self.targetId] and self.validTargets[self.targetId].interDist <= 2500 then -- within 50 m of focus point of police vehicle
-        self.avoidSpeed = self.avoidSpeed or 40
-        if self.veh.speed >= 8 and targetVeh.speed >= 8 and self.veh.speed + targetVeh.speed >= self.avoidSpeed
-        and targetVeh.driveVec:dot(self.veh.driveVec) <= -0.707 and (targetVeh.pos - self.veh.pos):normalized():dot(self.veh.driveVec) >= 0.707 then
-          if self.state == 'chase' then
-            self:setAction('avoidTarget') -- dodge target vehicle to avoid a head on collision
-            self.actionTimer = 3
-          end
-        end
-      end
-    end
-
-    if self.veh.damage > self.veh.damageLimits[3] then -- wrecked self during pursuit
-      self:setAction('disabled')
-      if self.flags.pursuit and self.veh.pos:squaredDistance(targetVeh.pos) <= 400 then
-        targetVeh.pursuit.policeWrecks = targetVeh.pursuit.policeWrecks + 1
-      end
-    end
-  end
-
-  if self.enableTrafficSignalsChange and self.veh.speed >= 6 and next(map.objects[self.veh.id].states) then -- lightbar triggers all traffic lights to change to the red state
-    if map.objects[self.veh.id].states.lightbar then
-      self:freezeTrafficSignals(true)
-    else
-      if self.flags.freezeSignals then
-        self:freezeTrafficSignals(false)
-      end
-    end
-  else
-    if self.flags.freezeSignals then
-      self:freezeTrafficSignals(false)
-    end
-  end
 end
 
 function C:onUpdate(dt, dtSim)
-  local targetVeh = self.targetId and gameplay_traffic.getTrafficData()[self.targetId]
-
-  if self.veh.isAi and self.state ~= 'disabled' and self.sirenTimer ~= -1 then -- siren pulse logic
-    if self.sirenTimer <= 0 then
-      if self.flags.pursuit and targetVeh and targetVeh.pursuit.mode >= 1 then
-        local minSpeed = targetVeh.pursuit.initialSpeed or 0
-        if targetVeh.pursuit.timers.main >= 8 or targetVeh.speed >= minSpeed + 5 then -- target is still driving, or target gained speed
-          getObjectByID(self.veh.id):queueLuaCommand('electrics.set_lightbar_signal(2)') -- fully turn on lights and sirens
-          self.sirenTimer = -1
-        else
-          if targetVeh.speed >= 2.5 then -- target is not fully stopped yet
-            self.veh:useSiren(0.5 + math.random()) -- pulse lights and sirens
-            self.sirenTimer = 2 + math.random() * 2
-          end
-        end
-      else
-        self.sirenTimer = -1
-      end
-    else
-      self.sirenTimer = self.sirenTimer - dt
-    end
-  end
-
-  if self.cooldownTimer <= 0 then
-    if self.cooldownTimer ~= -1 then
-      self:onRefresh()
-    end
-  else
-    self.flags.cooldown = 1 -- force sets flag while cooldown is active
-    self.cooldownTimer = self.cooldownTimer - dt
-  end
-
-  if not self.flags.pursuit or self.state == 'none' or self.state == 'disabled' then return end
-  if not targetVeh or (targetVeh and not targetVeh.role.flags.flee) then
-    self:resetAction()
-    return
-  end
-
-  if self.veh.isAi then
-    local distSq = self.veh.pos:squaredDistance(targetVeh.pos)
-    local brakeDistSq = square(self.veh:getBrakingDistance(self.veh.speed, 1) + 20)
-    local targetVisible = self.validTargets[self.targetId or 0] and self.validTargets[self.targetId].visible
-
-    if self.actionTimer > 0 then
-      self.actionTimer = self.actionTimer - dtSim
-    end
-
-    if self.flags.pursuit and self.state ~= 'none' and self.state ~= 'disabled' and self.veh.vars.aiMode == 'traffic' then
-      if self.flags.roadblock then
-        if targetVeh.pursuit.timers.evadeValue >= 0.5 or targetVeh.vel:dot((targetVeh.pos - targetVeh.pursuit.roadblockPos):normalized()) >= 9 then
-          self:setAction('chaseTarget') -- exit roadblock mode
-          self.flags.roadblock = nil
-        end
-      else
-        local minSpeed = (4 - self.targetPursuitMode) * 3
-        if self.targetPursuitMode < 3 and targetVisible and targetVeh.speed <= minSpeed and self.veh.speed >= 8 then
-          if self.state == 'chase' and distSq <= brakeDistSq and targetVeh.driveVec:dot(targetVeh.pos - self.veh.pos) > 0 then -- pull over near target vehicle
-            self:setAction('pullOver')
-            self.actionTimer = gameplay_police.getPursuitVars().arrestTime + 5
-          end
-        else
-          if self.state == 'pullOver' and (not targetVisible or targetVeh.speed > minSpeed) then
-            self.actionTimer = 0
-          end
-        end
-
-        if (self.state == 'flee' or self.state == 'pullOver') and self.actionTimer <= 0 then -- time out for other actions
-          self:setAction('chaseTarget')
-        end
-      end
-    end
-  end
 end
 
 return function(...) return require('/lua/ge/extensions/gameplay/traffic/baseRole')(C, ...) end
+
