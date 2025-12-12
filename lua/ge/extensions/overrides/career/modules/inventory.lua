@@ -523,6 +523,7 @@ local function updatePartConditions(vehId, inventoryId, callback)
   end
   if not veh then
     log("E", "", "Couldnt find vehicle object to get part conditions")
+    if callback then callback() end
     return
   end
 
@@ -1070,6 +1071,8 @@ local function getVehicleUiData(inventoryId, inventoryIdsInGarage)
   local vehicleData = deepcopy(vehicles[inventoryId])
   if not vehicleData then return end
   local garage = getClosestGarage()
+  local currentGarageId = garage and garage.id
+  local currentGarageSpace = currentGarageId and career_modules_garageManager.isGarageSpace(currentGarageId) or {false, 0}
   
   if not inventoryIdsInGarage then
     inventoryIdsInGarage = getVehiclesInGarage(getClosestGarage())
@@ -1093,6 +1096,9 @@ local function getVehicleUiData(inventoryId, inventoryIdsInGarage)
   end
 
   vehicleData.mileage = M.setMileage(inventoryId)
+  vehicleData.location = vehicleData.location or currentGarageId
+  vehicleData.niceLocation = vehicleData.niceLocation or (vehicleData.location and career_modules_garageManager.garageIdToName(vehicleData.location)) or "Storage"
+  vehicleData.atCurrentGarage = vehicleData.location == currentGarageId
 
   if inventoryIdToVehId[inventoryId] then
     local vehObj = getObjectByID(inventoryIdToVehId[inventoryId])
@@ -1132,7 +1138,7 @@ local function getVehicleUiData(inventoryId, inventoryIdsInGarage)
   vehicleData.favoritePermission = career_modules_permissions.getStatusForTag("vehicleFavorite", {inventoryId = inventoryId})
   vehicleData.storePermission = career_modules_permissions.getStatusForTag("vehicleStoring", {inventoryId = inventoryId})
   vehicleData.storePermission.allow = vehicleData.storePermission.allow and (career_modules_garageManager.isGarageSpace(garage.id)[1] or M.getVehicleLocation(inventoryId) == garage.id)
-  vehicleData.deliverPermission = { allow = (career_modules_garageManager.isGarageSpace(garage.id)[1] and vehicleData.inStorage and vehicleData.location ~= garage.id)}
+  vehicleData.deliverPermission = { allow = (currentGarageSpace[1] and vehicleData.location ~= currentGarageId)}
   vehicleData.retrievePermission = { allow = (vehicleData.inStorage and vehicleData.location == garage.id)}
   vehicleData.licensePlateChangePermission = career_modules_permissions.getStatusForTag({"vehicleLicensePlate", "vehicleModification"}, {inventoryId = inventoryId})
   vehicleData.returnLoanerPermission = career_modules_permissions.getStatusForTag("returnLoanedVehicle", {inventoryId = inventoryId})
@@ -1157,7 +1163,9 @@ local function sendDataToUi()
   data.chooseButtonsData = chooseButtonsData
   data.buttonsActive = buttonsActive
 
-  local inventoryIdsInGarage = getVehiclesInGarage(getClosestGarage())
+  local closestGarage = getClosestGarage()
+  local closestGarageId = closestGarage and closestGarage.id
+  local inventoryIdsInGarage = getVehiclesInGarage(closestGarage)
 
   for inventoryId, vehicle in pairs(vehicles) do
     data.vehicles[tostring(inventoryId)] = getVehicleUiData(inventoryId, inventoryIdsInGarage)
@@ -1165,6 +1173,12 @@ local function sendDataToUi()
 
   data.numberOfFreeSlots = getNumberOfFreeSlots()
   data.originComputerId = originComputerId
+  data.currentGarageId = closestGarageId
+  if closestGarageId then
+    local spaceInfo = career_modules_garageManager.isGarageSpace(closestGarageId)
+    data.currentGarageHasSpace = spaceInfo[1]
+    data.currentGarageFreeSlots = spaceInfo[2]
+  end
 
   if not career_modules_linearTutorial.getTutorialFlag("purchasedFirstCar") then
     data.tutorialActive = true
@@ -1276,7 +1290,7 @@ local function openMenu(_chooseButtonsData, header, _buttonsActive)
   chooseButtonsData = _chooseButtonsData or {{}}
   for _, buttonData in ipairs(chooseButtonsData) do
     buttonData.buttonText = buttonData.buttonText or "Choose Vehicle"
-    if buttonData.repairRequired == nil then buttonData.repairRequired = true end
+    if buttonData.repairRequired == nil then buttonData.repairRequired = false end
     if buttonData.insuranceRequired == nil then buttonData.insuranceRequired = false end
     if buttonData.ownedRequired == nil then buttonData.ownedRequired = false end
     buttonData.callback = buttonData.callback or function() end
@@ -1339,6 +1353,7 @@ local function deliverAndReplace(inventoryId)
   M.deliverVehicle(inventoryId, 5000)
   local closestGarage = getClosestGarage()
   M.moveVehicleToGarage(inventoryId, closestGarage.id)
+  sendDataToUi()
 end
 
 local function openMenuFromComputer(_originComputerId)
@@ -1358,6 +1373,13 @@ local function openMenuFromComputer(_originComputerId)
         insuranceRequired = true,
         requiredOtherVehicleInGarage = true,
         requireAtCurrentGarage = true
+      },
+      {
+        callback = function(inventoryId) M.deliverVehicle(inventoryId, 5000) end,
+        buttonText = "Deliver",
+        insuranceRequired = true,
+        requiredVehicleNotInGarage = true,
+        requireAtDifferentGarage = true
       },
       {
         callback = function(inventoryId) deliverAndReplace(inventoryId) end,
@@ -1898,6 +1920,7 @@ M.deliverVehicle = function(id, money)
   career_modules_payment.pay(price, {label = string.format("Delivering vehicle to garage"), tags = {"delivery"}})
   delayVehicleAccess(id, 120, "delivery")
   M.storeVehicle(id)
+  sendDataToUi()
 end
 
 M.storeVehicle = function(id)
