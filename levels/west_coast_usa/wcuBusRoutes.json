@@ -1,0 +1,66 @@
+{
+  "routes": {
+    "residential_loop": {
+      "name": "Residential Loop",
+      "stops": [
+        "wcu_bs_12",
+        "wcu_bs_06",
+        "wcu_bs_05",
+        "wcu_bs_09_b",
+        "wcu_bs_11_b",
+        "wcu_bs_18_b",
+        "wcu_bs_22_b",
+        "wcu_bs_19",
+        "wcu_bs_14",
+        "wcu_bs_01",
+        "wcu_bs_03_b",
+        "wcu_bs_04_b",
+        "wcu_bs_17_b",
+        "wcu_bs_20_b",
+        "wcu_bs_22",
+        "wcu_bs_15",
+        "wcu_bs_12_b"
+      ]
+    },
+    "business_loop": {
+      "name": "Business Loop",
+      "stops": [
+        "wcu_bs_12",
+        "wcu_bs_06",
+        "wcu_bs_03",
+        "wcu_bs_01_b",
+        "wcu_bs_04_b",
+        "wcu_bs_10_b",
+        "wcu_bs_08",
+        "wcu_bs_07_b",
+        "wcu_bs_04",
+        "wcu_bs_06_b",
+        "wcu_bs_19_b",
+        "wcu_bs_20",
+        "wcu_bs_16",
+        "wcu_bs_17_b",
+        "wcu_bs_15",
+        "wcu_bs_12_b"
+      ]
+    },
+    "san_amaro_loop": {
+      "name": "San Amaro Loop",
+      "stops": [
+        "wcu_bs_12",
+        "wcu_bs_13",
+        "wcu_bs_02",
+        "wcu_bs_21_b",
+        "wcu_bs_23",
+        "wcu_bs_24",
+        "wcu_bs_25",
+        "wcu_bs_28",
+        "wcu_bs_27_b",
+        "wcu_bs_26",
+        "wcu_bs_02_b",
+        "wcu_bs_13_b",
+        "wcu_bs_12_b"
+      ]
+    }
+  }
+}
+

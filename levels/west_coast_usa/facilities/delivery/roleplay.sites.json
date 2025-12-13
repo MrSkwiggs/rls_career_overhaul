@@ -1,6 +1,6 @@
 {
   "description":"Description of these Sites. Contains Locations, Zones, and Parking Spots.",
-  "dir":"/mods/unpacked/wcusa_emt/levels/west_coast_usa/facilities/delivery/",
+  "dir":"/levels/west_coast_usa/facilities/delivery/",
   "filename":"roleplay.sites.json",
   "locations":{},
   "name":"roleplay.sites.json",
@@ -19,7 +19,7 @@
       },
       "isMultiSpot":false,
       "name":"Hospital Entrance",
-      "oldId":9520,
+      "oldId":7032,
       "pos":[
         -231.44441223145,
         437.36383056641,
@@ -55,7 +55,7 @@
       },
       "isMultiSpot":false,
       "name":"paramedicWorkParking",
-      "oldId":9521,
+      "oldId":7033,
       "pos":[
         -291.77017211914,
         461.49496459961,
@@ -91,7 +91,7 @@
       },
       "isMultiSpot":false,
       "name":"ambulanceLoaner",
-      "oldId":9522,
+      "oldId":7034,
       "pos":[
         -278.64749145508,
         451.42492675781,
@@ -107,6 +107,78 @@
         2.5,
         6,
         3
+      ],
+      "spotAmount":1,
+      "spotDirection":"Left",
+      "spotOffset":0,
+      "spotRotation":0
+    },
+    {
+      "color":[
+        1,
+        1,
+        1
+      ],
+      "customFields":{
+        "names":{},
+        "tags":{},
+        "types":{},
+        "values":{}
+      },
+      "isMultiSpot":false,
+      "name":"busWork_parking",
+      "oldId":7035,
+      "pos":[
+        -403.33541870117,
+        493.94677734375,
+        96.418762207031
+      ],
+      "rot":[
+        -0.0028528629904713,
+        0.0040133722838959,
+        0.38549600949908,
+        0.92269624780119
+      ],
+      "scl":[
+        2.5,
+        6,
+        3
+      ],
+      "spotAmount":1,
+      "spotDirection":"Left",
+      "spotOffset":0,
+      "spotRotation":0
+    },
+    {
+      "color":[
+        1,
+        1,
+        1
+      ],
+      "customFields":{
+        "names":{},
+        "tags":{},
+        "types":{},
+        "values":{}
+      },
+      "isMultiSpot":false,
+      "name":"busLoaner_parking",
+      "oldId":7036,
+      "pos":[
+        -402.74322509766,
+        455.15872192383,
+        96.086502075195
+      ],
+      "rot":[
+        -0.0036536129191518,
+        0.00015599475591443,
+        -0.38307911157608,
+        0.92370826005936
+      ],
+      "scl":[
+        4,
+        14,
+        8
       ],
       "spotAmount":1,
       "spotDirection":"Left",

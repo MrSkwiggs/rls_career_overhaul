@@ -27,6 +27,32 @@
       "logisticTypesReceived": [],
       "logisticGenerators": []
     },
-    
+    {
+      "id": "busWork",
+      "name": "Central Station",
+      "description": "Work as a bus driver to earn money. Try to return with no damage for bonus xp.",
+      "associatedOrganization": "busWork",
+      "preview": "central_station.png",
+      "manualAccessPoints": [
+        {
+          "psName": "busWork_parking",
+          "isInspectSpot": true,
+          "logisticTypesProvided": [],
+          "logisticTypesReceived": []
+        },
+        {
+          "psName": "busLoaner_parking",
+          "isInspectSpot": false,
+          "logisticTypesProvided": [],
+          "logisticTypesReceived": [],
+          "loanerTrailerPriority": 1,
+          "loanerNonTrailerPriority": 1
+        }
+      ],
+      "sitesFile": "roleplay.sites.json",
+      "logisticTypesProvided": [],
+      "logisticTypesReceived": [],
+      "logisticGenerators": []
+    }
   ]
 }

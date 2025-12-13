@@ -44,6 +44,10 @@ local boardingCoroutine       = nil
 -- Final stop name for current route
 local currentFinalStopName    = nil
 
+-- Current route info (to prevent route changes mid-route)
+local currentRouteName        = nil
+local currentRouteKey         = nil
+
 -- forward declaration 
 local isBus
 
@@ -202,6 +206,8 @@ local function endRoute(reason, payout)
   dwellTimer = nil
   routeInitialized = false
   currentFinalStopName = nil
+  currentRouteName = nil
+  currentRouteKey = nil
   core_groundMarkers.resetAll()
 
   local msg = "Shift ended."
@@ -266,9 +272,43 @@ end
 -- ================================
 -- ROUTE INITIALIZATION
 -- ================================
+local function loadRoutesFromJSON()
+  local currentMap = getCurrentLevelIdentifier()
+  if not currentMap then return nil end
+
+  -- Map-specific route file paths
+  local routeFiles = {
+    ["west_coast_usa"] = "levels/west_coast_usa/wcuBusRoutes.json",
+    ["jungle_rock_island"] = "levels/jungle_rock_island/jriBusRoutes.json"
+  }
+
+  local routeFile = routeFiles[currentMap]
+  if not routeFile then return nil end
+
+  local routeData = jsonReadFile(routeFile)
+  if not routeData or not routeData.routes then return nil end
+
+  return routeData.routes
+end
+
 local function initRoute()
+  -- Don't reinitialize if a route is already active
+  if currentRouteActive and routeInitialized then
+    print("[bus] Route already active, skipping reinitialization")
+    return
+  end
+
   stopTriggers = {}
-  -- Collect any trigger named *_bs_## or *_bs_##_b so it works on any map prefix.
+  
+  -- Load routes from JSON
+  local routes = loadRoutesFromJSON()
+  if not routes then
+    ui_message("No route configuration found for this map.", 5, "error", "error")
+    return
+  end
+
+  -- Collect all bus stop triggers on the map
+  local allTriggers = {}
   local triggerObjects = scenetree.findClassObjects("BeamNGTrigger") or {}
   for _, obj in ipairs(triggerObjects) do
     local trigger = obj
@@ -276,103 +316,78 @@ local function initRoute()
     if trigger then
       local name = trigger:getName() or ""
       if name:match("_bs_%d+$") or name:match("_bs_%d+_b$") then
-        table.insert(stopTriggers, trigger)
+        allTriggers[name] = trigger
       end
     end
   end
-  if #stopTriggers == 0 then
+
+  if not next(allTriggers) then
     ui_message("No bus stops found on this map.", 5, "error", "error")
     return
   end
 
-  -- Map-specific final stop names
-  local currentMap = getCurrentLevelIdentifier()
-  local finalStopNames = {
-    ["west_coast_usa"] = "wcu_bs_21",
-    ["jungle_rock_island"] = "jri_bs_16"
-  }
-  local finalStopName = finalStopNames[currentMap]
-
-  if not finalStopName then
-    ui_message(string.format("Map '%s' not configured for bus routes.", currentMap or "unknown"), 5, "error", "error")
+  -- Select a random route
+  local routeKeys = {}
+  for k, _ in pairs(routes) do
+    table.insert(routeKeys, k)
+  end
+  if #routeKeys == 0 then
+    ui_message("No routes available in configuration.", 5, "error", "error")
     return
   end
 
-  -- Find the final stop by exact name match
-  local finalStop = nil
-  local availableStops = {}
-  for i, t in ipairs(stopTriggers) do
-    local name = t:getName() or ""
-    if name == finalStopName then
-      finalStop = t
+  local selectedRouteKey = routeKeys[math.random(#routeKeys)]
+  local selectedRoute = routes[selectedRouteKey]
+  local routeName = selectedRoute.name or selectedRouteKey
+  
+  -- Store the selected route to prevent changes
+  currentRouteName = routeName
+  currentRouteKey = selectedRouteKey
+  
+  print(string.format("[bus] Selected route: %s (%s) with %d stops", routeName, selectedRouteKey, #selectedRoute.stops))
+
+  -- Build route from JSON stop names
+  stopTriggers = {}
+  local missingStops = {}
+  for _, stopName in ipairs(selectedRoute.stops) do
+    local trigger = allTriggers[stopName]
+    if trigger then
+      table.insert(stopTriggers, trigger)
     else
-      -- Exclude the final stop and any stop 16 from available stops
-      local stopNum = tonumber(string.match(name, "%d+")) or 0
-      if stopNum ~= 16 then
-        table.insert(availableStops, t)
-      end
+      table.insert(missingStops, stopName)
     end
   end
 
-  if not finalStop then
-    ui_message(string.format("Final stop '%s' not found. Route cannot be initialized.", finalStopName), 5, "error", "error")
+  if #stopTriggers == 0 then
+    ui_message("No valid stops found for selected route.", 5, "error", "error")
     return
   end
 
-  -- Randomize available stops using Fisher-Yates shuffle
-  for i = #availableStops, 2, -1 do
-    local j = math.random(i)
-    availableStops[i], availableStops[j] = availableStops[j], availableStops[i]
+  if #missingStops > 0 then
+    print(string.format("[bus] Warning: %d stops not found: %s", #missingStops, table.concat(missingStops, ", ")))
   end
 
-  -- Limit route to max 16 stops: up to 15 intermediate stops + final stop
-  local maxIntermediateStops = math.min(15, #availableStops)
-  local selectedStops = {}
-  
-  -- Select up to 15 stops from randomized available stops
-  for i = 1, maxIntermediateStops do
-    table.insert(selectedStops, availableStops[i])
-  end
-
-  -- Build final route: selected stops + final stop
-  stopTriggers = {}
-  for _, stop in ipairs(selectedStops) do
-    table.insert(stopTriggers, stop)
-  end
-  table.insert(stopTriggers, finalStop)  -- Always end at map-specific final stop
-
-  -- Store final stop name for use in processStop
-  currentFinalStopName = finalStopName
+  -- The final stop is the last stop in the route
+  local finalStopTrigger = stopTriggers[#stopTriggers]
+  currentFinalStopName = finalStopTrigger:getName() or ""
 
   local vehicle = be:getPlayerVehicle(0)
   if not vehicle then return end
 
-  local vehiclePos = vehicle:getPosition()
-  local nearestIndex, nearestDist = 1, math.huge
-  -- Find nearest stop from the selected stops (excluding final stop)
-  for i, t in ipairs(stopTriggers) do
-    local name = t:getName() or ""
-    if name ~= finalStopName then  -- Don't start at final stop
-      local d = (t:getPosition() - vehiclePos):length()
-      if d < nearestDist then
-        nearestDist, nearestIndex = d, i
-      end
-    end
-  end
-
-  currentStopIndex, consecutiveStops, dwellTimer, accumulatedReward, totalStopsCompleted =
-      nearestIndex, 0, nil, 0, 0
+  -- Always start from the first stop of the route
+  currentStopIndex = 1
+  consecutiveStops, dwellTimer, accumulatedReward, totalStopsCompleted = 0, nil, 0, 0
   currentRouteActive, routeInitialized, passengersOnboard, routeCooldown = true, true, 0, 0
   tipTotal, roughRide, lastVelocity = 0, 0, nil
 
   local startStopName = stopTriggers[currentStopIndex]:getName() or "Unknown"
   core_groundMarkers.setPath(stopTriggers[currentStopIndex]:getPosition())
   ui_message(
-      string.format("Bus route started at %s. Route has %d stops, ending at %s.", startStopName, #stopTriggers, finalStopName),
+      string.format("Bus route '%s' started. Proceed to %s. Route has %d stops.", routeName, startStopName, #stopTriggers),
       6, "info", "info")
 
   -- Build route data for the bus controller 
-  local routeData = {routeId = "RLS", routeID = "RLS", direction = "RLS Express", tasklist = {}}
+  local routeData = {routeId = "RLS", routeID = "RLS", direction = routeName, tasklist = {}}
   for i, t in ipairs(stopTriggers) do
     local label
     if i == 1 then
@@ -395,9 +410,22 @@ end
 local function processStop(vehicle, dtSim)
     if not currentRouteActive or not currentStopIndex then return end
     if routeCooldown > 0 then return end
+    if not stopTriggers or #stopTriggers == 0 then return end
+    if currentStopIndex < 1 or currentStopIndex > #stopTriggers then return end
 
     local trigger = getNextTrigger()
     if not trigger then return end
+
+    -- Verify this is actually the correct stop by checking the trigger name matches what we expect
+    local expectedStopName = nil
+    if stopTriggers[currentStopIndex] then
+        expectedStopName = stopTriggers[currentStopIndex]:getName()
+    end
+    local actualTriggerName = trigger:getName()
+    if expectedStopName and actualTriggerName ~= expectedStopName then
+        -- Wrong trigger, don't process
+        return
+    end
 
     local dist = (vehicle:getPosition() - trigger:getPosition()):length()
 
@@ -634,6 +662,12 @@ local function processStop(vehicle, dtSim)
 
             else
                 currentStopIndex = currentStopIndex + 1
+                if currentStopIndex > #stopTriggers then
+                    print(string.format("[bus] ERROR: currentStopIndex %d exceeds route length %d", currentStopIndex, #stopTriggers))
+                    currentStopIndex = #stopTriggers
+                end
+                local nextStopName = stopTriggers[currentStopIndex] and stopTriggers[currentStopIndex]:getName() or "Unknown"
+                print(string.format("[bus] Moving to next stop: index %d, name %s", currentStopIndex, nextStopName))
                 showNextStopMarker()
                 ui_message(string.format("Proceed to Stop %02d.", currentStopIndex), 4, "info", "bus_next")
             end
@@ -663,10 +697,17 @@ function M.onVehicleSwitched(oldId, newId)
     end
 
     if newVeh and isBus(newVeh) then
-        activeBusID = newId
-        ui_message("Shift started. Welcome in! Drive careful out there.", 10, "info", "info")
-        retrievePartsTree()
-        initRoute()
+        -- Only initialize route if we're not already in an active route
+        if not currentRouteActive or not routeInitialized then
+            activeBusID = newId
+            ui_message("Shift started. Welcome in! Drive careful out there.", 10, "info", "info")
+            retrievePartsTree()
+            initRoute()
+        else
+            -- Route already active, just update the active bus ID
+            activeBusID = newId
+            print("[bus] Route already active, not reinitializing")
+        end
     end
 end
 
