@@ -242,6 +242,7 @@ export default {
     removeVehicle: id => Number,
     deliverVehicle: (id, money) => [Number, Number],
     storeVehicle: id => Number,
+    storeVehicleAtClosestGarage: id => Number,
   },
 
   career_modules_vehiclePerformance: {
@@ -352,7 +353,7 @@ export default {
     unloadCargoPopupClosed: () => {},
     moveMaterialFromUi: () => {},
     requestDropOffData: () => {},
-    confirmDropOffData: (data, facId, psPath) => [Any, Any, Boolean],
+    confirmDropOffData: (data, facId, psPath) => [Any, Any, Any],
     dropOffPopupClosed: mode => String,
     clearTransientMoveForCargo: cargoId => Number,
     clearTransientMovesForStorage: materialType => String,
