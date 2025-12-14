@@ -42,6 +42,7 @@ local sitesData = nil
 local sitesFilePath = nil
 local availableGroups = {}
 local selectedGroupIndex = 1
+local groupCache = {}
 
 local jobObjects = {
   truckID = nil,
@@ -50,6 +51,7 @@ local jobObjects = {
   activeGroup = nil,
   deferredTruckTargetPos = nil,
   loadingZoneTargetPos = nil,
+  truckSpawnQueued = false,
 }
 
 local uiAnim = { opacity = 0, yOffset = 50, pulse = 0, targetOpacity = 0 }
@@ -61,6 +63,12 @@ local jobOfferSuppressed = false
 local markerCleared = false
 local truckStoppedInLoading = false
 local isDispatching = false
+
+local payloadUpdateTimer = 0
+local anyZoneCheckTimer = 0
+local cachedInAnyLoadingZone = false
+local sitesLoadTimer = 0
+local groupCachePrecomputeQueued = false
 
 local function lerp(a, b, t) return a + (b - a) * t end
 
@@ -159,6 +167,35 @@ local function findOffRoadCentroid(zone, minRoadDist, maxPoints)
   return centroid
 end
 
+local function ensureGroupCache(group)
+  if not group or not group.secondaryTag then return nil end
+  local key = tostring(group.secondaryTag)
+  local cache = groupCache[key]
+  if not cache then
+    cache = {}
+    groupCache[key] = cache
+  end
+  return cache
+end
+
+local function ensureGroupRoadAdjacentPoint(group)
+  local cache = ensureGroupCache(group)
+  if not cache then return nil end
+  if group and group.loading and not cache.roadAdjacentPoint then
+    cache.roadAdjacentPoint = select(1, findRoadAdjacentPoint(group.loading))
+  end
+  return cache
+end
+
+local function ensureGroupOffRoadCentroid(group)
+  local cache = ensureGroupCache(group)
+  if not cache then return nil end
+  if group and group.loading and not cache.offRoadCentroid then
+    cache.offRoadCentroid = findOffRoadCentroid(group.loading, 5, 1000)
+  end
+  return cache
+end
+
 local function discoverGroups(sites)
   local groups = {}
   if not sites or not sites.sortedTags then return groups end
@@ -230,6 +267,20 @@ local function loadQuarrySites()
   sitesFilePath = fp
   availableGroups = discoverGroups(sitesData)
   selectedGroupIndex = math.min(selectedGroupIndex, math.max(#availableGroups, 1))
+
+  if not groupCachePrecomputeQueued and #availableGroups > 0 then
+    groupCachePrecomputeQueued = true
+    core_jobsystem.create(function(job)
+      for _, g in ipairs(availableGroups) do
+        ensureGroupRoadAdjacentPoint(g)
+        job.sleep(0.01)
+      end
+      for _, g in ipairs(availableGroups) do
+        ensureGroupOffRoadCentroid(g)
+        job.sleep(0.01)
+      end
+    end)
+  end
 end
 
 local function clearProps()
@@ -249,6 +300,7 @@ local function cleanupJob(deleteTruck)
   truckStoppedInLoading = false
   isDispatching = false
   jobOfferSuppressed = true
+  payloadUpdateTimer = 0
 
   clearProps()
 
@@ -263,6 +315,7 @@ local function cleanupJob(deleteTruck)
   jobObjects.activeGroup = nil
   jobObjects.deferredTruckTargetPos = nil
   jobObjects.loadingZoneTargetPos = nil
+  jobObjects.truckSpawnQueued = false
 
   currentState = STATE_IDLE
 end
@@ -283,7 +336,12 @@ local function spawnJobMaterials()
   local materialType = jobObjects.materialType or "rocks"
   local zone = jobObjects.activeGroup.loading
 
-  local basePos = findOffRoadCentroid(zone, 5, 1000)
+  local cache = ensureGroupOffRoadCentroid(jobObjects.activeGroup)
+  local basePos = cache and cache.offRoadCentroid or nil
+  if not basePos then
+    basePos = findOffRoadCentroid(zone, 5, 1000)
+    if cache then cache.offRoadCentroid = basePos end
+  end
   if not basePos then
     log('W', 'RLS_Quarry', 'No off-road point found inside loading zone; not spawning props.')
     ui_message("No off-road spawn point found for materials.", 5, "warning")
@@ -357,6 +415,66 @@ local function spawnTruckAtLocation(location, materialType, targetPos)
   return id
 end
 
+local function calculateSpawnTransformForLocation(spawnPos, targetPos)
+  local dir = vec3(0, 1, 0)
+
+  local targetDir = nil
+  if targetPos then
+    targetDir = vec3(targetPos) - spawnPos
+    targetDir.z = 0
+    if targetDir:length() > 0 then
+      targetDir = targetDir:normalized()
+    else
+      targetDir = nil
+    end
+  end
+
+  local info = findClosestRoadInfo(spawnPos)
+  if info then
+    local roadDir = info.dir
+    if targetDir then
+      if (-roadDir):dot(targetDir) > roadDir:dot(targetDir) then
+        roadDir = -roadDir
+      end
+    end
+    spawnPos, dir = calculateLanePosition(info.pos, roadDir)
+  else
+    spawnPos.z = core_terrain.getTerrainHeight(spawnPos)
+    if targetDir then dir = targetDir end
+  end
+
+  return calculateTaxiTransform(spawnPos, dir)
+end
+
+local function spawnTruckForGroup(group, materialType, targetPos)
+  if not group or not group.spawn or not group.spawn.pos then return nil end
+
+  local cache = ensureGroupCache(group)
+  local key = targetPos and string.format("%.2f,%.2f,%.2f", targetPos.x, targetPos.y, targetPos.z) or "nil"
+  if cache and cache.spawnTransformKey ~= key then
+    cache.spawnPos, cache.spawnRot = nil, nil
+    cache.spawnTransformKey = key
+  end
+
+  local pos, rot
+  if cache and cache.spawnPos and cache.spawnRot then
+    pos, rot = cache.spawnPos, cache.spawnRot
+  else
+    pos, rot = calculateSpawnTransformForLocation(vec3(group.spawn.pos), targetPos)
+    if cache then
+      cache.spawnPos, cache.spawnRot = pos, rot
+      cache.spawnTransformKey = key
+    end
+  end
+
+  local truckModel = (materialType == "marble") and Config.MarbleTruckModel or Config.RockTruckModel
+  local truckConfig = (materialType == "marble") and Config.MarbleTruckConfig or Config.RockTruckConfig
+
+  local truck = core_vehicles.spawnNewVehicle(truckModel, { pos = pos, rot = rot, config = truckConfig, autoEnterVehicle = false })
+  if not truck then return nil end
+  return truck:getID()
+end
+
 local function driveTruckToPoint(truckId, targetPos)
   local truck = be:getObjectByID(truckId)
   if not truck then return end
@@ -374,6 +492,7 @@ local function stopTruck(truckId)
 end
 
 local function calculateTruckPayload()
+  if #rockPileQueue == 0 then return 0 end
   if not jobObjects.truckID then return 0 end
   local truck = be:getObjectByID(jobObjects.truckID)
   if not truck then return 0 end
@@ -546,14 +665,24 @@ local function drawUI(dt)
         core_groundMarkers.setPath(vec3(jobObjects.activeGroup.loading.center))
 
         local targetPos = nil
-        if jobObjects.activeGroup and jobObjects.activeGroup.loading then
+        local cache = ensureGroupRoadAdjacentPoint(jobObjects.activeGroup)
+        if cache and cache.roadAdjacentPoint then
+          targetPos = cache.roadAdjacentPoint
+        elseif jobObjects.activeGroup and jobObjects.activeGroup.loading then
           targetPos = select(1, findRoadAdjacentPoint(jobObjects.activeGroup.loading))
+          if cache then cache.roadAdjacentPoint = targetPos end
+        end
+        if cache and jobObjects.activeGroup and jobObjects.activeGroup.spawn and jobObjects.activeGroup.spawn.pos then
+          local key = targetPos and string.format("%.2f,%.2f,%.2f", targetPos.x, targetPos.y, targetPos.z) or "nil"
+          cache.spawnPos, cache.spawnRot = calculateSpawnTransformForLocation(vec3(jobObjects.activeGroup.spawn.pos), targetPos)
+          cache.spawnTransformKey = key
         end
 
         spawnJobMaterials()
         jobObjects.deferredTruckTargetPos = targetPos
         jobObjects.loadingZoneTargetPos = targetPos
         jobObjects.truckID = nil
+        jobObjects.truckSpawnQueued = false
 
         Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_Start_01')
         ui_message("Contract accepted. Drive to the loading zone to dispatch the truck.", 5, "info")
@@ -672,12 +801,61 @@ local function isPlayerInAnyLoadingZone(playerPos)
   return false
 end
 
+local function getInAnyLoadingZoneThrottled(playerPos, dt)
+  anyZoneCheckTimer = anyZoneCheckTimer + dt
+  if anyZoneCheckTimer >= 0.25 then
+    cachedInAnyLoadingZone = isPlayerInAnyLoadingZone(playerPos)
+    anyZoneCheckTimer = 0
+  end
+  return cachedInAnyLoadingZone
+end
+
+local function queueTruckSpawn(group, materialType, targetPos)
+  if jobObjects.truckSpawnQueued then return end
+  jobObjects.truckSpawnQueued = true
+  core_jobsystem.create(function(job)
+    job.sleep(0.05)
+    if currentState ~= STATE_DRIVING_TO_SITE then
+      jobObjects.truckSpawnQueued = false
+      return
+    end
+    if not markerCleared then
+      jobObjects.truckSpawnQueued = false
+      return
+    end
+    if jobObjects.truckID then return end
+    if not group or not group.spawn then
+      jobObjects.truckSpawnQueued = false
+      return
+    end
+
+    local truckId = spawnTruckForGroup(group, materialType, targetPos)
+    if truckId then
+      jobObjects.truckID = truckId
+      driveTruckToPoint(truckId, targetPos)
+      jobObjects.deferredTruckTargetPos = nil
+    else
+      jobObjects.truckSpawnQueued = false
+    end
+  end)
+end
+
 local function onUpdate(dt)
-  loadQuarrySites()
+  if not sitesData then
+    sitesLoadTimer = sitesLoadTimer + dt
+    if sitesLoadTimer >= 1.0 then
+      loadQuarrySites()
+      sitesLoadTimer = 0
+    end
+  end
 
   drawWorkSiteMarker(dt)
   if currentState == STATE_LOADING then
-    jobObjects.currentLoadMass = calculateTruckPayload()
+    payloadUpdateTimer = payloadUpdateTimer + dt
+    if payloadUpdateTimer >= 0.25 then
+      jobObjects.currentLoadMass = calculateTruckPayload()
+      payloadUpdateTimer = 0
+    end
   end
   drawUI(dt)
 
@@ -685,7 +863,17 @@ local function onUpdate(dt)
   if not playerVeh then return end
 
   local playerPos = playerVeh:getPosition()
-  local inAnyZone = isPlayerInAnyLoadingZone(playerPos)
+  local inAnyZone = false
+  if currentState == STATE_IDLE or currentState == STATE_OFFER then
+    if currentState == STATE_OFFER or jobOfferSuppressed or playerVeh:getJBeamFilename() == "wl40" then
+      inAnyZone = getInAnyLoadingZoneThrottled(playerPos, dt)
+    end
+  else
+    local g = jobObjects.activeGroup
+    if g and g.loading and g.loading.containsPoint2D then
+      inAnyZone = g.loading:containsPoint2D(playerPos)
+    end
+  end
 
   if currentState == STATE_IDLE then
     if jobOfferSuppressed and not inAnyZone then
@@ -718,12 +906,7 @@ local function onUpdate(dt)
     end
 
     if markerCleared and not jobObjects.truckID and jobObjects.deferredTruckTargetPos then
-      local truckId = spawnTruckAtLocation(group.spawn, jobObjects.materialType, jobObjects.deferredTruckTargetPos)
-      if truckId then
-        jobObjects.truckID = truckId
-        driveTruckToPoint(truckId, jobObjects.deferredTruckTargetPos)
-        jobObjects.deferredTruckTargetPos = nil
-      end
+      queueTruckSpawn(group, jobObjects.materialType, jobObjects.deferredTruckTargetPos)
     end
 
     if jobObjects.truckID and not truckStoppedInLoading then
@@ -766,8 +949,13 @@ local function onClientStartMission()
   sitesFilePath = nil
   availableGroups = {}
   selectedGroupIndex = 1
+  groupCache = {}
   cleanupJob(true)
   jobOfferSuppressed = false
+  anyZoneCheckTimer = 0
+  cachedInAnyLoadingZone = false
+  sitesLoadTimer = 0
+  groupCachePrecomputeQueued = false
 end
 
 local function onClientEndMission()
@@ -775,6 +963,8 @@ local function onClientEndMission()
   sitesData = nil
   sitesFilePath = nil
   availableGroups = {}
+  groupCache = {}
+  groupCachePrecomputeQueued = false
 end
 
 M.onUpdate = onUpdate
