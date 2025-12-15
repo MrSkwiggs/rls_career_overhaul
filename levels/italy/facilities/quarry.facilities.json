@@ -1,0 +1,24 @@
+{
+    "quarry": [
+        {
+            "name": "Starting Zone",
+            "site": "starter",
+            "material": "marble"
+        },
+        {
+            "name": "Zone B",
+            "site": "Zone B",
+            "material": "marble"
+        },
+        {
+            "name": "Zone C",
+            "site": "Zone C",
+            "material": "marble"
+        },
+        {
+            "name": "Zone D",
+            "site": "Zone D",
+            "material": "marble"
+        }
+    ]
+}

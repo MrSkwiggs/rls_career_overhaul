@@ -120,11 +120,14 @@ local jobObjects = {
   truckID = nil,
   currentLoadMass = 0,
   lastDeliveredMass = 0,
+  deliveredPropIds = nil,
   materialType = nil,
   activeGroup = nil,
   deferredTruckTargetPos = nil,
   loadingZoneTargetPos = nil,
   truckSpawnQueued = false,
+  truckSpawnPos = nil,
+  truckSpawnRot = nil,
 }
 
 local uiAnim = { opacity = 0, yOffset = 50, pulse = 0, targetOpacity = 0 }
@@ -302,336 +305,7 @@ local function checkContractCompletion()
   return (p and p.deliveredTons or 0) >= (ContractSystem.activeContract.requiredTons or math.huge)
 end
 
-local function beginActiveContractTrip()
-  local contract = ContractSystem.activeContract
-  if not contract or not contract.group then return false end
-  if isDispatching then return false end
-  isDispatching = true
-
-  jobObjects.materialType = contract.material
-  jobObjects.activeGroup = contract.group
-
-  markerCleared = false
-  truckStoppedInLoading = false
-  payloadUpdateTimer = 0
-
-  core_groundMarkers.setPath(vec3(jobObjects.activeGroup.loading.center))
-
-  local targetPos = nil
-  local cache = ensureGroupRoadAdjacentPoint(jobObjects.activeGroup)
-  if cache and cache.roadAdjacentPoint then
-    targetPos = cache.roadAdjacentPoint
-  elseif jobObjects.activeGroup and jobObjects.activeGroup.loading then
-    targetPos = select(1, findRoadAdjacentPoint(jobObjects.activeGroup.loading))
-    if cache then cache.roadAdjacentPoint = targetPos end
-  end
-  if cache and jobObjects.activeGroup and jobObjects.activeGroup.spawn and jobObjects.activeGroup.spawn.pos then
-    local key = targetPos and string.format("%.2f,%.2f,%.2f", targetPos.x, targetPos.y, targetPos.z) or "nil"
-    cache.spawnPos, cache.spawnRot = calculateSpawnTransformForLocation(vec3(jobObjects.activeGroup.spawn.pos), targetPos)
-    cache.spawnTransformKey = key
-  end
-
-  spawnJobMaterials()
-  jobObjects.deferredTruckTargetPos = targetPos
-  jobObjects.loadingZoneTargetPos = targetPos
-  jobObjects.truckID = nil
-  jobObjects.truckSpawnQueued = false
-
-  currentState = STATE_DRIVING_TO_SITE
-  isDispatching = false
-  return true
-end
-
-local function acceptContract(contractIndex)
-  local contract = ContractSystem.availableContracts[contractIndex]
-  if not contract then return end
-
-  ContractSystem.activeContract = contract
-  ContractSystem.contractProgress = {
-    deliveredTons = 0,
-    totalPaidSoFar = 0,
-    startTime = os.clock(),
-    deliveryCount = 0
-  }
-
-  if beginActiveContractTrip() then
-    Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_Start_01')
-    ui_message(string.format("Contract accepted: %s", contract.name), 5, "info")
-  end
-end
-
-local function abandonContract()
-  if not ContractSystem.activeContract then return end
-  ui_message(string.format("Contract abandoned! Penalty: $%d", Config.Contracts.AbandonPenalty or 0), 6, "warning")
-
-  local career = extensions.career_career
-  if career and career.isActive() then
-    local paymentModule = extensions.career_modules_payment
-    if paymentModule then
-      paymentModule.pay(-(Config.Contracts.AbandonPenalty or 0), {label = "Contract Abandonment"})
-    end
-  end
-
-  PlayerData.contractsFailed = (PlayerData.contractsFailed or 0) + 1
-  ContractSystem.activeContract = nil
-  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0}
-
-  cleanupJob(true)
-end
-
-local function failContract(penalty, message, msgType)
-  if not ContractSystem.activeContract then
-    cleanupJob(true)
-    return
-  end
-
-  penalty = penalty or 0
-  msgType = msgType or "warning"
-  if message then
-    ui_message(message, 5, msgType)
-  end
-
-  local career = extensions.career_career
-  if career and career.isActive() then
-    local paymentModule = extensions.career_modules_payment
-    if paymentModule and penalty ~= 0 then
-      paymentModule.pay(-math.abs(penalty), {label = "Contract Failure"})
-    end
-  end
-
-  PlayerData.contractsFailed = (PlayerData.contractsFailed or 0) + 1
-  ContractSystem.activeContract = nil
-  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0}
-
-  cleanupJob(true)
-end
-
-local function completeContract()
-  if not ContractSystem.activeContract then return end
-  local contract = ContractSystem.activeContract
-  local progress = ContractSystem.contractProgress or {}
-
-  local totalPay = contract.totalPayout or 0
-  if contract.paymentType == "progressive" then
-    totalPay = totalPay - (progress.totalPaidSoFar or 0)
-  end
-  if totalPay < 0 then totalPay = 0 end
-
-  local career = extensions.career_career
-  if career and career.isActive() then
-    local paymentModule = extensions.career_modules_payment
-    if paymentModule then
-      local xpReward = math.floor((contract.requiredTons or 0) * 10)
-      paymentModule.reward({
-        money = { amount = totalPay, canBeNegative = false },
-        labor = { amount = xpReward, canBeNegative = false }
-      }, { label = string.format("Contract: %s", contract.name), tags = {"gameplay", "mission", "reward"} })
-
-      Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_01')
-      ui_message(string.format("CONTRACT COMPLETE! Earned $%d", totalPay), 8, "success")
-    end
-  else
-    Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-    ui_message(string.format("SANDBOX: Contract payout: $%d", totalPay), 6, "success")
-  end
-
-  PlayerData.contractsCompleted = (PlayerData.contractsCompleted or 0) + 1
-  PlayerData.level = (PlayerData.level or 1) + 1
-
-  ContractSystem.activeContract = nil
-  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0}
-
-  cleanupJob(true)
-end
-
 local function lerp(a, b, t) return a + (b - a) * t end
-
-local function calculateTaxiTransform(position, direction)
-  local normal = vec3(0,0,1)
-  if map and map.surfaceNormal then normal = map.surfaceNormal(position, 1) end
-  local vecY = vec3(0, 1, 0)
-  if direction:length() == 0 then direction = vec3(0,1,0) end
-  local rotation = quatFromDir(vecY:rotated(quatFromDir(direction, normal)), normal)
-  return position, rotation
-end
-
-local function isPositionInPlayerView(position)
-  if not core_camera or not core_camera.getPosition or not core_camera.getForward then return false end
-  local camPos = core_camera.getPosition()
-  local viewDir = core_camera.getForward()
-  if not camPos or not viewDir then return false end
-  local dirToPos = (position - camPos):normalized()
-  if dirToPos:dot(viewDir) <= 0.3 then return false end
-  local dist = camPos:distance(position)
-  if castRayStatic then
-    return castRayStatic(camPos, dirToPos, dist) >= dist - 2
-  end
-  return true
-end
-
-local function interpolatePathPosition(currentSeg, nextSeg, distanceFromStart)
-  local segmentLength = nextSeg.distance - currentSeg.distance
-  if segmentLength <= 0 then return nil, nil end
-  local segmentProgress = (distanceFromStart - currentSeg.distance) / segmentLength
-  local roadCenterPos = vec3(
-    currentSeg.pos.x + (nextSeg.pos.x - currentSeg.pos.x) * segmentProgress,
-    currentSeg.pos.y + (nextSeg.pos.y - currentSeg.pos.y) * segmentProgress,
-    currentSeg.pos.z + (nextSeg.pos.z - currentSeg.pos.z) * segmentProgress
-  )
-  local drivingDirection = (currentSeg.pos - nextSeg.pos)
-  drivingDirection.z = 0
-  if drivingDirection:length() == 0 then drivingDirection = vec3(0, 1, 0) end
-  drivingDirection = drivingDirection:normalized()
-  return calculateLanePosition(roadCenterPos, drivingDirection)
-end
-
-local function findOptimalPositionOnPath(pathSegments, targetDistance)
-  if not pathSegments or #pathSegments < 2 then return nil, nil end
-  local totalPathLength = pathSegments[#pathSegments].distance
-  local distanceFromStart = math.max(0, totalPathLength - targetDistance)
-  local fallbackPos, fallbackDir = nil, nil
-
-  for i = 1, #pathSegments - 1 do
-    local currentSeg = pathSegments[i]
-    local nextSeg = pathSegments[i + 1]
-    if distanceFromStart >= currentSeg.distance and distanceFromStart <= nextSeg.distance then
-      local lanePos, finalDir = interpolatePathPosition(currentSeg, nextSeg, distanceFromStart)
-      if lanePos then
-        if not isPositionInPlayerView(lanePos) then return lanePos, finalDir end
-        if not fallbackPos then fallbackPos, fallbackDir = lanePos, finalDir end
-      end
-    end
-  end
-  return fallbackPos, fallbackDir
-end
-
-local function finalizeTruckPosition(truckId, targetPos)
-  local truck = be:getObjectByID(truckId)
-  if not truck then return end
-  core_jobsystem.create(function(job)
-    job.sleep(0.5)
-    if truck.setMeshAlpha then truck:setMeshAlpha(1, '') end
-  end)
-  if targetPos then
-    truck:queueLuaCommand('driver.returnTargetPosition(' .. serialize(targetPos) .. ')')
-  end
-  truck:queueLuaCommand('ai.setCutOffDrivability(0) ai.setAggression(0.6)')
-end
-
-local function teleportTruckToPosition(truckId, position, direction, targetPos)
-  local truck = be:getObjectByID(truckId)
-  if not truck then return end
-  if truck.setMeshAlpha then truck:setMeshAlpha(0, '') end
-  local pos, rotation = calculateTaxiTransform(position, direction)
-  truck:setPosRot(pos.x, pos.y, pos.z, rotation.x, rotation.y, rotation.z, rotation.w)
-  core_jobsystem.create(function(job)
-    job.sleep(0.2)
-    finalizeTruckPosition(truckId, targetPos)
-  end)
-end
-
-local function positionTruckOnPath(truckId, targetPos)
-  local truck = be:getObjectByID(truckId)
-  if not truck then return end
-  if not map or not map.getPointToPointPath or not map.getMap or not map.getMap().nodes then
-    finalizeTruckPosition(truckId, targetPos)
-    return
-  end
-
-  local truckPos = truck:getPosition()
-  local path = map.getPointToPointPath(truckPos, targetPos, 0, 1000, 200, 10000, 1)
-  if not path or #path == 0 then
-    finalizeTruckPosition(truckId, targetPos)
-    return
-  end
-
-  local nodes = map.getMap().nodes
-  local pathSegments = { { pos = truckPos, distance = 0 } }
-  local totalDistance = 0
-  local prevNodePos = truckPos
-
-  for i = 1, #path do
-    local nodeId = path[i]
-    local node = nodes[nodeId]
-    local nodePos = node and node.pos or nil
-    if nodePos then
-      totalDistance = totalDistance + prevNodePos:distance(nodePos)
-      table.insert(pathSegments, { pos = nodePos, distance = totalDistance })
-      prevNodePos = nodePos
-    end
-  end
-
-  totalDistance = totalDistance + prevNodePos:distance(targetPos)
-  table.insert(pathSegments, { pos = targetPos, distance = totalDistance })
-
-  local maxTargetDistance = math.min(100, totalDistance * 0.9)
-  local bestPosition, bestDirection, bestDistance = nil, nil, 0
-
-  for targetDistance = maxTargetDistance, 30, -5 do
-    local optimalPos, optimalDir = findOptimalPositionOnPath(pathSegments, targetDistance)
-    if optimalPos then
-      if not isPositionInPlayerView(optimalPos) then
-        teleportTruckToPosition(truckId, optimalPos, optimalDir, targetPos)
-        return
-      end
-      if not bestPosition or targetDistance > bestDistance then
-        bestPosition, bestDirection, bestDistance = optimalPos, optimalDir, targetDistance
-      end
-    end
-  end
-
-  if bestPosition then
-    teleportTruckToPosition(truckId, bestPosition, bestDirection, targetPos)
-  else
-    finalizeTruckPosition(truckId, targetPos)
-  end
-end
-
-local function calculateLanePosition(roadCenterPos, drivingDirection)
-  local isRightHandTraffic = true
-  if map and map.getMap and map.getMap().rules then isRightHandTraffic = map.getMap().rules.rightHandDrive or true end
-  local rightVector = vec3(-drivingDirection.y, drivingDirection.x, 0):normalized()
-  local laneOffset  = isRightHandTraffic and rightVector or -rightVector
-  local lanePosition = roadCenterPos + laneOffset * 3.5
-  lanePosition.z = core_terrain.getTerrainHeight(lanePosition)
-  return lanePosition, drivingDirection
-end
-
-local function findClosestRoadInfo(pos)
-  if not map or not map.findClosestRoad or not map.getMap then return nil end
-  local name_a, name_b, distance = map.findClosestRoad(vec3(pos))
-  if not name_a or not name_b or not distance then return nil end
-  local nodes = map.getMap().nodes
-  local a = nodes[name_a]
-  local b = nodes[name_b]
-  if not a or not b or not a.pos or not b.pos then return nil end
-
-  local xnorm = vec3(pos):xnormOnLine(a.pos, b.pos)
-  if xnorm > 1 then xnorm = 1 end
-  if xnorm < 0 then xnorm = 0 end
-
-  local roadPos = lerp(a.pos, b.pos, xnorm)
-  local dir = (b.pos - a.pos)
-  dir.z = 0
-  if dir:length() == 0 then dir = vec3(0,1,0) end
-  dir = dir:normalized()
-
-  return {
-    pos = roadPos,
-    distance = distance,
-    a = a,
-    b = b,
-    dir = dir
-  }
-end
-
-local function findRoadAdjacentPoint(zone)
-  if not zone or not zone.center then return nil, nil end
-  local info = findClosestRoadInfo(zone.center)
-  if not info then return vec3(zone.center), vec3(0,1,0) end
-  local lanePos, dir = calculateLanePosition(info.pos, info.dir)
-  return lanePos, dir
-end
 
 local function findOffRoadCentroid(zone, minRoadDist, maxPoints)
   if not zone or not zone.aabb or zone.aabb.invalid then return nil end
@@ -680,15 +354,6 @@ local function ensureGroupCache(group)
   if not cache then
     cache = {}
     groupCache[key] = cache
-  end
-  return cache
-end
-
-local function ensureGroupRoadAdjacentPoint(group)
-  local cache = ensureGroupCache(group)
-  if not cache then return nil end
-  if group and group.loading and not cache.roadAdjacentPoint then
-    cache.roadAdjacentPoint = select(1, findRoadAdjacentPoint(group.loading))
   end
   return cache
 end
@@ -778,10 +443,6 @@ local function loadQuarrySites()
     groupCachePrecomputeQueued = true
     core_jobsystem.create(function(job)
       for _, g in ipairs(availableGroups) do
-        ensureGroupRoadAdjacentPoint(g)
-        job.sleep(0.01)
-      end
-      for _, g in ipairs(availableGroups) do
         ensureGroupOffRoadCentroid(g)
         job.sleep(0.01)
       end
@@ -789,41 +450,92 @@ local function loadQuarrySites()
   end
 end
 
-local function clearProps()
-  for i = #rockPileQueue, 1, -1 do
-    local id = rockPileQueue[i].id
-    if id then
-      local obj = be:getObjectByID(id)
-      if obj then obj:delete() end
+local function calculateSpawnTransformForLocation(spawnPos, targetPos)
+  local dir = vec3(0, 1, 0)
+  if targetPos and map and map.findClosestRoad and map.getPath and map.getMap then
+    local spawnRoadName, spawnNodeIdx, spawnDist = map.findClosestRoad(spawnPos)
+    local targetRoadName, targetNodeIdx, targetDist = map.findClosestRoad(targetPos)
+    
+    if spawnRoadName and targetRoadName then
+      local path = nil
+      if spawnRoadName ~= targetRoadName then
+        path = map.getPath(spawnRoadName, targetRoadName)
+      elseif spawnNodeIdx and targetNodeIdx then
+        local mapData = map.getMap()
+        if mapData and mapData.nodes then
+          local spawnNode = mapData.nodes[spawnNodeIdx]
+          local targetNode = mapData.nodes[targetNodeIdx]
+          if spawnNode and targetNode and spawnNode.pos and targetNode.pos then
+            local spawnNodePos = vec3(spawnNode.pos)
+            local targetNodePos = vec3(targetNode.pos)
+            local directDir = targetNodePos - spawnNodePos
+            directDir.z = 0
+            if directDir:length() > 0.1 then
+              dir = directDir:normalized()
+            end
+          end
+        end
+      end
+      
+      if path and #path > 0 then
+        local mapData = map.getMap()
+        if mapData and mapData.nodes then
+          local nextNodeIdx = nil
+          local spawnPosVec = vec3(spawnPos)
+          
+          local closestPathIdx = 1
+          local closestDist = math.huge
+          for i, nodeIdx in ipairs(path) do
+            local node = mapData.nodes[nodeIdx]
+            if node and node.pos then
+              local nodePos = vec3(node.pos)
+              local dist = (nodePos - spawnPosVec):length()
+              if dist < closestDist then
+                closestDist = dist
+                closestPathIdx = i
+              end
+            end
+          end
+          
+          if closestPathIdx < #path then
+            nextNodeIdx = path[closestPathIdx + 1]
+          elseif #path > 1 then
+            nextNodeIdx = path[2]
+          else
+            nextNodeIdx = path[1]
+          end
+          
+          if nextNodeIdx then
+            local nextNode = mapData.nodes[nextNodeIdx]
+            if nextNode and nextNode.pos then
+              local nextNodePos = vec3(nextNode.pos)
+              local pathDir = nextNodePos - spawnPosVec
+              pathDir.z = 0
+              if pathDir:length() > 0.1 then
+                dir = pathDir:normalized()
+              end
+            end
+          end
+        end
+      end
     end
-    table.remove(rockPileQueue, i)
+    
+    if dir:length() < 0.1 then
+      local targetDir = vec3(targetPos) - spawnPos
+      targetDir.z = 0
+      if targetDir:length() > 0 then dir = targetDir:normalized() end
+    end
+  elseif targetPos then
+    local targetDir = vec3(targetPos) - spawnPos
+    targetDir.z = 0
+    if targetDir:length() > 0 then dir = targetDir:normalized() end
   end
-end
-
-local function cleanupJob(deleteTruck)
-  core_groundMarkers.setPath(nil)
-  markerCleared = false
-  truckStoppedInLoading = false
-  isDispatching = false
-  jobOfferSuppressed = true
-  payloadUpdateTimer = 0
-
-  clearProps()
-
-  if deleteTruck and jobObjects.truckID then
-    local obj = be:getObjectByID(jobObjects.truckID)
-    if obj then obj:delete() end
-  end
-
-  jobObjects.truckID = nil
-  jobObjects.currentLoadMass = 0
-  jobObjects.materialType = nil
-  jobObjects.activeGroup = nil
-  jobObjects.deferredTruckTargetPos = nil
-  jobObjects.loadingZoneTargetPos = nil
-  jobObjects.truckSpawnQueued = false
-
-  currentState = STATE_IDLE
+  
+  local normal = vec3(0,0,1)
+  if map and map.surfaceNormal then normal = map.surfaceNormal(spawnPos, 1) end
+  if dir:length() == 0 then dir = vec3(0,1,0) end
+  local rotation = quatFromDir(dir, normal)
+  return spawnPos, rotation
 end
 
 local function manageRockCapacity()
@@ -876,108 +588,213 @@ local function spawnJobMaterials()
   end
 end
 
-local function spawnTruckAtLocation(location, materialType, targetPos)
-  if not location then return nil end
+local function beginActiveContractTrip()
+  local contract = ContractSystem.activeContract
+  if not contract or not contract.group then return false end
+  if isDispatching then return false end
+  isDispatching = true
 
-  local spawnPos = vec3(location.pos)
-  local dir = vec3(0, 1, 0)
+  jobObjects.materialType = contract.material
+  jobObjects.activeGroup = contract.group
 
-  local targetDir = nil
-  if targetPos then
-    targetDir = vec3(targetPos) - spawnPos
-    targetDir.z = 0
-    if targetDir:length() > 0 then
-      targetDir = targetDir:normalized()
-    else
-      targetDir = nil
-    end
+  markerCleared = false
+  truckStoppedInLoading = false
+  payloadUpdateTimer = 0
+
+  core_groundMarkers.setPath(vec3(jobObjects.activeGroup.loading.center))
+
+  local targetPos = vec3(jobObjects.activeGroup.loading.center)
+
+  if #rockPileQueue == 0 then
+    spawnJobMaterials()
   end
+  jobObjects.deferredTruckTargetPos = targetPos
+  jobObjects.loadingZoneTargetPos = targetPos
+  jobObjects.truckID = nil
+  jobObjects.truckSpawnQueued = false
 
-  local info = findClosestRoadInfo(spawnPos)
-  if info then
-    local roadDir = info.dir
-    if targetDir then
-      if (-roadDir):dot(targetDir) > roadDir:dot(targetDir) then
-        roadDir = -roadDir
-      end
-    end
-    local lanePos
-    lanePos, dir = calculateLanePosition(info.pos, roadDir)
-    spawnPos = lanePos
-  else
-    spawnPos.z = core_terrain.getTerrainHeight(spawnPos)
-    if targetDir then dir = targetDir end
-  end
-
-  local pos, rot = calculateTaxiTransform(spawnPos, dir)
-
-  local truckModel = (materialType == "marble") and Config.MarbleTruckModel or Config.RockTruckModel
-  local truckConfig = (materialType == "marble") and Config.MarbleTruckConfig or Config.RockTruckConfig
-
-  local truck = core_vehicles.spawnNewVehicle(truckModel, { pos = pos, rot = rot, config = truckConfig, autoEnterVehicle = false })
-  if not truck then return nil end
-
-  local id = truck:getID()
-  return id
+  currentState = STATE_DRIVING_TO_SITE
+  isDispatching = false
+  return true
 end
 
-local function calculateSpawnTransformForLocation(spawnPos, targetPos)
-  local dir = vec3(0, 1, 0)
+local function acceptContract(contractIndex)
+  local contract = ContractSystem.availableContracts[contractIndex]
+  if not contract then return end
 
-  local targetDir = nil
-  if targetPos then
-    targetDir = vec3(targetPos) - spawnPos
-    targetDir.z = 0
-    if targetDir:length() > 0 then
-      targetDir = targetDir:normalized()
-    else
-      targetDir = nil
+  ContractSystem.activeContract = contract
+  ContractSystem.contractProgress = {
+    deliveredTons = 0,
+    totalPaidSoFar = 0,
+    startTime = os.clock(),
+    deliveryCount = 0
+  }
+
+  if beginActiveContractTrip() then
+    Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_Start_01')
+    ui_message(string.format("Contract accepted: %s", contract.name), 5, "info")
+  end
+end
+
+local function clearProps()
+  for i = #rockPileQueue, 1, -1 do
+    local id = rockPileQueue[i].id
+    if id then
+      local obj = be:getObjectByID(id)
+      if obj then obj:delete() end
+    end
+    table.remove(rockPileQueue, i)
+  end
+end
+
+local function cleanupJob(deleteTruck)
+  core_groundMarkers.setPath(nil)
+  markerCleared = false
+  truckStoppedInLoading = false
+  isDispatching = false
+  jobOfferSuppressed = true
+  payloadUpdateTimer = 0
+
+  clearProps()
+
+  if deleteTruck and jobObjects.truckID then
+    local obj = be:getObjectByID(jobObjects.truckID)
+    if obj then obj:delete() end
+  end
+
+  jobObjects.truckID = nil
+  jobObjects.currentLoadMass = 0
+  jobObjects.lastDeliveredMass = 0
+  jobObjects.deliveredPropIds = nil
+  jobObjects.materialType = nil
+  jobObjects.activeGroup = nil
+  jobObjects.deferredTruckTargetPos = nil
+  jobObjects.loadingZoneTargetPos = nil
+  jobObjects.truckSpawnQueued = false
+  jobObjects.truckSpawnPos = nil
+  jobObjects.truckSpawnRot = nil
+
+  currentState = STATE_IDLE
+end
+
+local function abandonContract()
+  if not ContractSystem.activeContract then return end
+  ui_message(string.format("Contract abandoned! Penalty: $%d", Config.Contracts.AbandonPenalty or 0), 6, "warning")
+
+  local career = extensions.career_career
+  if career and career.isActive() then
+    local paymentModule = extensions.career_modules_payment
+    if paymentModule then
+      paymentModule.pay(-(Config.Contracts.AbandonPenalty or 0), {label = "Contract Abandonment"})
     end
   end
 
-  local info = findClosestRoadInfo(spawnPos)
-  if info then
-    local roadDir = info.dir
-    if targetDir then
-      if (-roadDir):dot(targetDir) > roadDir:dot(targetDir) then
-        roadDir = -roadDir
-      end
+  PlayerData.contractsFailed = (PlayerData.contractsFailed or 0) + 1
+  ContractSystem.activeContract = nil
+  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0}
+
+  cleanupJob(true)
+end
+
+local function failContract(penalty, message, msgType)
+  if not ContractSystem.activeContract then
+    cleanupJob(true)
+    return
+  end
+
+  penalty = penalty or 0
+  msgType = msgType or "warning"
+  if message then
+    ui_message(message, 5, msgType)
+  end
+
+  local career = extensions.career_career
+  if career and career.isActive() then
+    local paymentModule = extensions.career_modules_payment
+    if paymentModule and penalty ~= 0 then
+      paymentModule.pay(-math.abs(penalty), {label = "Contract Failure"})
     end
-    spawnPos, dir = calculateLanePosition(info.pos, roadDir)
+  end
+
+  PlayerData.contractsFailed = (PlayerData.contractsFailed or 0) + 1
+  ContractSystem.activeContract = nil
+  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0}
+
+  cleanupJob(true)
+end
+
+local function completeContract()
+  if not ContractSystem.activeContract then return end
+  local contract = ContractSystem.activeContract
+  local progress = ContractSystem.contractProgress or {}
+
+  local totalPay = contract.totalPayout or 0
+  if contract.paymentType == "progressive" then
+    totalPay = totalPay - (progress.totalPaidSoFar or 0)
+  end
+  if totalPay < 0 then totalPay = 0 end
+
+  local career = extensions.career_career
+  if career and career.isActive() then
+    local paymentModule = extensions.career_modules_payment
+    if paymentModule then
+      local xpReward = math.floor((contract.requiredTons or 0) * 10)
+      paymentModule.reward({
+        money = { amount = totalPay, canBeNegative = false },
+        labor = { amount = xpReward, canBeNegative = false }
+      }, { label = string.format("Contract: %s", contract.name), tags = {"gameplay", "mission", "reward"} })
+
+      Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_01')
+      ui_message(string.format("CONTRACT COMPLETE! Earned $%d", totalPay), 8, "success")
+    end
   else
-    spawnPos.z = core_terrain.getTerrainHeight(spawnPos)
-    if targetDir then dir = targetDir end
+    Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
+    ui_message(string.format("SANDBOX: Contract payout: $%d", totalPay), 6, "success")
   end
 
-  return calculateTaxiTransform(spawnPos, dir)
+  PlayerData.contractsCompleted = (PlayerData.contractsCompleted or 0) + 1
+  PlayerData.level = (PlayerData.level or 1) + 1
+
+  ContractSystem.activeContract = nil
+  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0}
+
+  clearProps()
+  if jobObjects.truckID then
+    local obj = be:getObjectByID(jobObjects.truckID)
+    if obj then obj:delete() end
+  end
+  jobObjects.truckID = nil
+  jobObjects.currentLoadMass = 0
+  jobObjects.lastDeliveredMass = 0
+  jobObjects.deliveredPropIds = nil
+  jobObjects.materialType = nil
+  jobObjects.activeGroup = nil
+  jobObjects.deferredTruckTargetPos = nil
+  jobObjects.loadingZoneTargetPos = nil
+  jobObjects.truckSpawnQueued = false
+  jobObjects.truckSpawnPos = nil
+  jobObjects.truckSpawnRot = nil
+  markerCleared = false
+  truckStoppedInLoading = false
+  payloadUpdateTimer = 0
+  core_groundMarkers.setPath(nil)
+  currentState = STATE_IDLE
 end
 
 local function spawnTruckForGroup(group, materialType, targetPos)
   if not group or not group.spawn or not group.spawn.pos then return nil end
 
-  local cache = ensureGroupCache(group)
-  local key = targetPos and string.format("%.2f,%.2f,%.2f", targetPos.x, targetPos.y, targetPos.z) or "nil"
-  if cache and cache.spawnTransformKey ~= key then
-    cache.spawnPos, cache.spawnRot = nil, nil
-    cache.spawnTransformKey = key
-  end
-
-  local pos, rot
-  if cache and cache.spawnPos and cache.spawnRot then
-    pos, rot = cache.spawnPos, cache.spawnRot
-  else
-    pos, rot = calculateSpawnTransformForLocation(vec3(group.spawn.pos), targetPos)
-    if cache then
-      cache.spawnPos, cache.spawnRot = pos, rot
-      cache.spawnTransformKey = key
-    end
-  end
+  local pos, rot = calculateSpawnTransformForLocation(vec3(group.spawn.pos), targetPos)
 
   local truckModel = (materialType == "marble") and Config.MarbleTruckModel or Config.RockTruckModel
   local truckConfig = (materialType == "marble") and Config.MarbleTruckConfig or Config.RockTruckConfig
 
   local truck = core_vehicles.spawnNewVehicle(truckModel, { pos = pos, rot = rot, config = truckConfig, autoEnterVehicle = false })
   if not truck then return nil end
+  
+  jobObjects.truckSpawnPos = pos
+  jobObjects.truckSpawnRot = rot
+  
   return truck:getID()
 end
 
@@ -985,6 +802,7 @@ local function driveTruckToPoint(truckId, targetPos)
   local truck = be:getObjectByID(truckId)
   if not truck then return end
   truck:queueLuaCommand('if not driver then extensions.load("driver") end')
+  truck:queueLuaCommand("controller.mainController.setHandbrake(0)")
   core_jobsystem.create(function(job)
     job.sleep(0.5)
     truck:queueLuaCommand('driver.returnTargetPosition(' .. serialize(targetPos) .. ')')
@@ -1113,34 +931,58 @@ local function calculateTruckPayload()
   return totalMass
 end
 
-local function payPlayer()
-  local massKg = jobObjects.currentLoadMass or 0
-  local tons = massKg / 1000
+local function getLoadedPropIdsInTruck(minRatio)
+  minRatio = minRatio or 0.25
+  if #rockPileQueue == 0 then return {} end
+  if not jobObjects.truckID then return {} end
 
-  local moneyReward = Config.Economy.BasePay + (tons * Config.Economy.PayPerTon)
-  local xpReward = math.floor(Config.Economy.BaseXP + (tons * Config.Economy.XPPerTon))
-  if moneyReward > 15000 then moneyReward = 15000 end
+  local truck = be:getObjectByID(jobObjects.truckID)
+  if not truck then return {} end
 
-  local career = extensions.career_career
-  local isCareerActive = career and career.isActive()
+  local bedData = getTruckBedData(truck)
+  if not bedData then return {} end
 
-  if isCareerActive then
-    local paymentModule = extensions.career_modules_payment
-    if paymentModule then
-      local rewards = {
-        money = { amount = moneyReward, canBeNegative = false },
-        labor = { amount = xpReward, canBeNegative = false }
-      }
-      local reason = { label = "Quarry Logistics Job", tags = {"gameplay", "mission", "reward"} }
-      paymentModule.reward(rewards, reason)
-      Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_01')
-      ui_message(string.format("JOB DONE! Earned $%.2f and %d Labor XP", moneyReward, xpReward), 8, "success")
-    else
-      log('E', 'RLS_Quarry', "Career Payment Module not found!")
+  local ids = {}
+  for _, rockEntry in ipairs(rockPileQueue) do
+    local obj = be:getObjectByID(rockEntry.id)
+    if obj then
+      local tf = obj:getTransform()
+      local axisX, axisY, axisZ = tf:getColumn(0), tf:getColumn(1), tf:getColumn(2)
+      local objPos = obj:getPosition()
+      local nodeCount = obj:getNodeCount()
+      local step = 10
+      local nodesInside, nodesChecked = 0, 0
+      for i = 0, nodeCount - 1, step do
+        nodesChecked = nodesChecked + 1
+        local localPos = obj:getNodePosition(i)
+        local worldPoint = objPos - (axisX * localPos.x) - (axisY * localPos.y) + (axisZ * localPos.z)
+        if isPointInTruckBed(worldPoint, bedData) then
+          nodesInside = nodesInside + 1
+        end
+      end
+      if nodesChecked > 0 then
+        local ratio = nodesInside / nodesChecked
+        if ratio >= minRatio then
+          table.insert(ids, rockEntry.id)
+        end
+      end
     end
-  else
-    Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-    ui_message(string.format("SANDBOX: Theoretical Payout: $%.2f (%.1f Tons)", moneyReward, tons), 6, "success")
+  end
+  return ids
+end
+
+local function despawnPropIds(propIds)
+  if not propIds or #propIds == 0 then return end
+  local idSet = {}
+  for _, id in ipairs(propIds) do idSet[id] = true end
+
+  for i = #rockPileQueue, 1, -1 do
+    local id = rockPileQueue[i].id
+    if id and idSet[id] then
+      local obj = be:getObjectByID(id)
+      if obj then obj:delete() end
+      table.remove(rockPileQueue, i)
+    end
   end
 end
 
@@ -1175,37 +1017,100 @@ local function handleDeliveryArrived()
     end
   end
 
-  if jobObjects.truckID then
-    local obj = be:getObjectByID(jobObjects.truckID)
-    if obj then obj:delete() end
-  end
+  despawnPropIds(jobObjects.deliveredPropIds)
+  jobObjects.deliveredPropIds = nil
 
-  jobObjects.truckID = nil
   jobObjects.currentLoadMass = 0
   jobObjects.lastDeliveredMass = 0
   jobObjects.deferredTruckTargetPos = nil
-  jobObjects.loadingZoneTargetPos = nil
-  jobObjects.truckSpawnQueued = false
-
-  markerCleared = false
-  truckStoppedInLoading = false
   payloadUpdateTimer = 0
 
-  currentState = STATE_RETURN_TO_QUARRY
-  if group.loading and group.loading.center then
-    core_groundMarkers.setPath(vec3(group.loading.center))
-  else
-    core_groundMarkers.setPath(nil)
-  end
+  core_groundMarkers.setPath(nil)
 
   if checkContractCompletion() then
-    Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-    ui_message("Contract complete! Return to quarry to finalize.", 6, "success")
-  else
-    local remaining = (contract.requiredTons or 0) - (ContractSystem.contractProgress.deliveredTons or 0)
-    Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-    ui_message(string.format("Delivery #%d complete! %.1f tons remaining.", ContractSystem.contractProgress.deliveryCount or 1, remaining), 6, "success")
+    if jobObjects.truckID then
+      local obj = be:getObjectByID(jobObjects.truckID)
+      if obj then obj:delete() end
+    end
+    jobObjects.truckID = nil
+    jobObjects.loadingZoneTargetPos = nil
+    jobObjects.truckSpawnQueued = false
+    markerCleared = true
+    truckStoppedInLoading = false
+    
+    local playerVeh = be:getPlayerVehicle(0)
+    local playerPos = playerVeh and playerVeh:getPosition() or nil
+    local atQuarry = false
+    if playerPos and group and group.loading and group.loading.containsPoint2D then
+      atQuarry = group.loading:containsPoint2D(playerPos)
+    end
+    
+    if atQuarry then
+      currentState = STATE_AT_QUARRY_DECIDE
+      Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
+      ui_message("Contract complete! Finalize at quarry.", 6, "success")
+    else
+      currentState = STATE_RETURN_TO_QUARRY
+      if group and group.loading and group.loading.center then
+        core_groundMarkers.setPath(vec3(group.loading.center))
+      end
+      Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
+      ui_message("Contract complete! Return to quarry to finalize.", 6, "success")
+    end
+    return
   end
+
+  local remaining = (contract.requiredTons or 0) - (ContractSystem.contractProgress.deliveredTons or 0)
+  Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
+  ui_message(string.format("Delivery #%d complete! %.1f tons remaining.", ContractSystem.contractProgress.deliveryCount or 1, remaining), 6, "success")
+
+  if #rockPileQueue == 0 then
+    spawnJobMaterials()
+  end
+
+  local targetPos = group.loading and group.loading.center and vec3(group.loading.center) or nil
+  local spawnPos = group.spawn and group.spawn.pos and vec3(group.spawn.pos) or nil
+  if not (jobObjects.truckID and targetPos and spawnPos) then
+    failContract(Config.Contracts.CrashPenalty, "Truck return failed! Contract failed.", "warning")
+    return
+  end
+
+  local truck = be:getObjectByID(jobObjects.truckID)
+  if not truck then
+    failContract(Config.Contracts.CrashPenalty, "Truck lost! Contract failed.", "warning")
+    return
+  end
+
+  stopTruck(jobObjects.truckID)
+  
+  local savedTruckID = jobObjects.truckID
+  local savedSpawnPos = jobObjects.truckSpawnPos
+  local savedSpawnRot = jobObjects.truckSpawnRot
+  
+  core_jobsystem.create(function(job)
+    job.sleep(0.1)
+    local truck = be:getObjectByID(savedTruckID)
+    if not truck then return end
+    
+    local pos = savedSpawnPos or spawnPos
+    local rot
+    pos, rot = calculateSpawnTransformForLocation(pos, targetPos)
+    
+    if spawn and spawn.safeTeleport then
+      spawn.safeTeleport(truck, pos, rot)
+    else
+      truck:setPosRot(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
+      truck:setVelocity(vec3(0, 0, 0))
+    end
+    truck:queueLuaCommand("ai.setMode('stop') controller.mainController.setHandbrake(1)")
+    
+    job.sleep(0.3)
+    
+    jobObjects.loadingZoneTargetPos = targetPos
+    truckStoppedInLoading = false
+    currentState = STATE_TRUCK_ARRIVING
+    driveTruckToPoint(savedTruckID, targetPos)
+  end)
 end
 
 local function drawWorkSiteMarker(dt)
@@ -1378,12 +1283,12 @@ local function drawUI(dt)
       imgui.Dummy(imgui.ImVec2(0, 20))
       imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0, 0.4, 0, uiAnim.opacity))
       imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0, 0.6, 0, uiAnim.opacity))
-      if imgui.Button("START DELIVERY", imgui.ImVec2(-1, 45)) then
+      if imgui.Button("SEND TRUCK", imgui.ImVec2(-1, 45)) then
         if jobObjects.truckID and jobObjects.activeGroup and jobObjects.activeGroup.destination then
           jobObjects.lastDeliveredMass = jobObjects.currentLoadMass or 0
-          clearProps()
+          jobObjects.deliveredPropIds = getLoadedPropIdsInTruck(0.1)
           local destPos = vec3(jobObjects.activeGroup.destination.pos)
-          core_groundMarkers.setPath(destPos)
+          core_groundMarkers.setPath(nil)
           driveTruckToPoint(jobObjects.truckID, destPos)
           currentState = STATE_DELIVERING
         else
@@ -1399,6 +1304,13 @@ local function drawUI(dt)
 
     elseif currentState == STATE_DELIVERING then
       imgui.TextColored(imgui.ImVec4(0, 1, 1, pulseAlpha * uiAnim.opacity), ">> DELIVERING <<")
+      if ContractSystem.activeContract then
+        local c = ContractSystem.activeContract
+        local p = ContractSystem.contractProgress
+        imgui.Text(string.format("Contract: %s", c.name or "Contract"))
+        imgui.Text(string.format("Progress: %.1f / %.1f tons", p.deliveredTons or 0, c.requiredTons or 0))
+        imgui.Separator()
+      end
       imgui.Text("Truck driving to destination...")
       imgui.Dummy(imgui.ImVec2(0, 10))
       if imgui.Button("ABANDON CONTRACT", imgui.ImVec2(-1, 30)) then
@@ -1411,7 +1323,12 @@ local function drawUI(dt)
         local c = ContractSystem.activeContract
         local p = ContractSystem.contractProgress
         imgui.Text(string.format("Contract: %s", c.name or "Contract"))
-        imgui.Text(string.format("Delivered: %.1f / %.1f tons", p.deliveredTons or 0, c.requiredTons or 0))
+        if checkContractCompletion() then
+          imgui.TextColored(imgui.ImVec4(0, 1, 0, pulseAlpha), "CONTRACT COMPLETE!")
+          imgui.Text(string.format("Delivered: %.1f / %.1f tons", p.deliveredTons or 0, c.requiredTons or 0))
+        else
+          imgui.Text(string.format("Delivered: %.1f / %.1f tons", p.deliveredTons or 0, c.requiredTons or 0))
+        end
         if c.paymentType == "progressive" then
           imgui.TextColored(imgui.ImVec4(0.5, 1, 0.5, 1), string.format("Earned so far: $%d", p.totalPaidSoFar or 0))
         end
@@ -1500,6 +1417,10 @@ local function queueTruckSpawn(group, materialType, targetPos)
     if not targetPos and group.loading and group.loading.center then
       targetPos = vec3(group.loading.center)
     end
+    if not targetPos then
+      jobObjects.truckSpawnQueued = false
+      return
+    end
 
     local truckId = spawnTruckForGroup(group, materialType, targetPos)
     if truckId then
@@ -1511,14 +1432,7 @@ local function queueTruckSpawn(group, materialType, targetPos)
       if truck then
         truck:queueLuaCommand('if not driver then extensions.load("driver") end')
       end
-      if targetPos then
-        core_jobsystem.create(function(job2)
-          job2.sleep(0.2)
-          positionTruckOnPath(truckId, targetPos)
-        end)
-      else
-        driveTruckToPoint(truckId, targetPos)
-      end
+      driveTruckToPoint(truckId, targetPos)
       jobObjects.deferredTruckTargetPos = nil
     else
       jobObjects.truckSpawnQueued = false
@@ -1613,9 +1527,11 @@ local function onUpdate(dt)
         failContract(Config.Contracts.CrashPenalty, "Truck lost! Contract failed.", "error")
         return
       end
-      if truck and jobObjects.loadingZoneTargetPos then
-        local dist = (truck:getPosition() - vec3(jobObjects.loadingZoneTargetPos)):length()
-        if dist < 10 then
+      local truckPos = truck:getPosition()
+      if group.loading and group.loading.containsPoint2D and group.loading:containsPoint2D(truckPos) then
+        local velocity = truck:getVelocity()
+        local speed = velocity and velocity:length() or 999
+        if speed < 2.0 then
           stopTruck(jobObjects.truckID)
           truckStoppedInLoading = true
           ui_message("Truck arrived at loading zone.", 5, "success")
