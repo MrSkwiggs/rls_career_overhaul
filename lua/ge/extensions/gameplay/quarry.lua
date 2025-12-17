@@ -140,23 +140,12 @@ local markerAnim = { time = 0, pulseScale = 1.0, rotationAngle = 0, beamHeight =
 local rockPileQueue = {}
 local jobOfferSuppressed = false
 
--- Marble damage tracking (coupler-based detection)
+-- Marble damage tracking (part damage detection)
 local marbleInitialState = {}
 local MARBLE_MIN_DISPLAY_DAMAGE = 5            -- Only show damage UI if above 5%
 
--- Coupler/breakGroup state cache (received from vehicle Lua)
-local marbleCouplerState = {}  -- [objId] = {brokenGroups = {}, totalGroups = n, lastUpdate = time}
-
--- All inter-piece breakGroups to monitor for marble blocks
-local MARBLE_BREAK_GROUPS = {
-  "p1_p4", "p1_p5", "p1_p6", "p1_p8",  -- piece 1 connections
-  "p2_p3", "p2_p5", "p2_p7", "p2_p8",  -- piece 2 connections
-  "p3_p4", "p3_p5", "p3_p8",           -- piece 3 connections
-  "p4_p5", "p4_p6",                    -- piece 4 connections
-  "p5_p6", "p5_p7", "p5_p8",           -- piece 5 connections
-  "p6_p7", "p6_p8",                    -- piece 6 connections
-  "p7_p8"                              -- piece 7-8 connection
-}
+-- Part damage cache (received from vehicle Lua)
+local marbleDamageState = {}  -- [objId] = {isDamaged = bool, lastUpdate = time}
 
 -- Cache for debug drawing data so it can be drawn every frame
 local debugDrawCache = {
@@ -670,7 +659,7 @@ local function clearProps()
     local id = rockPileQueue[i].id
     if id then
       marbleInitialState[id] = nil  -- Clear initial state tracking
-      marbleCouplerState[id] = nil  -- Clear coupler state tracking
+      marbleDamageState[id] = nil  -- Clear damage cache
       local obj = be:getObjectByID(id)
       if obj then obj:delete() end
     end
@@ -714,7 +703,7 @@ local function cleanupJob(deleteTruck)
   jobObjects.anyMarbleDamaged = false
   jobObjects.lastDeliveryDamagePercent = 0
   jobObjects.deliveryBlocksStatus = nil
-  marbleCouplerState = {}
+  marbleDamageState = {}
 
   currentState = STATE_IDLE
 end
@@ -1087,126 +1076,51 @@ local function captureMarbleInitialState(objId)
     initialCentroids = nil  -- Will be set on first damage calculation after settling
   }
   
-  -- Initialize coupler state tracking for this marble
-  marbleCouplerState[objId] = {
-    brokenGroups = {},
-    totalGroups = #MARBLE_BREAK_GROUPS,
+  -- Initialize damage cache for this marble
+  marbleDamageState[objId] = {
+    isDamaged = false,
     lastUpdate = 0
   }
 end
 
--- Query the vehicle for broken breakGroups
--- Sends a Lua command to the vehicle that will check which breakGroups have broken
-local function queryMarbleCouplerState(objId)
+-- Query the vehicle for part damage data
+-- Sends a Lua command to the vehicle that will report damaged parts
+local function queryMarbleDamageState(objId)
   local obj = be:getObjectByID(objId)
   if not obj then return end
   
-  -- Build list of breakGroups to check as a Lua table string
-  local groupsStr = "{"
-  for i, group in ipairs(MARBLE_BREAK_GROUPS) do
-    if i > 1 then groupsStr = groupsStr .. ", " end
-    groupsStr = groupsStr .. '"' .. group .. '"'
-  end
-  groupsStr = groupsStr .. "}"
-  
-  -- Vehicle-side Lua script to check broken breakGroups
-  -- The marble block uses coupler nodes to connect pieces:
-  --   - Nodes with "couplerTag: X" are SOURCE couplers (on one piece)
-  --   - Nodes with "tag: X" are TARGET nodes (on another piece)
-  -- When coupled, source and target nodes are welded at same position
-  -- When broken, they separate - we detect this by measuring distance
   local vehicleScript = [[
-    local brokenGroups = {}
-    local groupsToCheck = ]] .. groupsStr .. [[
     local myObjId = ]] .. tostring(objId) .. [[
-    local SEPARATION_THRESHOLD = 0.15  -- 15cm separation = broken (they start at ~0)
-    
-    if v and v.data and v.data.nodes then
-      -- Build maps of couplerTag -> source nodes and tag -> target nodes
-      local sourceNodes = {}  -- nodes with couplerTag
-      local targetNodes = {}  -- nodes with tag
-      
-      for nodeCid, node in pairs(v.data.nodes) do
-        -- Source coupler nodes have "couplerTag"
-        if node.couplerTag then
-          local t = node.couplerTag
-          sourceNodes[t] = sourceNodes[t] or {}
-          table.insert(sourceNodes[t], nodeCid)
-        end
-        -- Target nodes have "tag" (shorthand for couplerTag target)
-        if node.tag then
-          local t = node.tag
-          targetNodes[t] = targetNodes[t] or {}
-          table.insert(targetNodes[t], nodeCid)
-        end
-      end
-      
-      -- For each breakGroup, check if source and target nodes have separated
-      for _, groupName in ipairs(groupsToCheck) do
-        local sources = sourceNodes[groupName]
-        local targets = targetNodes[groupName]
-        
-        -- Need both source and target nodes to check
-        if sources and targets and #sources > 0 and #targets > 0 then
-          -- Find minimum distance between any source-target pair
-          local minDist = math.huge
-          for _, srcCid in ipairs(sources) do
-            local srcPos = obj:getNodePosition(srcCid)
-            if srcPos then
-              for _, tgtCid in ipairs(targets) do
-                local tgtPos = obj:getNodePosition(tgtCid)
-                if tgtPos then
-                  local dx = srcPos.x - tgtPos.x
-                  local dy = srcPos.y - tgtPos.y
-                  local dz = srcPos.z - tgtPos.z
-                  local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-                  if dist < minDist then
-                    minDist = dist
-                  end
-                end
-              end
-            end
-          end
-          
-          -- If minimum distance exceeds threshold, coupler is broken
-          if minDist > SEPARATION_THRESHOLD then
-            table.insert(brokenGroups, groupName)
+    local isDamaged = false
+    if beamstate and beamstate.getPartDamageData then
+      local damageData = beamstate.getPartDamageData() or {}
+      for partKey, partInfo in pairs(damageData) do
+        if type(partKey) == "string" and not string.find(string.lower(partKey), "rails", 1, true) then
+          local dmgValue = (type(partInfo) == "table" and partInfo.damage) or 0
+          if dmgValue and dmgValue > 0 then
+            isDamaged = true
+            break
           end
         end
       end
     end
-    
-    -- Send results back to GE
-    obj:queueGameEngineLua("extensions.Jobb_wl40logic.onMarbleCouplerCallback(" .. myObjId .. ", " .. serialize(brokenGroups) .. ")")
+
+    obj:queueGameEngineLua("gameplay_quarry.onMarbleDamageCallback(" .. myObjId .. ", " .. tostring(isDamaged) .. ")")
   ]]
   
-  --log("D", "wl40logic", "Sending coupler query to marble " .. objId)
   obj:queueLuaCommand(vehicleScript)
 end
 
--- Callback handler for coupler state data from vehicle
-local function onMarbleCouplerCallback(objId, brokenGroups)
+-- Callback handler for part damage data from vehicle
+local function onMarbleDamageCallback(objId, isDamaged)
   if not objId then return end
   
-  brokenGroups = brokenGroups or {}
+  local damaged = isDamaged and true or false
   
-  -- Debug logging (always log callback receipt)
-  --log("I", "wl40logic", "Coupler callback for marble " .. objId .. ": " .. #brokenGroups .. " broken groups")
-  if #brokenGroups > 0 then
-    --log("I", "wl40logic", "  Broken: " .. table.concat(brokenGroups, ", "))
-  end
-  
-  -- Initialize if needed
-  if not marbleCouplerState[objId] then
-    marbleCouplerState[objId] = {
-      brokenGroups = {},
-      totalGroups = #MARBLE_BREAK_GROUPS,
-      lastUpdate = 0
-    }
-  end
-  
-  marbleCouplerState[objId].brokenGroups = brokenGroups
-  marbleCouplerState[objId].lastUpdate = os.clock()
+  marbleDamageState[objId] = {
+    isDamaged = damaged,
+    lastUpdate = os.clock()
+  }
 end
 
 -- Calculate centroids for 8 spatial regions (octants) of the marble block
@@ -1349,42 +1263,25 @@ local function calculateMarbleDamage()
           brokenPieces = 0
         }
       else
-        -- Query coupler state from the vehicle (throttled by callback timing)
-        local couplerState = marbleCouplerState[rockEntry.id]
+        -- Query part damage from the vehicle (throttled by callback timing)
+        local damageCache = marbleDamageState[rockEntry.id]
         local now = os.clock()
         
         -- Query every 0.5 seconds to avoid spamming
-        if not couplerState or (now - couplerState.lastUpdate) > 0.5 then
-          queryMarbleCouplerState(rockEntry.id)
+        if not damageCache or (now - damageCache.lastUpdate) > 0.5 then
+          queryMarbleDamageState(rockEntry.id)
         end
         
-        -- Use cached coupler state to calculate damage
-        local brokenCount = 0
-        local totalGroups = #MARBLE_BREAK_GROUPS
-        local brokenGroupsSet = {}
-        
-        if couplerState and couplerState.brokenGroups then
-          brokenCount = #couplerState.brokenGroups
-          -- Build set of broken groups for debug visualization
-          for _, groupName in ipairs(couplerState.brokenGroups) do
-            brokenGroupsSet[groupName] = true
-          end
-        end
-        
-        local damagePercent = 0
-        if totalGroups > 0 then
-          damagePercent = brokenCount / totalGroups
-        end
-        
-        -- Only consider damaged if above minimum threshold
-        local isDamaged = (damagePercent * 100) >= MARBLE_MIN_DISPLAY_DAMAGE
+        -- Use cached part damage to calculate damage
+        local isDamaged = damageCache and damageCache.isDamaged or false
+        local damagePercent = isDamaged and 1 or 0
         
         jobObjects.marbleDamage[rockEntry.id] = {
           damage = damagePercent,
           isDamaged = isDamaged,
-          brokenPieces = brokenCount,
-          totalConnections = totalGroups,
-          brokenGroups = couplerState and couplerState.brokenGroups or {}
+          brokenPieces = isDamaged and 1 or 0,
+          totalConnections = 1,
+          brokenGroups = {}
         }
         
         -- Cache debug data for visualization
@@ -1393,10 +1290,10 @@ local function calculateMarbleDamage()
           -- Store simple damage info for visualization
           table.insert(debugDrawCache.marblePieces, {
             center = objPos,
-            brokenCount = brokenCount,
-            totalGroups = totalGroups,
+            brokenCount = isDamaged and 1 or 0,
+            totalGroups = 1,
             damagePercent = damagePercent * 100,
-            brokenGroups = couplerState and couplerState.brokenGroups or {}
+            brokenGroups = {}
           })
         end
         
@@ -1518,7 +1415,7 @@ local function despawnPropIds(propIds)
     local id = rockPileQueue[i].id
     if id and idSet[id] then
       marbleInitialState[id] = nil  -- Clear initial state tracking
-      marbleCouplerState[id] = nil  -- Clear coupler state tracking
+      marbleDamageState[id] = nil  -- Clear damage cache
       local obj = be:getObjectByID(id)
       if obj then obj:delete() end
       table.remove(rockPileQueue, i)
@@ -2230,12 +2127,12 @@ local function onClientEndMission()
   ContractSystem.availableContracts = {}
   ContractSystem.activeContract = nil
   marbleInitialState = {}
-  marbleCouplerState = {}
+  marbleDamageState = {}
 end
 
 M.onUpdate = onUpdate
 M.onClientStartMission = onClientStartMission
 M.onClientEndMission = onClientEndMission
-M.onMarbleCouplerCallback = onMarbleCouplerCallback
+M.onMarbleDamageCallback = onMarbleDamageCallback
 
 return M
