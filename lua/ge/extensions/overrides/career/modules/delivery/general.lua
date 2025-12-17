@@ -699,7 +699,7 @@ local function onActivityAcceptGatherData(elemData, activityData)
         end
       end
       local vehsClose, trailersClose = dVehicleTasks.canDropOffCargoAtPsPath(elem.psPath)
-      local anyCargoDropOffable = (dropOffableCargoByCargoType.parcel > 0 or dropOffableCargoByCargoType.fluid > 0 or dropOffableCargoByCargoType.dryBulk > 0) or vehsClose > 0 or trailersClose > 0
+      local anyCargoDropOffable = (dropOffableCargoByCargoType.parcel > 0 or dropOffableCargoByCargoType.fluid > 0 or dropOffableCargoByCargoType.dryBulk > 0 or dropOffableCargoByCargoType.cement > 0 or dropOffableCargoByCargoType.cash > 0) or vehsClose > 0 or trailersClose > 0
       -- dropoff props
       if dropOffableCargoByCargoType.parcel > 0 then
         table.insert(poiTemplate.props, {
