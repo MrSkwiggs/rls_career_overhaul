@@ -77,7 +77,7 @@ local Config = {
   }
 }
 
-local ENABLE_DEBUG = false
+local ENABLE_DEBUG = true
 
 local imgui = ui_imgui
 
@@ -128,6 +128,10 @@ local jobObjects = {
   truckSpawnQueued = false,
   truckSpawnPos = nil,
   truckSpawnRot = nil,
+  marbleDamage = {},  -- Track damage per marble block: {id = {damage = 0-1, isDamaged = bool}}
+  totalMarbleDamagePercent = 0,
+  anyMarbleDamaged = false,
+  lastDeliveryDamagePercent = 0,  -- Damage at time of sending truck
 }
 
 local uiAnim = { opacity = 0, yOffset = 50, pulse = 0, targetOpacity = 0 }
@@ -135,6 +139,31 @@ local markerAnim = { time = 0, pulseScale = 1.0, rotationAngle = 0, beamHeight =
 
 local rockPileQueue = {}
 local jobOfferSuppressed = false
+
+-- Marble damage tracking (coupler-based detection)
+local marbleInitialState = {}
+local MARBLE_MIN_DISPLAY_DAMAGE = 5            -- Only show damage UI if above 5%
+
+-- Coupler/breakGroup state cache (received from vehicle Lua)
+local marbleCouplerState = {}  -- [objId] = {brokenGroups = {}, totalGroups = n, lastUpdate = time}
+
+-- All inter-piece breakGroups to monitor for marble blocks
+local MARBLE_BREAK_GROUPS = {
+  "p1_p4", "p1_p5", "p1_p6", "p1_p8",  -- piece 1 connections
+  "p2_p3", "p2_p5", "p2_p7", "p2_p8",  -- piece 2 connections
+  "p3_p4", "p3_p5", "p3_p8",           -- piece 3 connections
+  "p4_p5", "p4_p6",                    -- piece 4 connections
+  "p5_p6", "p5_p7", "p5_p8",           -- piece 5 connections
+  "p6_p7", "p6_p8",                    -- piece 6 connections
+  "p7_p8"                              -- piece 7-8 connection
+}
+
+-- Cache for debug drawing data so it can be drawn every frame
+local debugDrawCache = {
+  bedData = nil,
+  nodePoints = {},
+  marblePieces = {}  -- {centroids = {}, connections = {{from, to, broken}}, bounds = {}}
+}
 
 local markerCleared = false
 local truckStoppedInLoading = false
@@ -640,6 +669,8 @@ local function clearProps()
   for i = #rockPileQueue, 1, -1 do
     local id = rockPileQueue[i].id
     if id then
+      marbleInitialState[id] = nil  -- Clear initial state tracking
+      marbleCouplerState[id] = nil  -- Clear coupler state tracking
       local obj = be:getObjectByID(id)
       if obj then obj:delete() end
     end
@@ -654,6 +685,11 @@ local function cleanupJob(deleteTruck)
   isDispatching = false
   jobOfferSuppressed = true
   payloadUpdateTimer = 0
+
+  -- Clear debug visualization cache
+  debugDrawCache.bedData = nil
+  debugDrawCache.nodePoints = {}
+  debugDrawCache.marblePieces = {}
 
   clearProps()
 
@@ -673,6 +709,12 @@ local function cleanupJob(deleteTruck)
   jobObjects.truckSpawnQueued = false
   jobObjects.truckSpawnPos = nil
   jobObjects.truckSpawnRot = nil
+  jobObjects.marbleDamage = {}
+  jobObjects.totalMarbleDamagePercent = 0
+  jobObjects.anyMarbleDamaged = false
+  jobObjects.lastDeliveryDamagePercent = 0
+  jobObjects.deliveryBlocksStatus = nil
+  marbleCouplerState = {}
 
   currentState = STATE_IDLE
 end
@@ -857,30 +899,77 @@ end
 
 local function drawTruckBedDebug(bedData)
   if not ENABLE_DEBUG or not bedData then return end
-  local c = bedData.center
-  local hw, hl, hh = bedData.halfWidth, bedData.halfLength, bedData.halfHeight
-  local rx, ry, rz = bedData.axisX, bedData.axisY, bedData.axisZ
+  
+  -- Cache the bed data for persistent drawing
+  debugDrawCache.bedData = bedData
+end
 
-  local corners = {
-    c - rx*hw - ry*hl - rz*hh, c + rx*hw - ry*hl - rz*hh,
-    c + rx*hw + ry*hl - rz*hh, c - rx*hw + ry*hl - rz*hh,
-    c - rx*hw - ry*hl + rz*hh, c + rx*hw - ry*hl + rz*hh,
-    c + rx*hw + ry*hl + rz*hh, c - rx*hw + ry*hl + rz*hh,
-  }
+local function drawDebugVisualization()
+  if not ENABLE_DEBUG then return end
+  
+  local bedData = debugDrawCache.bedData
+  if bedData then
+    local c = bedData.center
+    local hw, hl, hh = bedData.halfWidth, bedData.halfLength, bedData.halfHeight
+    local rx, ry, rz = bedData.axisX, bedData.axisY, bedData.axisZ
 
-  local color = ColorF(0, 1, 0, 0.5)
-  debugDrawer:drawLine(corners[1], corners[2], color)
-  debugDrawer:drawLine(corners[2], corners[3], color)
-  debugDrawer:drawLine(corners[3], corners[4], color)
-  debugDrawer:drawLine(corners[4], corners[1], color)
-  debugDrawer:drawLine(corners[5], corners[6], color)
-  debugDrawer:drawLine(corners[6], corners[7], color)
-  debugDrawer:drawLine(corners[7], corners[8], color)
-  debugDrawer:drawLine(corners[8], corners[5], color)
-  for i = 1, 4 do
-    debugDrawer:drawLine(corners[i], corners[i+4], color)
+    local corners = {
+      c - rx*hw - ry*hl - rz*hh, c + rx*hw - ry*hl - rz*hh,
+      c + rx*hw + ry*hl - rz*hh, c - rx*hw + ry*hl - rz*hh,
+      c - rx*hw - ry*hl + rz*hh, c + rx*hw - ry*hl + rz*hh,
+      c + rx*hw + ry*hl + rz*hh, c - rx*hw + ry*hl + rz*hh,
+    }
+
+    local color = ColorF(0, 1, 0, 0.5)
+    debugDrawer:drawLine(corners[1], corners[2], color)
+    debugDrawer:drawLine(corners[2], corners[3], color)
+    debugDrawer:drawLine(corners[3], corners[4], color)
+    debugDrawer:drawLine(corners[4], corners[1], color)
+    debugDrawer:drawLine(corners[5], corners[6], color)
+    debugDrawer:drawLine(corners[6], corners[7], color)
+    debugDrawer:drawLine(corners[7], corners[8], color)
+    debugDrawer:drawLine(corners[8], corners[5], color)
+    for i = 1, 4 do
+      debugDrawer:drawLine(corners[i], corners[i+4], color)
+    end
+    debugDrawer:drawSphere(c, 0.2, ColorF(1, 1, 0, 0.8))
   end
-  debugDrawer:drawSphere(c, 0.2, ColorF(1, 1, 0, 0.8))
+  
+  -- Draw cached node points
+  for _, point in ipairs(debugDrawCache.nodePoints) do
+    if point.inside then
+      debugDrawer:drawSphere(point.pos, 0.05, ColorF(0, 1, 0, 0.5))
+    else
+      debugDrawer:drawSphere(point.pos, 0.03, ColorF(1, 0, 0, 0.3))
+    end
+  end
+  
+  -- Draw marble damage status
+  for _, pieceData in ipairs(debugDrawCache.marblePieces) do
+    if pieceData.center then
+      local center = pieceData.center
+      local brokenCount = pieceData.brokenCount or 0
+      local totalGroups = pieceData.totalGroups or 18
+      local damagePercent = pieceData.damagePercent or 0
+      
+      -- Draw sphere at marble center - color based on damage
+      local color
+      if brokenCount > 0 then
+        -- Red intensity based on damage
+        local redIntensity = math.min(1, 0.3 + (damagePercent / 100) * 0.7)
+        color = ColorF(redIntensity, 0.2, 0.2, 0.9)
+      else
+        -- Green for undamaged
+        color = ColorF(0.2, 1, 0.2, 0.7)
+      end
+      debugDrawer:drawSphere(center + vec3(0, 0, 1), 0.3, color)
+      
+      -- Draw damage text above the marble
+      local textPos = center + vec3(0, 0, 2)
+      local text = string.format("DMG: %d/%d (%.0f%%)", brokenCount, totalGroups, damagePercent)
+      debugDrawer:drawTextAdvanced(textPos, text, ColorF(1, 1, 1, 1), true, false, ColorI(0, 0, 0, 200))
+    end
+  end
 end
 
 local function calculateTruckPayload()
@@ -898,6 +987,11 @@ local function calculateTruckPayload()
     defaultMass = Config.MarbleMassDefault or Config.RockMassPerPile
   end
 
+  -- Clear and rebuild debug cache for node points
+  if ENABLE_DEBUG then
+    debugDrawCache.nodePoints = {}
+  end
+
   local totalMass = 0
   for _, rockEntry in ipairs(rockPileQueue) do
     local obj = be:getObjectByID(rockEntry.id)
@@ -912,13 +1006,12 @@ local function calculateTruckPayload()
         nodesChecked = nodesChecked + 1
         local localPos = obj:getNodePosition(i)
         local worldPoint = objPos - (axisX * localPos.x) - (axisY * localPos.y) + (axisZ * localPos.z)
-        if isPointInTruckBed(worldPoint, bedData) then
+        local isInside = isPointInTruckBed(worldPoint, bedData)
+        if isInside then
           nodesInside = nodesInside + 1
-          if ENABLE_DEBUG then
-            debugDrawer:drawSphere(worldPoint, 0.05, ColorF(0, 1, 0, 0.5))
-          end
-        elseif ENABLE_DEBUG then
-          debugDrawer:drawSphere(worldPoint, 0.03, ColorF(1, 0, 0, 0.3))
+        end
+        if ENABLE_DEBUG then
+          table.insert(debugDrawCache.nodePoints, {pos = worldPoint, inside = isInside})
         end
       end
       if nodesChecked > 0 then
@@ -929,6 +1022,399 @@ local function calculateTruckPayload()
     end
   end
   return totalMass
+end
+
+-- Calculate truck payload excluding damaged marble blocks
+local function calculateUndamagedTruckPayload()
+  if #rockPileQueue == 0 then return 0 end
+  if not jobObjects.truckID then return 0 end
+  local truck = be:getObjectByID(jobObjects.truckID)
+  if not truck then return 0 end
+
+  local bedData = getTruckBedData(truck)
+  if not bedData then return 0 end
+
+  local defaultMass = Config.RockMassPerPile
+  if jobObjects.materialType == "marble" then
+    defaultMass = Config.MarbleMassDefault or Config.RockMassPerPile
+  end
+
+  local totalMass = 0
+  for _, rockEntry in ipairs(rockPileQueue) do
+    -- Skip damaged marble blocks
+    local damageInfo = jobObjects.marbleDamage and jobObjects.marbleDamage[rockEntry.id]
+    if damageInfo and damageInfo.isDamaged then
+      -- Skip this block - it's damaged
+    else
+      local obj = be:getObjectByID(rockEntry.id)
+      if obj then
+        local tf = obj:getTransform()
+        local axisX, axisY, axisZ = tf:getColumn(0), tf:getColumn(1), tf:getColumn(2)
+        local objPos = obj:getPosition()
+        local nodeCount = obj:getNodeCount()
+        local step = 10
+        local nodesInside, nodesChecked = 0, 0
+        for i = 0, nodeCount - 1, step do
+          nodesChecked = nodesChecked + 1
+          local localPos = obj:getNodePosition(i)
+          local worldPoint = objPos - (axisX * localPos.x) - (axisY * localPos.y) + (axisZ * localPos.z)
+          if isPointInTruckBed(worldPoint, bedData) then
+            nodesInside = nodesInside + 1
+          end
+        end
+        if nodesChecked > 0 then
+          local entryMass = rockEntry.mass or defaultMass
+          local ratio = nodesInside / nodesChecked
+          totalMass = totalMass + (entryMass * ratio)
+        end
+      end
+    end
+  end
+  return totalMass
+end
+
+local function captureMarbleInitialState(objId)
+  local obj = be:getObjectByID(objId)
+  if not obj then return end
+  
+  local nodeCount = obj:getNodeCount()
+  if nodeCount <= 0 then return end
+  
+  marbleInitialState[objId] = {
+    nodeCount = nodeCount,
+    captureTime = os.clock(),
+    captured = true,
+    initialCentroids = nil  -- Will be set on first damage calculation after settling
+  }
+  
+  -- Initialize coupler state tracking for this marble
+  marbleCouplerState[objId] = {
+    brokenGroups = {},
+    totalGroups = #MARBLE_BREAK_GROUPS,
+    lastUpdate = 0
+  }
+end
+
+-- Query the vehicle for broken breakGroups
+-- Sends a Lua command to the vehicle that will check which breakGroups have broken
+local function queryMarbleCouplerState(objId)
+  local obj = be:getObjectByID(objId)
+  if not obj then return end
+  
+  -- Build list of breakGroups to check as a Lua table string
+  local groupsStr = "{"
+  for i, group in ipairs(MARBLE_BREAK_GROUPS) do
+    if i > 1 then groupsStr = groupsStr .. ", " end
+    groupsStr = groupsStr .. '"' .. group .. '"'
+  end
+  groupsStr = groupsStr .. "}"
+  
+  -- Vehicle-side Lua script to check broken breakGroups
+  -- The marble block uses coupler nodes to connect pieces:
+  --   - Nodes with "couplerTag: X" are SOURCE couplers (on one piece)
+  --   - Nodes with "tag: X" are TARGET nodes (on another piece)
+  -- When coupled, source and target nodes are welded at same position
+  -- When broken, they separate - we detect this by measuring distance
+  local vehicleScript = [[
+    local brokenGroups = {}
+    local groupsToCheck = ]] .. groupsStr .. [[
+    local myObjId = ]] .. tostring(objId) .. [[
+    local SEPARATION_THRESHOLD = 0.15  -- 15cm separation = broken (they start at ~0)
+    
+    if v and v.data and v.data.nodes then
+      -- Build maps of couplerTag -> source nodes and tag -> target nodes
+      local sourceNodes = {}  -- nodes with couplerTag
+      local targetNodes = {}  -- nodes with tag
+      
+      for nodeCid, node in pairs(v.data.nodes) do
+        -- Source coupler nodes have "couplerTag"
+        if node.couplerTag then
+          local t = node.couplerTag
+          sourceNodes[t] = sourceNodes[t] or {}
+          table.insert(sourceNodes[t], nodeCid)
+        end
+        -- Target nodes have "tag" (shorthand for couplerTag target)
+        if node.tag then
+          local t = node.tag
+          targetNodes[t] = targetNodes[t] or {}
+          table.insert(targetNodes[t], nodeCid)
+        end
+      end
+      
+      -- For each breakGroup, check if source and target nodes have separated
+      for _, groupName in ipairs(groupsToCheck) do
+        local sources = sourceNodes[groupName]
+        local targets = targetNodes[groupName]
+        
+        -- Need both source and target nodes to check
+        if sources and targets and #sources > 0 and #targets > 0 then
+          -- Find minimum distance between any source-target pair
+          local minDist = math.huge
+          for _, srcCid in ipairs(sources) do
+            local srcPos = obj:getNodePosition(srcCid)
+            if srcPos then
+              for _, tgtCid in ipairs(targets) do
+                local tgtPos = obj:getNodePosition(tgtCid)
+                if tgtPos then
+                  local dx = srcPos.x - tgtPos.x
+                  local dy = srcPos.y - tgtPos.y
+                  local dz = srcPos.z - tgtPos.z
+                  local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+                  if dist < minDist then
+                    minDist = dist
+                  end
+                end
+              end
+            end
+          end
+          
+          -- If minimum distance exceeds threshold, coupler is broken
+          if minDist > SEPARATION_THRESHOLD then
+            table.insert(brokenGroups, groupName)
+          end
+        end
+      end
+    end
+    
+    -- Send results back to GE
+    obj:queueGameEngineLua("extensions.Jobb_wl40logic.onMarbleCouplerCallback(" .. myObjId .. ", " .. serialize(brokenGroups) .. ")")
+  ]]
+  
+  --log("D", "wl40logic", "Sending coupler query to marble " .. objId)
+  obj:queueLuaCommand(vehicleScript)
+end
+
+-- Callback handler for coupler state data from vehicle
+local function onMarbleCouplerCallback(objId, brokenGroups)
+  if not objId then return end
+  
+  brokenGroups = brokenGroups or {}
+  
+  -- Debug logging (always log callback receipt)
+  --log("I", "wl40logic", "Coupler callback for marble " .. objId .. ": " .. #brokenGroups .. " broken groups")
+  if #brokenGroups > 0 then
+    --log("I", "wl40logic", "  Broken: " .. table.concat(brokenGroups, ", "))
+  end
+  
+  -- Initialize if needed
+  if not marbleCouplerState[objId] then
+    marbleCouplerState[objId] = {
+      brokenGroups = {},
+      totalGroups = #MARBLE_BREAK_GROUPS,
+      lastUpdate = 0
+    }
+  end
+  
+  marbleCouplerState[objId].brokenGroups = brokenGroups
+  marbleCouplerState[objId].lastUpdate = os.clock()
+end
+
+-- Calculate centroids for 8 spatial regions (octants) of the marble block
+-- Filters out wooden rail nodes using LOCAL Z position (rails are below Z=0 in local coords)
+local function calculatePieceCentroids(obj)
+  local nodeCount = obj:getNodeCount()
+  if nodeCount <= 0 then return nil end
+  
+  local objPos = obj:getPosition()
+  local tf = obj:getTransform()
+  local axisX = tf:getColumn(0)
+  local axisY = tf:getColumn(1)
+  local axisZ = tf:getColumn(2)
+  
+  -- Collect marble block nodes only (filter by LOCAL Z position)
+  -- Marble block nodes have local Z >= 0, rails are below Z=0
+  local worldPositions = {}
+  local localPositions = {}
+  
+  for i = 0, nodeCount - 1 do
+    local localPos = obj:getNodePosition(i)
+    
+    -- Only include nodes with local Z >= 0 (marble block, not rails)
+    -- The marble block has Z from 0 to ~1.55m, rails are at Z = -0.01 to -0.22
+    if localPos.z >= 0 then
+      local worldPoint = objPos - (axisX * localPos.x) - (axisY * localPos.y) + (axisZ * localPos.z)
+      table.insert(worldPositions, worldPoint)
+      table.insert(localPositions, localPos)
+    end
+  end
+  
+  -- Need at least some nodes to calculate
+  if #worldPositions == 0 then return nil end
+  
+  -- Calculate bounding box of filtered positions (in world coords for drawing)
+  local minX, maxX = math.huge, -math.huge
+  local minY, maxY = math.huge, -math.huge
+  local minZ, maxZ = math.huge, -math.huge
+  
+  for _, pos in ipairs(worldPositions) do
+    minX = math.min(minX, pos.x); maxX = math.max(maxX, pos.x)
+    minY = math.min(minY, pos.y); maxY = math.max(maxY, pos.y)
+    minZ = math.min(minZ, pos.z); maxZ = math.max(maxZ, pos.z)
+  end
+  
+  -- Calculate center in LOCAL coordinates for consistent octant division
+  local localMinX, localMaxX = math.huge, -math.huge
+  local localMinY, localMaxY = math.huge, -math.huge
+  local localMinZ, localMaxZ = math.huge, -math.huge
+  
+  for _, pos in ipairs(localPositions) do
+    localMinX = math.min(localMinX, pos.x); localMaxX = math.max(localMaxX, pos.x)
+    localMinY = math.min(localMinY, pos.y); localMaxY = math.max(localMaxY, pos.y)
+    localMinZ = math.min(localMinZ, pos.z); localMaxZ = math.max(localMaxZ, pos.z)
+  end
+  
+  local localCenterX = (localMinX + localMaxX) / 2
+  local localCenterY = (localMinY + localMaxY) / 2
+  local localCenterZ = (localMinZ + localMaxZ) / 2
+  
+  -- Divide nodes into 8 octants using LOCAL coordinates (consistent regardless of rotation)
+  local octants = {}
+  for i = 1, 8 do
+    octants[i] = {sum = vec3(0, 0, 0), count = 0}
+  end
+  
+  for idx, localPos in ipairs(localPositions) do
+    local octantIdx = 1
+    if localPos.x >= localCenterX then octantIdx = octantIdx + 1 end
+    if localPos.y >= localCenterY then octantIdx = octantIdx + 2 end
+    if localPos.z >= localCenterZ then octantIdx = octantIdx + 4 end
+    
+    -- Use world position for the centroid (for visualization)
+    octants[octantIdx].sum = octants[octantIdx].sum + worldPositions[idx]
+    octants[octantIdx].count = octants[octantIdx].count + 1
+  end
+  
+  -- Calculate centroids for each octant
+  local centroids = {}
+  for i = 1, 8 do
+    if octants[i].count > 0 then
+      centroids[i] = octants[i].sum / octants[i].count
+    end
+  end
+  
+  local worldCenterX = (minX + maxX) / 2
+  local worldCenterY = (minY + maxY) / 2
+  local worldCenterZ = (minZ + maxZ) / 2
+  
+  return centroids, {
+    center = vec3(worldCenterX, worldCenterY, worldCenterZ),
+    size = vec3(maxX - minX, maxY - minY, maxZ - minZ)
+  }
+end
+
+local function calculateMarbleDamage()
+  if jobObjects.materialType ~= "marble" then
+    jobObjects.marbleDamage = {}
+    jobObjects.totalMarbleDamagePercent = 0
+    jobObjects.anyMarbleDamaged = false
+    debugDrawCache.marblePieces = {}
+    return
+  end
+
+  if #rockPileQueue == 0 then
+    jobObjects.marbleDamage = {}
+    jobObjects.totalMarbleDamagePercent = 0
+    jobObjects.anyMarbleDamaged = false
+    debugDrawCache.marblePieces = {}
+    return
+  end
+
+  local totalDamage = 0
+  local damagedCount = 0
+  local checkedCount = 0
+
+  -- Clear and rebuild debug cache for marble pieces
+  if ENABLE_DEBUG then
+    debugDrawCache.marblePieces = {}
+  end
+
+  for _, rockEntry in ipairs(rockPileQueue) do
+    local obj = be:getObjectByID(rockEntry.id)
+    if obj then
+      checkedCount = checkedCount + 1
+      
+      -- Capture initial state if not already done
+      local initialState = marbleInitialState[rockEntry.id]
+      if not initialState then
+        captureMarbleInitialState(rockEntry.id)
+        initialState = marbleInitialState[rockEntry.id]
+      end
+      
+      -- Wait for settling period before calculating damage
+      if initialState and initialState.captureTime and (os.clock() - initialState.captureTime) < 2.0 then
+        jobObjects.marbleDamage[rockEntry.id] = {
+          damage = 0,
+          isDamaged = false,
+          settling = true,
+          brokenPieces = 0
+        }
+      else
+        -- Query coupler state from the vehicle (throttled by callback timing)
+        local couplerState = marbleCouplerState[rockEntry.id]
+        local now = os.clock()
+        
+        -- Query every 0.5 seconds to avoid spamming
+        if not couplerState or (now - couplerState.lastUpdate) > 0.5 then
+          queryMarbleCouplerState(rockEntry.id)
+        end
+        
+        -- Use cached coupler state to calculate damage
+        local brokenCount = 0
+        local totalGroups = #MARBLE_BREAK_GROUPS
+        local brokenGroupsSet = {}
+        
+        if couplerState and couplerState.brokenGroups then
+          brokenCount = #couplerState.brokenGroups
+          -- Build set of broken groups for debug visualization
+          for _, groupName in ipairs(couplerState.brokenGroups) do
+            brokenGroupsSet[groupName] = true
+          end
+        end
+        
+        local damagePercent = 0
+        if totalGroups > 0 then
+          damagePercent = brokenCount / totalGroups
+        end
+        
+        -- Only consider damaged if above minimum threshold
+        local isDamaged = (damagePercent * 100) >= MARBLE_MIN_DISPLAY_DAMAGE
+        
+        jobObjects.marbleDamage[rockEntry.id] = {
+          damage = damagePercent,
+          isDamaged = isDamaged,
+          brokenPieces = brokenCount,
+          totalConnections = totalGroups,
+          brokenGroups = couplerState and couplerState.brokenGroups or {}
+        }
+        
+        -- Cache debug data for visualization
+        if ENABLE_DEBUG then
+          local objPos = obj:getPosition()
+          -- Store simple damage info for visualization
+          table.insert(debugDrawCache.marblePieces, {
+            center = objPos,
+            brokenCount = brokenCount,
+            totalGroups = totalGroups,
+            damagePercent = damagePercent * 100,
+            brokenGroups = couplerState and couplerState.brokenGroups or {}
+          })
+        end
+        
+        totalDamage = totalDamage + damagePercent
+        if isDamaged then
+          damagedCount = damagedCount + 1
+        end
+      end
+    end
+  end
+  
+  if checkedCount > 0 then
+    jobObjects.totalMarbleDamagePercent = (totalDamage / checkedCount) * 100
+    jobObjects.anyMarbleDamaged = damagedCount > 0
+  else
+    jobObjects.totalMarbleDamagePercent = 0
+    jobObjects.anyMarbleDamaged = false
+  end
 end
 
 local function getLoadedPropIdsInTruck(minRatio)
@@ -971,6 +1457,58 @@ local function getLoadedPropIdsInTruck(minRatio)
   return ids
 end
 
+-- Check if a specific block is loaded in the truck (returns ratio 0-1)
+local function getBlockLoadRatio(blockId)
+  if not jobObjects.truckID then return 0 end
+  local truck = be:getObjectByID(jobObjects.truckID)
+  if not truck then return 0 end
+
+  local bedData = getTruckBedData(truck)
+  if not bedData then return 0 end
+
+  local obj = be:getObjectByID(blockId)
+  if not obj then return 0 end
+
+  local tf = obj:getTransform()
+  local axisX, axisY, axisZ = tf:getColumn(0), tf:getColumn(1), tf:getColumn(2)
+  local objPos = obj:getPosition()
+  local nodeCount = obj:getNodeCount()
+  local step = 10
+  local nodesInside, nodesChecked = 0, 0
+  for i = 0, nodeCount - 1, step do
+    nodesChecked = nodesChecked + 1
+    local localPos = obj:getNodePosition(i)
+    local worldPoint = objPos - (axisX * localPos.x) - (axisY * localPos.y) + (axisZ * localPos.z)
+    if isPointInTruckBed(worldPoint, bedData) then
+      nodesInside = nodesInside + 1
+    end
+  end
+  if nodesChecked > 0 then
+    return nodesInside / nodesChecked
+  end
+  return 0
+end
+
+-- Get block status info for all marble blocks
+local function getMarbleBlocksStatus()
+  local blocks = {}
+  for i, rockEntry in ipairs(rockPileQueue) do
+    local damageInfo = jobObjects.marbleDamage and jobObjects.marbleDamage[rockEntry.id]
+    local isDamaged = damageInfo and damageInfo.isDamaged or false
+    local loadRatio = getBlockLoadRatio(rockEntry.id)
+    local isLoaded = loadRatio >= 0.1  -- 10% in truck = loaded
+    
+    table.insert(blocks, {
+      index = i,
+      id = rockEntry.id,
+      isDamaged = isDamaged,
+      isLoaded = isLoaded,
+      loadRatio = loadRatio
+    })
+  end
+  return blocks
+end
+
 local function despawnPropIds(propIds)
   if not propIds or #propIds == 0 then return end
   local idSet = {}
@@ -979,6 +1517,8 @@ local function despawnPropIds(propIds)
   for i = #rockPileQueue, 1, -1 do
     local id = rockPileQueue[i].id
     if id and idSet[id] then
+      marbleInitialState[id] = nil  -- Clear initial state tracking
+      marbleCouplerState[id] = nil  -- Clear coupler state tracking
       local obj = be:getObjectByID(id)
       if obj then obj:delete() end
       table.remove(rockPileQueue, i)
@@ -1003,6 +1543,7 @@ local function handleDeliveryArrived()
 
   if contract.paymentType == "progressive" then
     local payment = math.floor(tons * (contract.payRate or 0))
+    
     ContractSystem.contractProgress.totalPaidSoFar = (ContractSystem.contractProgress.totalPaidSoFar or 0) + payment
 
     local career = extensions.career_career
@@ -1023,6 +1564,11 @@ local function handleDeliveryArrived()
   jobObjects.currentLoadMass = 0
   jobObjects.lastDeliveredMass = 0
   jobObjects.deferredTruckTargetPos = nil
+  jobObjects.marbleDamage = {}
+  jobObjects.totalMarbleDamagePercent = 0
+  jobObjects.anyMarbleDamaged = false
+  jobObjects.lastDeliveryDamagePercent = 0
+  jobObjects.deliveryBlocksStatus = nil
   payloadUpdateTimer = 0
 
   core_groundMarkers.setPath(nil)
@@ -1156,6 +1702,7 @@ local function drawUI(dt)
   imgui.PushStyleColor2(imgui.Col_Border, imgui.ImVec4(1.0, 0.7, 0.0, 0.8 * uiAnim.opacity))
   imgui.PushStyleVar1(imgui.StyleVar_WindowBorderSize, 2)
   imgui.SetNextWindowBgAlpha(0.95 * uiAnim.opacity)
+  imgui.SetNextWindowSizeConstraints(imgui.ImVec2(280, 100), imgui.ImVec2(350, 800))
 
   if imgui.Begin("##WL40System", nil, imgui.WindowFlags_NoTitleBar + imgui.WindowFlags_AlwaysAutoResize + imgui.WindowFlags_NoCollapse) then
     imgui.SetWindowFontScale(1.5)
@@ -1280,12 +1827,59 @@ local function drawUI(dt)
       imgui.ProgressBar(percent, imgui.ImVec2(-1, 30), string.format("%.0f%%", percent * 100))
       imgui.PopStyleColor(1)
 
+      -- Marble block status indicator (show each block)
+      if jobObjects.materialType == "marble" then
+        imgui.Dummy(imgui.ImVec2(0, 8))
+        imgui.Separator()
+        imgui.Dummy(imgui.ImVec2(0, 4))
+        
+        local blocks = getMarbleBlocksStatus()
+        local anyDamaged = jobObjects.anyMarbleDamaged or false
+        
+        if anyDamaged then
+          imgui.TextColored(imgui.ImVec4(1, 0.6, 0.2, uiAnim.opacity * 0.8), "Damaged blocks won't count")
+          imgui.Dummy(imgui.ImVec2(0, 2))
+        end
+        
+        -- Show each block's status
+        for _, block in ipairs(blocks) do
+          local statusText, statusColor
+          if block.isDamaged then
+            local warningPulse = (math.sin(uiAnim.pulse * 2) * 0.3) + 0.7
+            statusText = "DAMAGED"
+            statusColor = imgui.ImVec4(1, 0.3, 0.2, warningPulse * uiAnim.opacity)
+          else
+            statusText = "OK"
+            statusColor = imgui.ImVec4(0.3, 1, 0.3, uiAnim.opacity)
+          end
+          
+          local loadedText = block.isLoaded and "Loaded" or "Not loaded"
+          local loadedColor = block.isLoaded and imgui.ImVec4(0.3, 0.8, 1, uiAnim.opacity) or imgui.ImVec4(0.6, 0.6, 0.6, uiAnim.opacity)
+          
+          imgui.TextColored(imgui.ImVec4(1, 1, 1, uiAnim.opacity), string.format("Block %d: ", block.index))
+          imgui.SameLine()
+          imgui.TextColored(statusColor, statusText)
+          imgui.SameLine()
+          imgui.TextColored(imgui.ImVec4(0.5, 0.5, 0.5, uiAnim.opacity), " | ")
+          imgui.SameLine()
+          imgui.TextColored(loadedColor, loadedText)
+        end
+      end
+
       imgui.Dummy(imgui.ImVec2(0, 20))
       imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0, 0.4, 0, uiAnim.opacity))
       imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0, 0.6, 0, uiAnim.opacity))
       if imgui.Button("SEND TRUCK", imgui.ImVec2(-1, 45)) then
         if jobObjects.truckID and jobObjects.activeGroup and jobObjects.activeGroup.destination then
-          jobObjects.lastDeliveredMass = jobObjects.currentLoadMass or 0
+          -- Only count undamaged marble blocks for delivery weight
+          if jobObjects.materialType == "marble" then
+            jobObjects.lastDeliveredMass = calculateUndamagedTruckPayload()
+            -- Store block status at time of sending for delivery display
+            jobObjects.deliveryBlocksStatus = getMarbleBlocksStatus()
+          else
+            jobObjects.lastDeliveredMass = jobObjects.currentLoadMass or 0
+            jobObjects.deliveryBlocksStatus = nil
+          end
           jobObjects.deliveredPropIds = getLoadedPropIdsInTruck(0.1)
           local destPos = vec3(jobObjects.activeGroup.destination.pos)
           core_groundMarkers.setPath(nil)
@@ -1312,6 +1906,25 @@ local function drawUI(dt)
         imgui.Separator()
       end
       imgui.Text("Truck driving to destination...")
+      
+      -- Show marble blocks being delivered
+      if jobObjects.materialType == "marble" and jobObjects.deliveryBlocksStatus then
+        imgui.Dummy(imgui.ImVec2(0, 5))
+        imgui.Text("Delivering:")
+        for _, block in ipairs(jobObjects.deliveryBlocksStatus) do
+          if block.isLoaded then
+            local statusText = block.isDamaged and "DAMAGED" or "OK"
+            local color
+            if block.isDamaged then
+              color = imgui.ImVec4(1, 0.4, 0.2, uiAnim.opacity * 0.7)
+            else
+              color = imgui.ImVec4(0.3, 1, 0.3, uiAnim.opacity)
+            end
+            imgui.TextColored(color, string.format("  Block %d (%s)", block.index, statusText))
+          end
+        end
+      end
+      
       imgui.Dummy(imgui.ImVec2(0, 10))
       if imgui.Button("ABANDON CONTRACT", imgui.ImVec2(-1, 30)) then
         abandonContract()
@@ -1454,8 +2067,11 @@ local function onUpdate(dt)
     payloadUpdateTimer = payloadUpdateTimer + dt
     if payloadUpdateTimer >= 0.25 then
       jobObjects.currentLoadMass = calculateTruckPayload()
+      calculateMarbleDamage()
       payloadUpdateTimer = 0
     end
+    -- Draw debug visualization every frame for persistence
+    drawDebugVisualization()
   end
   drawUI(dt)
 
@@ -1601,6 +2217,7 @@ local function onClientStartMission()
   cachedInAnyLoadingZone = false
   sitesLoadTimer = 0
   groupCachePrecomputeQueued = false
+  marbleInitialState = {}
 end
 
 local function onClientEndMission()
@@ -1612,10 +2229,13 @@ local function onClientEndMission()
   groupCachePrecomputeQueued = false
   ContractSystem.availableContracts = {}
   ContractSystem.activeContract = nil
+  marbleInitialState = {}
+  marbleCouplerState = {}
 end
 
 M.onUpdate = onUpdate
 M.onClientStartMission = onClientStartMission
 M.onClientEndMission = onClientEndMission
+M.onMarbleCouplerCallback = onMarbleCouplerCallback
 
 return M
