@@ -5,7 +5,7 @@
 local C = {}
 
 -- Plates that should never be pursued by AI
-local IGNORED_PLATES = { ["911"]=true,["BUS"]=true }
+local IGNORED_PLATES = { ["911"]=true }
 
 -- Returns true if the vehicle should be ignored; caches the decision on veh.ignorePolice
 local function shouldIgnoreVehicle(id, veh)

@@ -66,7 +66,7 @@
       },
       {
         "model": "md_series",
-        "config": "EMT MD60 offroad"
+        "config": "EMT MD60 offroad",
         "reputationLvl": 0,
         "deliveryLvl": 0,
         "mileages": {
@@ -78,7 +78,7 @@
           "4": 38221920,
           "5": 38221920
         }
-      },
+      }
     ],
     "reputationValues": {
       "returnLoanerDamaged": -10
@@ -87,12 +87,12 @@
       {
         // Level -1
         "label": "Recruit",
-        "min": -200
+        "min": -200,
 		"hiddenFromDealerList": true
       },
       {
         // Level 0
-        "label": "Rookie"
+        "label": "Rookie",
 		"hiddenFromDealerList": true
       },
       {
@@ -100,7 +100,7 @@
         "deliveryBonus": {
           "value": 1.20
         },
-        "label": "EMR"
+        "label": "EMR",
 		"hiddenFromDealerList": true
       },
       {
@@ -175,21 +175,6 @@
       },
 	  {
         "model": "citybus",
-        "config": "busWork_highway",
-        "reputationLvl": 1,
-        "deliveryLvl": 0,
-        "mileages": {
-          "-1": 804672000,
-          "0": 321868800,
-          "1": 160934400,
-          "2": 160934400,
-          "3": 80467200,
-          "4": 80467200,
-          "5": 40233600
-        }
-      },
-	  {
-        "model": "citybus",
         "config": "busWork_metro",
         "reputationLvl": 2,
         "deliveryLvl": 0,
@@ -235,17 +220,18 @@
       }
     ],
     "reputationValues": {
-      "returnLoanerDamaged": -30   },
+      "returnLoanerDamaged": -30
+    },
     "reputationLevels": [
       {
         // Level -1
         "label": "Recruit",
-        "min": -200
+        "min": -200,
 		"hiddenFromDealerList": true
       },
       {
         // Level 0
-        "label": "Rookie"
+        "label": "Rookie",
 		"hiddenFromDealerList": true
       },
       {
@@ -253,7 +239,7 @@
         "deliveryBonus": {
           "value": 1.20
         },
-        "label": "Driver"
+        "label": "Driver",
 		"hiddenFromDealerList": true
       },
       {

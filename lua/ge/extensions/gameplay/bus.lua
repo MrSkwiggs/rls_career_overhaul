@@ -29,6 +29,8 @@ local stopMonitorActive       = false
 local stopSettleTimer         = 0
 local stopSettleDelay         = 2.5
 
+-- Trigger state (for radius check replacement)
+local currentTriggerName      = nil
 -- Rough ride / tips
 local roughRide               = 0
 local lastVelocity            = nil
@@ -47,6 +49,13 @@ local currentFinalStopName    = nil
 -- Current route info (to prevent route changes mid-route)
 local currentRouteName        = nil
 local currentRouteKey         = nil
+
+-- Store display names by trigger name for reliable access
+local stopDisplayNames        = {}
+
+-- Bus stop perimeter markers
+local stopMarkerObjects       = {}
+local stopPerimeterTrigger    = nil
 
 -- forward declaration 
 local isBus
@@ -180,6 +189,199 @@ function M.returnPartsTree(partsTree)
 end
 
 -- ================================
+-- BUS STOP PERIMETER MARKERS
+-- ================================
+-- Create a single corner marker
+local function createCornerMarker(markerName)
+  local marker = createObject('TSStatic')
+  marker:setField('shapeName', 0, "art/shapes/interface/position_marker.dae")
+  marker:setPosition(vec3(0, 0, 0))
+  marker.scale = vec3(1, 1, 1)
+  marker:setField('rotation', 0, '1 0 0 0')
+  marker.useInstanceRenderData = true
+  marker:setField('instanceColor', 0, '1 1 1 1')
+  marker:setField('collisionType', 0, "Collision Mesh")
+  marker:setField('decalType', 0, "Collision Mesh")
+  marker:setField('playAmbient', 0, "1")
+  marker:setField('allowPlayerStep', 0, "1")
+  marker:setField('canSave', 0, "0")
+  marker:setField('canSaveDynamicFields', 0, "1")
+  marker:setField('renderNormals', 0, "0")
+  marker:setField('meshCulling', 0, "0")
+  marker:setField('originSort', 0, "0")
+  marker:setField('forceDetail', 0, "-1")
+  marker.canSave = false
+  marker:registerObject(markerName)
+  if scenetree and scenetree.MissionGroup then
+    scenetree.MissionGroup:addObject(marker)
+  end
+  return marker
+end
+
+-- Clear all stop markers
+local function clearStopMarkers()
+  -- Delete all marker objects by name (more reliable than object references)
+  for i, obj in ipairs(stopMarkerObjects) do
+    if obj then
+      local success, err = pcall(function()
+        local objName = obj:getName()
+        if objName then
+          -- Always try to find by name and delete, regardless of isValid()
+          local foundObj = scenetree.findObject(objName)
+          if foundObj then
+            if editor and editor.onRemoveSceneTreeObjects then
+              editor.onRemoveSceneTreeObjects({foundObj:getId()})
+            end
+            foundObj:delete()
+            print(string.format("[bus] Deleted marker: %s", objName))
+          end
+        end
+        -- Also try direct deletion if object reference is still valid
+        if obj:isValid() then
+          if editor and editor.onRemoveSceneTreeObjects then
+            editor.onRemoveSceneTreeObjects({obj:getId()})
+          end
+          obj:delete()
+        end
+      end)
+      if not success then
+        print(string.format("[bus] Error deleting marker %d: %s", i, tostring(err)))
+      end
+    end
+  end
+  table.clear(stopMarkerObjects)
+  
+  -- Delete perimeter trigger by name
+  if stopPerimeterTrigger then
+    local success, err = pcall(function()
+      local triggerName = stopPerimeterTrigger:getName()
+      if triggerName then
+        -- Always try to find by name and delete
+        local foundTrigger = scenetree.findObject(triggerName)
+        if foundTrigger then
+          if editor and editor.onRemoveSceneTreeObjects then
+            editor.onRemoveSceneTreeObjects({foundTrigger:getId()})
+          end
+          foundTrigger:delete()
+          print(string.format("[bus] Deleted perimeter trigger: %s", triggerName))
+        end
+      end
+      -- Also try direct deletion if object reference is still valid
+      if stopPerimeterTrigger:isValid() then
+        if editor and editor.onRemoveSceneTreeObjects then
+          editor.onRemoveSceneTreeObjects({stopPerimeterTrigger:getId()})
+        end
+        stopPerimeterTrigger:delete()
+      end
+    end)
+    if not success then
+      print(string.format("[bus] Error deleting perimeter trigger: %s", tostring(err)))
+    end
+    stopPerimeterTrigger = nil
+  end
+  
+  print("[bus] Cleared all stop markers")
+end
+
+-- Create perimeter markers and box trigger for a stop
+local function createStopPerimeter(trigger)
+  if not trigger then return end
+  
+  -- Clear any existing markers first
+  clearStopMarkers()
+  
+  -- Get trigger position, rotation, and scale
+  local triggerPos = trigger:getPosition()
+  local triggerRot = trigger:getRotation()
+  local triggerScale = trigger:getScale()
+  
+  -- Use trigger's scale if available, otherwise use reasonable defaults
+  local stopLength = triggerScale and triggerScale.x or 15  -- Length along road
+  local stopWidth = triggerScale and triggerScale.y or 8    -- Width perpendicular to road
+  local stopHeight = triggerScale and triggerScale.z or 5   -- Height for raycasting
+  
+  -- Convert rotation to quaternion for calculations
+  local rot = quat(triggerRot)
+  local vecX = rot * vec3(1, 0, 0)  -- Right vector
+  local vecY = rot * vec3(0, 1, 0)   -- Forward vector
+  local vecZ = rot * vec3(0, 0, 1)   -- Up vector
+  
+  -- Calculate corner positions
+  local halfLength = stopLength * 0.5
+  local halfWidth = stopWidth * 0.5
+  
+  local corners = {
+    {pos = triggerPos - vecX * halfLength + vecY * halfWidth, name = "TL"}, -- Top Left
+    {pos = triggerPos + vecX * halfLength + vecY * halfWidth, name = "TR"}, -- Top Right
+    {pos = triggerPos + vecX * halfLength - vecY * halfWidth, name = "BR"}, -- Bottom Right
+    {pos = triggerPos - vecX * halfLength - vecY * halfWidth, name = "BL"}  -- Bottom Left
+  }
+  
+  -- Create corner markers
+  local qOff = quatFromEuler(0, 0, math.pi/2) * quatFromEuler(0, math.pi/2, math.pi/2)
+  local rotations = {
+    quatFromEuler(0, 0, math.rad(90)),   -- TL
+    quatFromEuler(0, 0, math.rad(180)),  -- TR
+    quatFromEuler(0, 0, math.rad(270)),   -- BR
+    quatFromEuler(0, 0, 0)                -- BL
+  }
+  
+  -- Use timestamp to ensure unique marker names and avoid collisions
+  local uniqueId = os.time() * 1000 + (os.clock() * 1000 % 1000)  -- milliseconds precision
+  for i, corner in ipairs(corners) do
+    local markerName = string.format("busStopMarker_%s_%d_%d", trigger:getName() or "unknown", i, uniqueId)
+    
+    -- Raycast to ground
+    local hit = Engine.castRay(corner.pos + vecZ * 2, corner.pos - vecZ * 10, true, false)
+    local groundPos = hit and vec3(hit.pt) or (corner.pos + vecZ * 0.05)
+    groundPos = groundPos + vecZ * 0.05
+    
+    -- Calculate rotation
+    local hitNorm = hit and vec3(hit.norm) or vecZ
+    local finalRot = rotations[i] * qOff * quatFromDir(hitNorm, vecY)
+    
+    -- Create and position marker
+    local marker = createCornerMarker(markerName)
+    marker:setPosRot(groundPos.x, groundPos.y, groundPos.z, finalRot.x, finalRot.y, finalRot.z, finalRot.w)
+    marker:setField('instanceColor', 0, "0.6 0.9 0.23 1")  -- Green color for bus stops
+    table.insert(stopMarkerObjects, marker)
+  end
+  
+  -- Create box trigger for perimeter detection (optional - if you want to use it for validation)
+  local perimeterName = string.format("busStopPerimeter_%s_%d", trigger:getName() or "unknown", uniqueId)
+  local perimeterTrigger = createObject('BeamNGTrigger')
+  perimeterTrigger.loadMode = 1
+  perimeterTrigger:setField("triggerType", 0, "Box")
+  perimeterTrigger:setPosition(triggerPos)
+  perimeterTrigger:setScale(vec3(stopLength, stopWidth, stopHeight))
+  local rotTorque = rot:toTorqueQuat()
+  perimeterTrigger:setField('rotation', 0, rotTorque.x .. ' ' .. rotTorque.y .. ' ' .. rotTorque.z .. ' ' .. rotTorque.w)
+  perimeterTrigger:registerObject(perimeterName)
+  stopPerimeterTrigger = perimeterTrigger
+  
+  print(string.format("[bus] Created perimeter markers for stop: %s (scale: %.1f x %.1f x %.1f)", 
+    trigger:getName() or "unknown", stopLength, stopWidth, stopHeight))
+end
+
+-- Show markers for current stop
+local function showCurrentStopMarkers()
+  if not currentStopIndex or not stopTriggers or not stopTriggers[currentStopIndex] then 
+    print("[bus] showCurrentStopMarkers: Invalid stop index or triggers")
+    return 
+  end
+  
+  local currentTrigger = stopTriggers[currentStopIndex]
+  local triggerName = currentTrigger:getName() or "unknown"
+  print(string.format("[bus] Showing markers for stop %d: %s", currentStopIndex, triggerName))
+  createStopPerimeter(currentTrigger)
+end
+
+-- Hide markers (cleanup)
+local function hideStopMarkers()
+  clearStopMarkers()
+end
+
+-- ================================
 -- UTILITIES
 -- ================================
 isBus = function(vehicle)
@@ -195,7 +397,27 @@ local function showNextStopMarker()
   local trigger = getNextTrigger()
   if not trigger then return end
   core_groundMarkers.resetAll()
-  core_groundMarkers.setPath(trigger:getPosition())
+  
+  -- Use route planner with setupPathMulti for better routing (like base game bus)
+  local vehicle = be:getPlayerVehicle(0)
+  if vehicle then
+    local routePlanner = require('gameplay/route/route')()
+    local currentPos = vehicle:getPosition()
+    local targetPos = trigger:getPosition()
+    routePlanner:setupPathMulti({currentPos, targetPos})
+    -- Apply the route to ground markers
+    if routePlanner.path and #routePlanner.path > 0 then
+      core_groundMarkers.setPath(targetPos)
+    else
+      -- Fallback to direct path if route planner fails
+      core_groundMarkers.setPath(targetPos)
+    end
+  else
+    core_groundMarkers.setPath(trigger:getPosition())
+  end
+  
+  -- Show perimeter markers for next stop
+  showCurrentStopMarkers()
 end
 
 -- ================================
@@ -209,6 +431,8 @@ local function endRoute(reason, payout)
   currentRouteName = nil
   currentRouteKey = nil
   core_groundMarkers.resetAll()
+  -- Clear any markers
+  hideStopMarkers()
 
   local msg = "Shift ended."
   if reason then msg = msg .. " (" .. reason .. ")" end
@@ -274,21 +498,89 @@ end
 -- ================================
 local function loadRoutesFromJSON()
   local currentMap = getCurrentLevelIdentifier()
-  if not currentMap then return nil end
+  print(string.format("[bus] Current map identifier: %s", tostring(currentMap)))
+  if not currentMap then 
+    print("[bus] No current map identifier found")
+    return nil 
+  end
 
-  -- Map-specific route file paths
+  -- Map-specific route file paths (with leading slash for jsonReadFile)
   local routeFiles = {
-    ["west_coast_usa"] = "levels/west_coast_usa/wcuBusRoutes.json",
-    ["jungle_rock_island"] = "levels/jungle_rock_island/jriBusRoutes.json"
+    ["west_coast_usa"] = "/levels/west_coast_usa/wcuBusRoutes.json",
+    ["jungle_rock_island"] = "/levels/jungle_rock_island/jriBusRoutes.json"
   }
 
   local routeFile = routeFiles[currentMap]
-  if not routeFile then return nil end
+  if not routeFile then 
+    print(string.format("[bus] No route file configured for map: %s", currentMap))
+    local availableMaps = {}
+    for k, _ in pairs(routeFiles) do
+      table.insert(availableMaps, k)
+    end
+    print(string.format("[bus] Available maps in routeFiles: %s", table.concat(availableMaps, ", ")))
+    return nil 
+  end
 
+  print(string.format("[bus] Loading route file: %s", routeFile))
   local routeData = jsonReadFile(routeFile)
-  if not routeData or not routeData.routes then return nil end
+  if not routeData then
+    print(string.format("[bus] Failed to read route file: %s", routeFile))
+    return nil
+  end
+  if not routeData.routes then
+    print(string.format("[bus] Route file %s does not contain 'routes' key", routeFile))
+    return nil
+  end
 
+  print(string.format("[bus] Successfully loaded routes from %s", routeFile))
   return routeData.routes
+end
+
+-- Helper function to update bus controller display
+local function updateBusControllerDisplay()
+  if not currentRouteActive or not currentStopIndex or not stopTriggers or #stopTriggers == 0 then return end
+  
+  -- Build route data for the bus controller 
+  local routeData = {routeId = "RLS", routeID = "RLS", direction = "", tasklist = {}}
+
+  -- Get current stop's display name for the direction field
+  local currentStop = stopTriggers[currentStopIndex]
+  local currentTriggerName = currentStop:getName() or ""
+  local currentStopName = stopDisplayNames[currentTriggerName] or currentTriggerName or string.format("Stop %02d", currentStopIndex)
+  routeData.direction = currentStopName
+
+  -- Build tasklist starting from the current stop (include it so controller shows correct progression)
+  for i = currentStopIndex, #stopTriggers do
+    local t = stopTriggers[i]
+    local triggerName = t:getName() or ""
+    local label
+    -- Use display name from our stored table if available, otherwise use "Stop 01", "Stop 02", etc.
+    label = stopDisplayNames[triggerName] or string.format("Stop %02d", i)
+    table.insert(routeData.tasklist, {triggerName, label})
+  end
+  -- If we're not at the end, add remaining stops from the beginning (for loop routes)
+  if currentStopIndex > 1 then
+    for i = 1, currentStopIndex - 1 do
+      local t = stopTriggers[i]
+      local triggerName = t:getName() or ""
+      local label
+      label = stopDisplayNames[triggerName] or string.format("Stop %02d", i)
+      table.insert(routeData.tasklist, {triggerName, label})
+    end
+  end
+
+  -- Send to vehicle controller (for bus_setLineInfo)
+  local vehicle = be:getPlayerVehicle(0)
+  if vehicle then
+    vehicle:queueLuaCommand(string.format([[
+      if controller and controller.onGameplayEvent then
+        controller.onGameplayEvent("bus_setLineInfo", %s)
+      end
+    ]], dumps(routeData)))
+  end
+
+  -- Also send BusDisplayUpdate for the UI
+  guihooks.trigger('BusDisplayUpdate', routeData)
 end
 
 local function initRoute()
@@ -348,11 +640,26 @@ local function initRoute()
 
   -- Build route from JSON stop names
   stopTriggers = {}
+  stopDisplayNames = {}  -- Clear and rebuild display names table
   local missingStops = {}
-  for _, stopName in ipairs(selectedRoute.stops) do
+  for _, stopData in ipairs(selectedRoute.stops) do
+    local stopName, displayName
+    if type(stopData) == "table" then
+    -- New format: ["triggerName", "Display Name"]
+    stopName = stopData[1]
+    displayName = stopData[2]
+    else
+      -- Old format: just "triggerName" (backward compatibility)
+    stopName = stopData
+    displayName = nil
+    end
     local trigger = allTriggers[stopName]
     if trigger then
       table.insert(stopTriggers, trigger)
+      -- Store display name by trigger name for reliable access
+      if displayName then
+        stopDisplayNames[stopName] = displayName
+      end
     else
       table.insert(missingStops, stopName)
     end
@@ -381,84 +688,87 @@ local function initRoute()
   tipTotal, roughRide, lastVelocity = 0, 0, nil
 
   local startStopName = stopTriggers[currentStopIndex]:getName() or "Unknown"
-  core_groundMarkers.setPath(stopTriggers[currentStopIndex]:getPosition())
+  
+  -- Use route planner with setupPathMulti for better routing (like base game bus)
+  local vehicle = be:getPlayerVehicle(0)
+  if vehicle then
+    local routePlanner = require('gameplay/route/route')()
+    local currentPos = vehicle:getPosition()
+    local targetPos = stopTriggers[currentStopIndex]:getPosition()
+    routePlanner:setupPathMulti({currentPos, targetPos})
+    -- Apply the route to ground markers
+    if routePlanner.path and #routePlanner.path > 0 then
+      core_groundMarkers.setPath(targetPos)
+    else
+      -- Fallback to direct path if route planner fails
+      core_groundMarkers.setPath(targetPos)
+    end
+  else
+    core_groundMarkers.setPath(stopTriggers[currentStopIndex]:getPosition())
+  end
+  
   ui_message(
       string.format("Bus route '%s' started. Proceed to %s. Route has %d stops.", routeName, startStopName, #stopTriggers),
       6, "info", "info")
 
-  -- Build route data for the bus controller 
-  local routeData = {routeId = "RLS", routeID = "RLS", direction = routeName, tasklist = {}}
-  for i, t in ipairs(stopTriggers) do
-    local label
-    if i == 1 then
-      label = "Route Start"
-    else
-      label = string.format("Stop %02d", i - 1)
-    end
-    table.insert(routeData.tasklist, {t:getName(), label})
-  end
-
-  vehicle:queueLuaCommand(string.format([[
-    if controller and controller.onGameplayEvent then
-      controller.onGameplayEvent("bus_setLineInfo", %s)
-    end
-  ]], dumps(routeData)))
+  -- Update bus controller display
+  updateBusControllerDisplay()
+  
+  -- Show markers for first stop
+  showCurrentStopMarkers()
 end
 -- ================================
 -- PROCESS STOP 
 -- ================================
 local function processStop(vehicle, dtSim)
-    if not currentRouteActive or not currentStopIndex then return end
-    if routeCooldown > 0 then return end
-    if not stopTriggers or #stopTriggers == 0 then return end
-    if currentStopIndex < 1 or currentStopIndex > #stopTriggers then return end
+  if not currentRouteActive or not currentStopIndex then return end
+  if routeCooldown > 0 then return end
+  if not stopTriggers or #stopTriggers == 0 then return end
+  if currentStopIndex < 1 or currentStopIndex > #stopTriggers then return end
 
-    local trigger = getNextTrigger()
-    if not trigger then return end
+  local trigger = getNextTrigger()
+  if not trigger then return end
 
-    -- Verify this is actually the correct stop by checking the trigger name matches what we expect
-    local expectedStopName = nil
-    if stopTriggers[currentStopIndex] then
-        expectedStopName = stopTriggers[currentStopIndex]:getName()
-    end
-    local actualTriggerName = trigger:getName()
-    if expectedStopName and actualTriggerName ~= expectedStopName then
-        -- Wrong trigger, don't process
-        return
-    end
+  -- Verify this is actually the correct stop by checking the trigger name matches what we expect
+  local expectedStopName = nil
+  if stopTriggers[currentStopIndex] then
+      expectedStopName = stopTriggers[currentStopIndex]:getName()
+  end
+  local actualTriggerName = trigger:getName()
+  if expectedStopName and actualTriggerName ~= expectedStopName then
+      -- Wrong trigger, don't process
+      return
+  end
 
-    local dist = (vehicle:getPosition() - trigger:getPosition()):length()
+  ------------------------------------------------------------
+  -- MUST BE IN STOP TRIGGER (replaced distance check)
+  ------------------------------------------------------------
+  if currentTriggerName == expectedStopName then
+      local velocity = vehicle:getVelocity():length()
 
-    ------------------------------------------------------------
-    -- MUST BE IN STOP RADIUS
-    ------------------------------------------------------------
-    if dist <= 7 then
-        local velocity = vehicle:getVelocity():length()
+      -- Must be fully stopped
+      if velocity > 0.5 then
+          ui_message("Come to a complete stop before passengers can board.", 2, "info", "info")
+          dwellTimer = nil
+          stopMonitorActive = false
+          stopSettleTimer = 0
+          return
+      end
 
-        -- Must be fully stopped
-        if velocity > 0.5 then
-            ui_message("Come to a complete stop before passengers can board.", 2, "info", "info")
-            dwellTimer = nil
-            stopMonitorActive = false
-            stopSettleTimer = 0
-            return
-        end
+      -- Stop monitoring and settle
+      if not stopMonitorActive then
+          stopMonitorActive = true
+          stopSettleTimer = 0
+          ui_message("Please open doors to begin boarding", 2.5, "info", "bus")
+      else
+          stopSettleTimer = stopSettleTimer + (dtSim or 0.033)
+      end
 
-        -- Stop monitoring and settle
-        if not stopMonitorActive then
-            stopMonitorActive = true
-            stopSettleTimer = 0
-            ui_message("Please open doors to begin boarding", 2.5, "info", "bus")
-        else
-            stopSettleTimer = stopSettleTimer + (dtSim or 0.033)
-        end
-
-        -- Must remain still for settle delay
-        if stopSettleTimer < stopSettleDelay then
-            dwellTimer = nil
-            return
-        end
-
+      -- Must remain still for settle delay
+      if stopSettleTimer < stopSettleDelay then
+          dwellTimer = nil
+          return
+      end
         ------------------------------------------------------------
         -- START DWELL (Initialize boarding + deboarding)
         ------------------------------------------------------------
@@ -466,13 +776,6 @@ local function processStop(vehicle, dtSim)
             dwellTimer = 0
             consecutiveStops = consecutiveStops + 1
             totalStopsCompleted = totalStopsCompleted + 1
-
-            -- Notify bus controller 
-            vehicle:queueLuaCommand(string.format([[
-                if controller and controller.onGameplayEvent then
-                    controller.onGameplayEvent("bus_onAtStop",{triggerName=%q})
-                end
-            ]], trigger:getName()))
 
             -- Final stop? (Map-specific)
             local triggerName = trigger:getName() or ""
@@ -483,7 +786,9 @@ local function processStop(vehicle, dtSim)
                 trueDeboarding = passengersOnboard
                 dwellDuration = math.max(6, trueDeboarding * 0.6)
             else
-                trueBoarding = math.random(3, 12)
+                local capacity = M.vehicleCapacity or 20
+                local availableSpace = math.max(0, capacity - passengersOnboard)
+                trueBoarding = math.random(3, math.min(12, availableSpace))
                 trueDeboarding = (passengersOnboard > 0)
                     and math.random(1, math.min(passengersOnboard, 6))
                     or 0
@@ -585,7 +890,7 @@ local function processStop(vehicle, dtSim)
         ------------------------------------------------------------
         dwellTimer = dwellTimer + (dtSim or 0.033)
 
-        if dwellTimer >= dwellDuration then
+        if dwellTimer >= dwellDuration and (not boardingCoroutine or coroutine.status(boardingCoroutine) == "dead") then
             print(string.format("[bus] Dwell complete at stop %d", currentStopIndex))
 
             --------------------------------------------------------
@@ -631,12 +936,6 @@ local function processStop(vehicle, dtSim)
             stopMonitorActive = false
             stopSettleTimer = 0
 
-            vehicle:queueLuaCommand(string.format([[
-                if controller and controller.onGameplayEvent then
-                  controller.onGameplayEvent("bus_onDepartedStop",{triggerName=%q})
-                end
-            ]], trigger:getName()))
-
             --------------------------------------------------------
             -- MOVE TO NEXT STOP
             --------------------------------------------------------
@@ -659,6 +958,8 @@ local function processStop(vehicle, dtSim)
                 routeCooldown = 10
                 currentStopIndex = 1
                 showNextStopMarker()
+                -- Update controller display after loop completion
+                updateBusControllerDisplay()
 
             else
                 currentStopIndex = currentStopIndex + 1
@@ -670,6 +971,8 @@ local function processStop(vehicle, dtSim)
                 print(string.format("[bus] Moving to next stop: index %d, name %s", currentStopIndex, nextStopName))
                 showNextStopMarker()
                 ui_message(string.format("Proceed to Stop %02d.", currentStopIndex), 4, "info", "bus_next")
+                -- Update controller display with new current stop
+                updateBusControllerDisplay()
             end
         end
 
@@ -770,5 +1073,27 @@ function M.onUpdate(dtReal, dtSim, dtRaw)
     processStop(vehicle, dtSim)
 end
 
+local function onBeamNGTrigger(data)
+  if be:getPlayerVehicleID(0) ~= data.subjectID then
+    return
+  end
+  if gameplay_walk.isWalking() then return end
+  if not data.triggerName:find("_bs_") then
+    return
+  end
+  
+  if data.event == "enter" then
+    currentTriggerName = data.triggerName
+  elseif data.event == "exit" then
+    if currentTriggerName == data.triggerName then
+      currentTriggerName = nil
+      -- Cancel dwell if player exits the stop
+      dwellTimer = nil
+      stopMonitorActive = false
+      stopSettleTimer = 0
+    end
+  end
+end
+M.onBeamNGTrigger = onBeamNGTrigger
 M.onExtensionLoaded = onExtensionLoaded
 return M
