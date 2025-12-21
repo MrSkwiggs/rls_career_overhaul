@@ -105,6 +105,20 @@ local function discoverActivityTypes()
     typeSources["criminal"] = typeSources["criminal"] or {}
     typeSources["criminal"]["criminal_module"] = true
 
+    -- Bus activities
+    if gameplay_bus then
+        activityTypesFound["bus"] = true
+        typeSources["bus"] = typeSources["bus"] or {}
+        typeSources["bus"]["bus_module"] = true
+    end
+
+    -- Ambulance activities
+    if gameplay_ambulance then
+        activityTypesFound["ambulance"] = true
+        typeSources["ambulance"] = typeSources["ambulance"] or {}
+        typeSources["ambulance"]["ambulance_module"] = true
+    end
+
     return activityTypesFound
 end
 

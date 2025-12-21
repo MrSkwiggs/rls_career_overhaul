@@ -590,6 +590,16 @@ local function initRoute()
     return
   end
 
+  -- Check if bus multiplier is 0 (if economy adjuster supports it)
+  if career_economyAdjuster then
+    local busMultiplier = career_economyAdjuster.getSectionMultiplier("bus") or 1.0
+    if busMultiplier == 0 then
+      ui_message("Bus routes are currently disabled.", 5, "error", "error")
+      print("[bus] Bus multiplier is set to 0, route initialization cancelled")
+      return
+    end
+  end
+
   stopTriggers = {}
   
   -- Load routes from JSON
@@ -907,6 +917,13 @@ local function processStop(vehicle, dtSim)
             local base = 400
             local bonusMultiplier = 1 + (consecutiveStops / #stopTriggers) * 3
             local payout = math.floor(base * bonusMultiplier)
+            
+            -- Apply economy adjuster multiplier if available
+            if career_economyAdjuster then
+                local multiplier = career_economyAdjuster.getSectionMultiplier("bus") or 1.0
+                payout = math.floor(payout * multiplier + 0.5)
+            end
+            
             accumulatedReward = accumulatedReward + payout
 
             --------------------------------------------------------

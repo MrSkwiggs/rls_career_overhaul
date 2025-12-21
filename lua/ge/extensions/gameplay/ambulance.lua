@@ -131,6 +131,16 @@ end
 -- START NEXT MISSION
 -- ================================
 startNextMission = function()
+    -- Check if ambulance multiplier is 0 (if economy adjuster supports it)
+    if career_economyAdjuster then
+        local ambulanceMultiplier = career_economyAdjuster.getSectionMultiplier("ambulance") or 1.0
+        if ambulanceMultiplier == 0 then
+            ui_message("Ambulance missions are currently disabled.", 5, "error", "error")
+            print("[ambulance] Ambulance multiplier is set to 0, mission generation cancelled")
+            return
+        end
+    end
+
     currentFare = nil
     state = "ready"
     pickupTimer = nil
@@ -261,6 +271,13 @@ updateMarkers = function(dtReal, dtSim, dtRaw)
         local distToHospital = (currentFare.pickup.pos - currentFare.destination.pos):length()
         local distanceKM = (distToPickup + distToHospital) / 1000
         local basePayout = math.floor(2200 * distanceKM)
+        
+        -- Apply economy adjuster multiplier if available
+        if career_economyAdjuster then
+            local multiplier = career_economyAdjuster.getSectionMultiplier("ambulance") or 1.0
+            basePayout = math.floor(basePayout * multiplier + 0.5)
+        end
+        
         local penalty = math.floor(roughRide * 0.1)
         local finalPayout = math.max(0, basePayout - penalty)
 
