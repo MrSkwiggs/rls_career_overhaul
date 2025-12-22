@@ -12,10 +12,19 @@ local Config = {
   RockProp      = "rock_pile",
   MarbleProp    = "marble_block",
   MarbleConfigs = {
-    { config = "big_rails", mass = 38000 },
-    { config = "rails", mass = 19000 }
+    { config = "big_rails", mass = 38000, blockType = "big", displayName = "Large Block" },
+    { config = "rails", mass = 19000, blockType = "small", displayName = "Small Block" }
   },
   MarbleMassDefault = 8000,
+  
+  -- Block-based contract settings for marble
+  MarbleBlockRanges = {
+    -- Per tier: {bigMin, bigMax, smallMin, smallMax}
+    [1] = { big = {0, 1}, small = {1, 2} },   -- Tier 1: 0-1 big, 1-2 small
+    [2] = { big = {1, 2}, small = {1, 3} },   -- Tier 2: 1-2 big, 1-3 small
+    [3] = { big = {1, 3}, small = {2, 4} },   -- Tier 3: 1-3 big, 2-4 small
+    [4] = { big = {2, 4}, small = {3, 5} },   -- Tier 4: 2-4 big, 3-5 small
+  },
 
   MaxRockPiles    = 2,
   RockDespawnTime = 120,
@@ -33,7 +42,7 @@ local Config = {
     },
     us_semi = {
       offsetBack = 3.0,
-      offsetSide = 0,
+      offsetSide = -0.45,
       length = 6.0,
       width = 2.4,
       floorHeight = 0.3,
@@ -50,7 +59,22 @@ local Config = {
 
   Contracts = {
     MaxActiveContracts = 6,
+    InitialContracts = 4,           -- Start with only 4 contracts
     RefreshDays = 3,
+    
+    -- Dynamic contract generation
+    ContractSpawnInterval = 2,      -- In-game hours between new contracts
+    ContractExpirationTime = {      -- Hours until contract expires (by tier)
+      [1] = 8,   -- Tier 1: Easy contracts stay 8 hours
+      [2] = 6,   -- Tier 2: 6 hours
+      [3] = 4,   -- Tier 3: Hard contracts are more urgent
+      [4] = 3,   -- Tier 4: Expert contracts are rare opportunities
+    },
+    
+    -- Urgency system
+    UrgentContractChance = 0.15,    -- 15% chance a contract is "URGENT"
+    UrgentExpirationMult = 0.5,     -- Urgent contracts expire 50% faster
+    UrgentPayBonus = 0.25,          -- +25% pay for urgent contracts
 
     Tiers = {
       [1] = { name = "Easy",    tonnageRange = { single = {15, 25}, bulk = {30, 50} },   basePayRate = { min = 80,  max = 100 }, modifierChance = 0.2, specialChance = 0.02 },
@@ -74,7 +98,32 @@ local Config = {
 
     AbandonPenalty = 500,
     CrashPenalty = 1000,
-  }
+  },
+
+  -- ============================================================================
+  -- ZONE STOCK SYSTEM CONFIG
+  -- ============================================================================
+  -- Each zone has limited stock that regenerates over time.
+  -- Material type is determined by zone tags in the sites JSON (add "marble" or "rocks" tag)
+  Stock = {
+    -- Default stock settings per zone (can be extended per-zone via customFields.values if needed)
+    DefaultMaxStock = 10,           -- Max units a zone can hold
+    DefaultRegenRate = 1,           -- Units regenerated per in-game hour
+    RegenCheckInterval = 30,        -- Seconds (real time) between regen checks
+    
+    -- Max props to spawn at once per material type (performance limit)
+    -- This prevents spawning too many physics objects at once
+    MaxSpawnedProps = {
+      marble = 2,   -- Max 2 marble blocks spawned at once (1 big + 1 small typically)
+      rocks = 2,    -- Max 2 rock piles spawned at once
+    },
+    
+    -- How much stock each prop type consumes when spawned
+    StockCostPerProp = {
+      marble = 1,   -- Each marble block costs 1 stock unit
+      rocks = 1,    -- Each rock pile costs 1 stock unit
+    },
+  },
 }
 
 local ENABLE_DEBUG = true
@@ -86,11 +135,23 @@ local ContractSystem = {
   activeContract = nil,
   lastRefreshDay = -999,
   contractProgress = {
-    deliveredTons = 0,
+    deliveredTons = 0,        -- For rocks contracts
     totalPaidSoFar = 0,
     startTime = 0,
-    deliveryCount = 0
-  }
+    deliveryCount = 0,
+    -- For marble contracts (block-based)
+    deliveredBlocks = {
+      big = 0,
+      small = 0,
+      total = 0
+    }
+  },
+  
+  -- Dynamic contract tracking
+  lastContractSpawnTime = 0,      -- In-game hour of last spawn
+  contractsGeneratedToday = 0,    -- Track daily generation
+  expiredContractsTotal = 0,      -- Track how many expired (for stats)
+  initialContractsGenerated = false,  -- Track if initial batch was generated
 }
 
 local PlayerData = {
@@ -101,14 +162,18 @@ local PlayerData = {
 
 local STATE_IDLE             = 0
 local STATE_CONTRACT_SELECT  = 1
-local STATE_DRIVING_TO_SITE  = 2
-local STATE_TRUCK_ARRIVING   = 3
-local STATE_LOADING          = 4
-local STATE_DELIVERING       = 5
-local STATE_RETURN_TO_QUARRY = 6
-local STATE_AT_QUARRY_DECIDE = 7
+local STATE_CHOOSING_ZONE    = 2   -- NEW: Player choosing which zone to load from
+local STATE_DRIVING_TO_SITE  = 3
+local STATE_TRUCK_ARRIVING   = 4
+local STATE_LOADING          = 5
+local STATE_DELIVERING       = 6
+local STATE_RETURN_TO_QUARRY = 7
+local STATE_AT_QUARRY_DECIDE = 8
 
 local currentState = STATE_IDLE
+
+-- Stores compatible zones for current contract (zones with matching material)
+local compatibleZones = {}
 
 local sitesData = nil
 local sitesFilePath = nil
@@ -135,6 +200,7 @@ local jobObjects = {
 }
 
 local uiAnim = { opacity = 0, yOffset = 50, pulse = 0, targetOpacity = 0 }
+local uiHidden = false
 local markerAnim = { time = 0, pulseScale = 1.0, rotationAngle = 0, beamHeight = 0, ringExpand = 0 }
 
 local rockPileQueue = {}
@@ -162,7 +228,18 @@ local payloadUpdateTimer = 0
 local anyZoneCheckTimer = 0
 local cachedInAnyLoadingZone = false
 local sitesLoadTimer = 0
+local contractUpdateTimer = 0
+local CONTRACT_UPDATE_INTERVAL = 5  -- Check contracts every 5 seconds
 local groupCachePrecomputeQueued = false
+local stockRegenTimer = 0  -- Timer for zone stock regeneration checks
+
+-- Truck movement tracking for delivery
+local truckStoppedTimer = 0
+local truckLastPosition = nil
+local truckStoppedThreshold = 2.0  -- Seconds of being stopped before re-sending
+local truckStopSpeedThreshold = 1.0  -- m/s - below this is considered "stopped"
+local truckResendCount = 0
+local truckMaxResends = 15  -- Maximum times to re-send truck before giving up
 
 local function pickTierForPlayer()
   local level = PlayerData.level or 1
@@ -203,6 +280,19 @@ local function weightedRandomChoice(items)
   return (items or {})[1]
 end
 
+-- Helper to get current in-game hour (0-24)
+local function getCurrentGameHour()
+  if core_environment and core_environment.getTimeOfDay then
+    local tod = core_environment.getTimeOfDay()
+    if tod and type(tod) == "table" and tod.time then
+      return tod.time * 24
+    elseif tod and type(tod) == "number" then
+      return tod * 24
+    end
+  end
+  return 12  -- Default to noon if not available
+end
+
 local function generateContract(forceTier)
   if #availableGroups == 0 then return nil end
   local tier = forceTier or pickTierForPlayer()
@@ -211,22 +301,12 @@ local function generateContract(forceTier)
   local isSpecial = math.random() < (tierData.specialChance or 0)
   local isBulk = math.random() < 0.4
 
-  local materials = {"rocks", "marble"}
-  local material = materials[math.random(#materials)]
-
+  -- Pick a random zone and use its material type from tags
   local group = availableGroups[math.random(#availableGroups)]
   if not group then return nil end
-
-  local tonnageRange = (isBulk and tierData.tonnageRange and tierData.tonnageRange.bulk) or (tierData.tonnageRange and tierData.tonnageRange.single) or {15, 25}
-  local requiredTons = math.random(tonnageRange[1], tonnageRange[2])
-
-  if isSpecial then
-    if math.random() < 0.5 then
-      requiredTons = math.random(10, 20)
-    else
-      requiredTons = math.random(300, 500)
-    end
-  end
+  
+  -- Use the zone's material type (set from tags in discoverGroups)
+  local material = group.materialType or "rocks"
 
   local payRate = math.random(tierData.basePayRate.min, tierData.basePayRate.max)
 
@@ -250,16 +330,98 @@ local function generateContract(forceTier)
     bonusMultiplier = bonusMultiplier + math.random(50, 150) / 100
   end
 
-  local totalPayout = math.floor(requiredTons * payRate * bonusMultiplier)
-  local paymentType = isBulk and (math.random() < 0.6 and "progressive" or "completion_only") or "completion_only"
+  -- NEW: Urgency system
+  local isUrgent = math.random() < (Config.Contracts.UrgentContractChance or 0.15)
+  if isUrgent then
+    bonusMultiplier = bonusMultiplier + (Config.Contracts.UrgentPayBonus or 0.25)
+  end
 
-  local contractNames = {
-    "Standard Haul", "Local Delivery", "Construction Supply",
-    "Industrial Order", "Building Materials", "Infrastructure Project",
-    "Development Contract", "Municipal Supply"
-  }
+  -- Material-specific contract requirements
+  local requiredTons = 0
+  local requiredBlocks = nil  -- Only set for marble
+  local estimatedTrips = 1
+  
+  if material == "marble" then
+    -- Marble contracts use block counts instead of tons
+    local blockRanges = Config.MarbleBlockRanges[tier] or Config.MarbleBlockRanges[1]
+    local bigBlocks = math.random(blockRanges.big[1], blockRanges.big[2])
+    local smallBlocks = math.random(blockRanges.small[1], blockRanges.small[2])
+    
+    -- Ensure at least 1 block total
+    if bigBlocks == 0 and smallBlocks == 0 then
+      smallBlocks = 1
+    end
+    
+    -- Special contracts get more blocks
+    if isSpecial then
+      bigBlocks = bigBlocks + math.random(1, 2)
+      smallBlocks = smallBlocks + math.random(1, 2)
+    end
+    
+    requiredBlocks = {
+      big = bigBlocks,
+      small = smallBlocks,
+      total = bigBlocks + smallBlocks
+    }
+    
+    -- Calculate equivalent tons for payout (big = 38t, small = 19t)
+    requiredTons = (bigBlocks * 38) + (smallBlocks * 19)
+    
+    -- Estimate trips: truck can carry 1 big + 1 small per trip, or 2 small per trip
+    -- Each trip can take: 1 big block, or 1 big + 1 small, or 2 small
+    if bigBlocks >= smallBlocks then
+      -- We have more big blocks, so trips = big blocks (small ones ride along)
+      estimatedTrips = bigBlocks
+    else
+      -- More small blocks than big - big blocks ride with smalls, remaining smalls need extra trips
+      local remainingSmall = smallBlocks - bigBlocks  -- Smalls that don't have a big to pair with
+      estimatedTrips = bigBlocks + math.ceil(remainingSmall / 2)
+    end
+    estimatedTrips = math.max(1, estimatedTrips)  -- At least 1 trip
+  else
+    -- Rocks use tonnage system
+    local tonnageRange = (isBulk and tierData.tonnageRange and tierData.tonnageRange.bulk) or (tierData.tonnageRange and tierData.tonnageRange.single) or {15, 25}
+    requiredTons = math.random(tonnageRange[1], tonnageRange[2])
+
+    if isSpecial then
+      if math.random() < 0.5 then
+        requiredTons = math.random(10, 20)
+      else
+        requiredTons = math.random(300, 500)
+      end
+    end
+    
+    estimatedTrips = math.ceil(requiredTons / (Config.TargetLoad / 1000))
+  end
+
+  local totalPayout = math.floor(requiredTons * payRate * bonusMultiplier)
+
+  -- Contract names
+  local contractNames
+  if material == "marble" then
+    contractNames = {
+      "Marble Delivery", "Stone Block Order", "Monument Supply",
+      "Sculpture Materials", "Premium Stone Haul", "Architectural Order",
+      "Building Block Contract", "Luxury Stone Supply"
+    }
+  else
+    contractNames = {
+      "Standard Haul", "Local Delivery", "Construction Supply",
+      "Industrial Order", "Building Materials", "Infrastructure Project",
+      "Development Contract", "Municipal Supply"
+    }
+  end
   local name = contractNames[math.random(#contractNames)]
   if isBulk then name = "Bulk " .. name end
+  if isUrgent then name = "URGENT: " .. name end
+
+  -- NEW: Expiration calculation
+  local currentHour = getCurrentGameHour()
+  local baseExpiration = Config.Contracts.ContractExpirationTime[tier] or 6
+  if isUrgent then
+    baseExpiration = baseExpiration * (Config.Contracts.UrgentExpirationMult or 0.5)
+  end
+  local expiresAt = currentHour + baseExpiration
 
   return {
     id = os.time() + math.random(1000, 9999),
@@ -267,40 +429,43 @@ local function generateContract(forceTier)
     tier = tier,
     material = material,
     requiredTons = requiredTons,
+    requiredBlocks = requiredBlocks,  -- NEW: Block counts for marble {big = N, small = M, total = N+M}
     isBulk = isBulk,
     payRate = payRate,
     totalPayout = totalPayout,
-    paymentType = paymentType,
     modifiers = modifiers,
     bonusMultiplier = bonusMultiplier,
     isSpecial = isSpecial,
-    group = group,
-    groupTag = group.secondaryTag,
-    estimatedTrips = math.ceil(requiredTons / (Config.TargetLoad / 1000))
+    
+    -- UNLINKED: Contracts now store destination only, not source zone
+    -- The loading zone is determined by where the player is when they accept the contract
+    destination = {
+      pos = group.destination and group.destination.pos and vec3(group.destination.pos) or nil,
+      name = group.destination and group.destination.name or "Destination",
+      originZoneTag = group.secondaryTag,  -- For reference/display only
+    },
+    
+    -- Legacy fields for compatibility (will be set when contract is accepted)
+    group = nil,  -- Set to current zone when accepted
+    groupTag = group.secondaryTag,  -- Original zone tag for display
+    
+    estimatedTrips = estimatedTrips,
+    
+    -- Lifecycle fields
+    isUrgent = isUrgent,
+    createdAt = currentHour,
+    expiresAt = expiresAt,
+    expirationHours = baseExpiration,
   }
 end
 
-local function generateContracts()
-  ContractSystem.availableContracts = {}
-  if #availableGroups == 0 then return end
-
-  local tierDistribution = {
-    pickTierForPlayer(),
-    pickTierForPlayer(),
-    pickTierForPlayer(),
-    math.random(1, 2),
-    math.random(2, 3),
-    math.random(3, 4)
-  }
-
-  for i = 1, (Config.Contracts.MaxActiveContracts or 6) do
-    local contract = generateContract(tierDistribution[i])
-    if contract then
-      table.insert(ContractSystem.availableContracts, contract)
-    end
-  end
-
+-- Sort contracts by tier, then payout
+local function sortContracts()
   table.sort(ContractSystem.availableContracts, function(a, b)
+    -- Urgent contracts first
+    if a.isUrgent ~= b.isUrgent then
+      return a.isUrgent
+    end
     if a.tier == b.tier then
       return a.totalPayout < b.totalPayout
     end
@@ -308,10 +473,134 @@ local function generateContracts()
   end)
 end
 
+-- Generate initial batch of contracts (fewer than max)
+local function generateInitialContracts()
+  ContractSystem.availableContracts = {}
+  if #availableGroups == 0 then return end
+
+  local initialCount = Config.Contracts.InitialContracts or 4
+  
+  -- Weighted tier distribution for initial batch
+  local tierDistribution = {
+    pickTierForPlayer(),
+    pickTierForPlayer(),
+    math.random(1, 2),
+    math.random(2, 3),
+  }
+
+  for i = 1, initialCount do
+    local contract = generateContract(tierDistribution[i])
+    if contract then
+      table.insert(ContractSystem.availableContracts, contract)
+    end
+  end
+
+  sortContracts()
+  
+  -- Reset spawn timer
+  ContractSystem.lastContractSpawnTime = getCurrentGameHour()
+  ContractSystem.contractsGeneratedToday = initialCount
+  ContractSystem.initialContractsGenerated = true
+  
+  print("[Quarry] Generated " .. #ContractSystem.availableContracts .. " initial contracts")
+end
+
+-- Legacy function for compatibility - now calls initial generation
+local function generateContracts()
+  generateInitialContracts()
+end
+
+-- Try to spawn a new contract (called periodically)
+local function trySpawnNewContract()
+  -- Don't spawn if at max capacity
+  if #ContractSystem.availableContracts >= (Config.Contracts.MaxActiveContracts or 6) then
+    return false
+  end
+  
+  local currentHour = getCurrentGameHour()
+  local lastSpawn = ContractSystem.lastContractSpawnTime or 0
+  local interval = Config.Contracts.ContractSpawnInterval or 2
+  
+  -- Handle day wrap (0-24 cycle)
+  local hoursSinceSpawn = currentHour - lastSpawn
+  if hoursSinceSpawn < 0 then
+    hoursSinceSpawn = hoursSinceSpawn + 24  -- Wrapped around midnight
+  end
+  
+  if hoursSinceSpawn >= interval then
+    local contract = generateContract()
+    if contract then
+      table.insert(ContractSystem.availableContracts, contract)
+      sortContracts()
+      ContractSystem.lastContractSpawnTime = currentHour
+      ContractSystem.contractsGeneratedToday = (ContractSystem.contractsGeneratedToday or 0) + 1
+      
+      -- Notify player
+      local urgentText = contract.isUrgent and " (URGENT!)" or ""
+      ui_message("New contract available: " .. contract.name .. urgentText, 4, "info")
+      Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_Unlock_01')
+      
+      print("[Quarry] Spawned new contract: " .. contract.name .. " (Tier " .. contract.tier .. ")")
+      return true
+    end
+  end
+  
+  return false
+end
+
+-- Check for expired contracts and remove them
+local function checkContractExpiration()
+  local currentHour = getCurrentGameHour()
+  local expiredCount = 0
+  local remainingContracts = {}
+  
+  for _, contract in ipairs(ContractSystem.availableContracts) do
+    local expiresAt = contract.expiresAt or math.huge
+    
+    -- Handle day wrap - if expiresAt is way higher than current (next day), adjust
+    local hoursUntilExpire = expiresAt - currentHour
+    if expiresAt > 24 and currentHour < 12 then
+      -- Contract was created yesterday, adjust
+      hoursUntilExpire = expiresAt - 24 - currentHour
+    end
+    
+    if hoursUntilExpire > 0 then
+      table.insert(remainingContracts, contract)
+    else
+      expiredCount = expiredCount + 1
+      ContractSystem.expiredContractsTotal = (ContractSystem.expiredContractsTotal or 0) + 1
+      print("[Quarry] Contract expired: " .. (contract.name or "Unknown"))
+    end
+  end
+  
+  if expiredCount > 0 then
+    ContractSystem.availableContracts = remainingContracts
+    ui_message(expiredCount .. " contract" .. (expiredCount > 1 and "s" or "") .. " expired", 3, "warning")
+  end
+  
+  return expiredCount
+end
+
+-- Calculate hours remaining for a contract
+local function getContractHoursRemaining(contract)
+  if not contract or not contract.expiresAt then return 99 end
+  local currentHour = getCurrentGameHour()
+  local hoursLeft = contract.expiresAt - currentHour
+  
+  -- Handle day wrap
+  if contract.expiresAt > 24 and currentHour < 12 then
+    hoursLeft = contract.expiresAt - 24 - currentHour
+  end
+  if hoursLeft < 0 then hoursLeft = hoursLeft + 24 end
+  
+  return hoursLeft
+end
+
 local function shouldRefreshContracts()
   local currentDay = math.floor(os.time() / 86400)
   if currentDay - (ContractSystem.lastRefreshDay or -999) >= (Config.Contracts.RefreshDays or 3) then
     ContractSystem.lastRefreshDay = currentDay
+    ContractSystem.initialContractsGenerated = false  -- Allow regeneration
     return true
   end
   return false
@@ -319,8 +608,18 @@ end
 
 local function checkContractCompletion()
   if not ContractSystem.activeContract then return false end
+  local contract = ContractSystem.activeContract
   local p = ContractSystem.contractProgress
-  return (p and p.deliveredTons or 0) >= (ContractSystem.activeContract.requiredTons or math.huge)
+  
+  -- For marble contracts, check block counts
+  if contract.material == "marble" and contract.requiredBlocks then
+    local delivered = p.deliveredBlocks or { big = 0, small = 0 }
+    local required = contract.requiredBlocks
+    return (delivered.big >= required.big) and (delivered.small >= required.small)
+  end
+  
+  -- For rocks contracts, check tons
+  return (p and p.deliveredTons or 0) >= (contract.requiredTons or math.huge)
 end
 
 local function lerp(a, b, t) return a + (b - a) * t end
@@ -370,8 +669,19 @@ local function ensureGroupCache(group)
   local key = tostring(group.secondaryTag)
   local cache = groupCache[key]
   if not cache then
-    cache = {}
+    cache = {
+      -- Stock system initialization
+      stock = {
+        current = Config.Stock.DefaultMaxStock,
+        max = Config.Stock.DefaultMaxStock,
+        regenRate = Config.Stock.DefaultRegenRate,
+        lastRegenCheck = getCurrentGameHour(),
+      },
+      spawnedPropCount = 0,  -- Track currently spawned props for this zone
+    }
     groupCache[key] = cache
+    print(string.format("[Quarry] Initialized stock for zone '%s': %d/%d", 
+      key, cache.stock.current, cache.stock.max))
   end
   return cache
 end
@@ -385,14 +695,68 @@ local function ensureGroupOffRoadCentroid(group)
   return cache
 end
 
+-- Update zone stock regeneration (called from onUpdate)
+local function updateZoneStocks(dt)
+  stockRegenTimer = stockRegenTimer + dt
+  if stockRegenTimer < Config.Stock.RegenCheckInterval then return end
+  stockRegenTimer = 0
+
+  local currentHour = getCurrentGameHour()
+
+  for _, group in ipairs(availableGroups) do
+    local cache = groupCache[tostring(group.secondaryTag)]
+    if cache and cache.stock then
+      local stock = cache.stock
+      local hoursPassed = currentHour - stock.lastRegenCheck
+      
+      -- Handle day wrap (0-24 cycle)
+      if hoursPassed < 0 then hoursPassed = hoursPassed + 24 end
+      
+      if hoursPassed >= 1 then
+        local regenAmount = math.floor(hoursPassed * stock.regenRate)
+        if regenAmount > 0 and stock.current < stock.max then
+          local oldStock = stock.current
+          stock.current = math.min(stock.max, stock.current + regenAmount)
+          stock.lastRegenCheck = currentHour
+          
+          if stock.current > oldStock then
+            print(string.format("[Quarry] Zone '%s': Stock regenerated %d -> %d/%d", 
+              group.secondaryTag, oldStock, stock.current, stock.max))
+          end
+        else
+          -- Update last check time even if no regen happened
+          stock.lastRegenCheck = currentHour
+        end
+      end
+    end
+  end
+end
+
+-- Get current stock info for a zone (for UI display)
+local function getZoneStockInfo(group)
+  if not group then return nil end
+  local cache = ensureGroupCache(group)
+  if not cache or not cache.stock then return nil end
+  
+  return {
+    current = cache.stock.current,
+    max = cache.stock.max,
+    regenRate = cache.stock.regenRate,
+    spawnedProps = cache.spawnedPropCount or 0,
+    materialType = group.materialType or "rocks"
+  }
+end
+
 local function discoverGroups(sites)
   local groups = {}
   if not sites or not sites.sortedTags then return groups end
 
   local primary = { spawn = true, destination = true, loading = true }
+  -- Known material types - add more here if needed
+  local materialTags = { marble = true, rocks = true }
 
   for _, secondaryTag in ipairs(sites.sortedTags) do
-    if not primary[secondaryTag] then
+    if not primary[secondaryTag] and not materialTags[secondaryTag] then
       local spawnLoc, destLoc, loadingZone
       local sCount, dCount, zCount = 0, 0, 0
 
@@ -416,12 +780,27 @@ local function discoverGroups(sites)
       end
 
       if sCount == 1 and dCount == 1 and zCount == 1 then
+        -- Detect material type from loading zone tags
+        local materialType = nil
+        if loadingZone.customFields and loadingZone.customFields.tags then
+          for tag, _ in pairs(loadingZone.customFields.tags) do
+            if materialTags[tag] then
+              materialType = tag
+              break
+            end
+          end
+        end
+        
         table.insert(groups, {
           secondaryTag = secondaryTag,
           spawn = spawnLoc,
           destination = destLoc,
-          loading = loadingZone
+          loading = loadingZone,
+          materialType = materialType or "rocks"  -- Default to rocks if no material tag found
         })
+        
+        print(string.format("[Quarry] Discovered zone '%s' with material type: %s", 
+          secondaryTag, materialType or "rocks (default)"))
       end
     end
   end
@@ -456,6 +835,22 @@ local function loadQuarrySites()
   sitesFilePath = fp
   availableGroups = discoverGroups(sitesData)
   selectedGroupIndex = math.min(selectedGroupIndex, math.max(#availableGroups, 1))
+  
+  -- Debug: List all loading zones and their tags
+  print("[Quarry] Sites loaded. Checking loading zones:")
+  if sitesData.tagsToZones and sitesData.tagsToZones.loading then
+    for i, zone in ipairs(sitesData.tagsToZones.loading) do
+      local tagStr = ""
+      if zone.customFields and zone.customFields.tags then
+        for tag, _ in pairs(zone.customFields.tags) do
+          tagStr = tagStr .. tostring(tag) .. ", "
+        end
+      end
+      print(string.format("  Zone %d: name=%s, tags=[%s]", i, zone.name or "?", tagStr))
+    end
+  else
+    print("  No loading zones found in tagsToZones!")
+  end
 
   if not groupCachePrecomputeQueued and #availableGroups > 0 then
     groupCachePrecomputeQueued = true
@@ -466,6 +861,116 @@ local function loadQuarrySites()
       end
     end)
   end
+end
+
+-- ============================================================================
+-- Zone Helper Functions (must be defined before acceptContract)
+-- ============================================================================
+
+-- Check if player is in any loading zone
+local function isPlayerInAnyLoadingZone(playerPos)
+  for _, g in ipairs(availableGroups) do
+    if g.loading and g.loading.containsPoint2D and g.loading:containsPoint2D(playerPos) then
+      return true
+    end
+  end
+  return false
+end
+
+-- Returns the specific zone group the player is currently in, or nil
+local function getPlayerCurrentZone(playerPos)
+  for _, g in ipairs(availableGroups) do
+    if g.loading and g.loading.containsPoint2D and g.loading:containsPoint2D(playerPos) then
+      return g
+    end
+  end
+  return nil
+end
+
+-- Check if a zone is the "starter" zone (has "starter" in its tag)
+local function isStarterZone(group)
+  if not group or not group.secondaryTag then return false end
+  return string.lower(tostring(group.secondaryTag)) == "starter"
+end
+
+-- Get the starter zone from availableGroups (may not exist if starter has no spawn/dest)
+local function getStarterZone()
+  for _, g in ipairs(availableGroups) do
+    if isStarterZone(g) then
+      return g
+    end
+  end
+  return nil
+end
+
+-- Get the starter zone directly from sitesData (always works)
+local function getStarterZoneFromSites()
+  if not sitesData or not sitesData.tagsToZones or not sitesData.tagsToZones.loading then
+    return nil
+  end
+  for _, zone in ipairs(sitesData.tagsToZones.loading) do
+    local hasStarter = zone.customFields and zone.customFields.tags and zone.customFields.tags["starter"]
+    if hasStarter then
+      return zone
+    end
+  end
+  return nil
+end
+
+-- Get all zones that serve a specific material type
+-- EXCLUDES the starter zone (starter is only for accepting contracts, not loading)
+local function getZonesByMaterial(materialType)
+  local zones = {}
+  for _, g in ipairs(availableGroups) do
+    -- Skip starter zone - it's only for contract selection, not loading
+    if not isStarterZone(g) and g.materialType == materialType then
+      table.insert(zones, g)
+    end
+  end
+  return zones
+end
+
+-- Check if player is in the starter zone
+-- This checks ALL loading zones from sitesData, not just discovered groups
+-- (because starter zone may not have spawn/destination and won't be in availableGroups)
+local starterZoneDebugTimer = 0
+local function isPlayerInStarterZone(playerPos)
+  -- First try the discovered groups
+  local currentZone = getPlayerCurrentZone(playerPos)
+  if currentZone and isStarterZone(currentZone) then
+    return true
+  end
+  
+  -- Also check raw sites data for zones tagged "starter"
+  -- (in case starter zone wasn't discovered as a full group)
+  if sitesData and sitesData.tagsToZones and sitesData.tagsToZones.loading then
+    local loadingZones = sitesData.tagsToZones.loading
+    for _, zone in ipairs(loadingZones) do
+      -- Tags are stored as dictionary: {starter = true, loading = true}
+      local hasStarter = zone.customFields and zone.customFields.tags and zone.customFields.tags["starter"]
+      if hasStarter then
+        -- Check if player is in this zone
+        if zone.containsPoint2D then
+          local isInZone = zone:containsPoint2D(playerPos)
+          if isInZone then
+            return true
+          end
+        end
+      end
+    end
+  else
+    -- Debug: print why we can't check
+    starterZoneDebugTimer = starterZoneDebugTimer + 0.016
+    if starterZoneDebugTimer > 5 then
+      starterZoneDebugTimer = 0
+      print(string.format("[Quarry] isPlayerInStarterZone debug: sitesData=%s, tagsToZones=%s, loading=%s",
+        tostring(sitesData ~= nil),
+        tostring(sitesData and sitesData.tagsToZones ~= nil),
+        tostring(sitesData and sitesData.tagsToZones and sitesData.tagsToZones.loading ~= nil)))
+    end
+  end
+  
+  return false
 end
 
 local function calculateSpawnTransformForLocation(spawnPos, targetPos)
@@ -569,11 +1074,56 @@ end
 local function spawnJobMaterials()
   if not jobObjects.activeGroup or not jobObjects.activeGroup.loading then return end
 
-  local materialType = jobObjects.materialType or "rocks"
-  local zone = jobObjects.activeGroup.loading
-
-  local cache = ensureGroupOffRoadCentroid(jobObjects.activeGroup)
-  local basePos = cache and cache.offRoadCentroid or nil
+  local group = jobObjects.activeGroup
+  -- Use zone's material type from tags (set in discoverGroups), fallback to jobObjects.materialType
+  local materialType = group.materialType or jobObjects.materialType or "rocks"
+  local zone = group.loading
+  
+  -- Get or create cache for this zone
+  local cache = ensureGroupCache(group)
+  if not cache then return end
+  
+  -- Ensure offRoadCentroid is calculated
+  ensureGroupOffRoadCentroid(group)
+  
+  -- ========== STOCK CHECKS ==========
+  -- Check if zone has stock available
+  if cache.stock and cache.stock.current <= 0 then
+    ui_message("This zone is out of stock! Wait for regeneration.", 5, "warning")
+    print(string.format("[Quarry] Zone '%s' out of stock (0/%d)", group.secondaryTag, cache.stock.max))
+    return
+  end
+  
+  -- Check spawn limit (performance) - count actual props in queue, not cached value
+  local maxSpawned = Config.Stock.MaxSpawnedProps[materialType] or 2
+  local currentlySpawned = 0
+  for _, entry in ipairs(rockPileQueue) do
+    if entry.materialType == materialType then
+      currentlySpawned = currentlySpawned + 1
+    end
+  end
+  -- Sync cache with actual count
+  cache.spawnedPropCount = currentlySpawned
+  
+  if currentlySpawned >= maxSpawned then
+    print(string.format("[Quarry] Zone '%s' at max spawned props (%d/%d)", 
+      group.secondaryTag, currentlySpawned, maxSpawned))
+    return
+  end
+  
+  -- Calculate how many props we can spawn
+  local roomForMore = maxSpawned - currentlySpawned
+  local stockAvailable = cache.stock and cache.stock.current or Config.Stock.DefaultMaxStock
+  local stockCost = Config.Stock.StockCostPerProp[materialType] or 1
+  local propsToSpawn = math.min(roomForMore, math.floor(stockAvailable / stockCost))
+  
+  if propsToSpawn <= 0 then
+    ui_message("Not enough stock to spawn materials.", 3, "warning")
+    return
+  end
+  
+  -- ========== POSITION CALCULATION ==========
+  local basePos = cache.offRoadCentroid or nil
   if not basePos then
     basePos = findOffRoadCentroid(zone, 5, 1000)
     if cache then cache.offRoadCentroid = basePos end
@@ -585,24 +1135,105 @@ local function spawnJobMaterials()
   end
   basePos = basePos + vec3(0,0,0.2)
 
+  -- ========== SPAWN PROPS ==========
+  local propsSpawned = 0
+  
   if materialType == "rocks" then
-    local rocks = core_vehicles.spawnNewVehicle(Config.RockProp, { config = "default", pos = basePos, rot = quatFromDir(vec3(0,1,0)), autoEnterVehicle = false })
-    if rocks then
-      table.insert(rockPileQueue, { id = rocks:getID(), mass = Config.RockMassPerPile })
-      manageRockCapacity()
-    end
-  elseif materialType == "marble" then
-    local offsets = { vec3(-2, 0, 0), vec3(2, 0, 0) }
-    for idx, marbleData in ipairs(Config.MarbleConfigs) do
-      local pos = basePos + (offsets[idx] or vec3(0,0,0))
-      local block = core_vehicles.spawnNewVehicle(Config.MarbleProp, { config = marbleData.config, pos = pos, rot = quatFromDir(vec3(0,1,0)), autoEnterVehicle = false })
-      if block then
-        local mass = marbleData.mass or Config.MarbleMassDefault
-        if (not mass or mass <= 0) and block.getInitialMass then mass = block:getInitialMass() end
-        table.insert(rockPileQueue, { id = block:getID(), mass = mass })
+    for i = 1, propsToSpawn do
+      local offset = vec3((i - 1) * 3, 0, 0)  -- Offset each rock pile
+      local rocks = core_vehicles.spawnNewVehicle(Config.RockProp, { 
+        config = "default", 
+        pos = basePos + offset, 
+        rot = quatFromDir(vec3(0,1,0)), 
+        autoEnterVehicle = false 
+      })
+      if rocks then
+        table.insert(rockPileQueue, { id = rocks:getID(), mass = Config.RockMassPerPile, materialType = "rocks" })
+        propsSpawned = propsSpawned + 1
         manageRockCapacity()
       end
     end
+  elseif materialType == "marble" then
+    local offsets = { vec3(-2, 0, 0), vec3(2, 0, 0) }
+    local offsetIdx = 1
+    
+    -- Get contract requirements and what's already delivered
+    local contract = ContractSystem.activeContract
+    local requiredBlocks = contract and contract.requiredBlocks or { big = 1, small = 1 }
+    local delivered = ContractSystem.contractProgress and ContractSystem.contractProgress.deliveredBlocks or { big = 0, small = 0 }
+    
+    -- Count blocks already spawned (in rockPileQueue)
+    local spawnedBig = 0
+    local spawnedSmall = 0
+    for _, entry in ipairs(rockPileQueue) do
+      if entry.materialType == "marble" then
+        if entry.blockType == "big_rails" then
+          spawnedBig = spawnedBig + 1
+        elseif entry.blockType == "rails" then
+          spawnedSmall = spawnedSmall + 1
+        end
+      end
+    end
+    
+    -- Calculate what's still needed (required - delivered - already spawned)
+    local needBig = math.max(0, (requiredBlocks.big or 0) - (delivered.big or 0) - spawnedBig)
+    local needSmall = math.max(0, (requiredBlocks.small or 0) - (delivered.small or 0) - spawnedSmall)
+    
+    print(string.format("[Quarry] Marble spawn check: need %d big, %d small (required: %d/%d, delivered: %d/%d, spawned: %d/%d)",
+      needBig, needSmall, requiredBlocks.big or 0, requiredBlocks.small or 0, 
+      delivered.big or 0, delivered.small or 0, spawnedBig, spawnedSmall))
+    
+    -- Build a list of blocks to spawn (up to propsToSpawn limit, max 2)
+    local blocksToSpawn = {}
+    local maxToSpawn = math.min(propsToSpawn, 2)
+    
+    -- Add big blocks needed
+    for i = 1, math.min(needBig, maxToSpawn - #blocksToSpawn) do
+      table.insert(blocksToSpawn, { config = "big_rails", mass = 38000 })
+    end
+    
+    -- Add small blocks needed
+    for i = 1, math.min(needSmall, maxToSpawn - #blocksToSpawn) do
+      table.insert(blocksToSpawn, { config = "rails", mass = 19000 })
+    end
+    
+    -- Spawn the blocks
+    for _, blockData in ipairs(blocksToSpawn) do
+      local pos = basePos + (offsets[offsetIdx] or vec3(0,0,0))
+      offsetIdx = offsetIdx + 1
+      
+      local block = core_vehicles.spawnNewVehicle(Config.MarbleProp, { 
+        config = blockData.config, 
+        pos = pos, 
+        rot = quatFromDir(vec3(0,1,0)), 
+        autoEnterVehicle = false 
+      })
+      if block then
+        table.insert(rockPileQueue, { 
+          id = block:getID(), 
+          mass = blockData.mass, 
+          materialType = "marble", 
+          blockType = blockData.config 
+        })
+        propsSpawned = propsSpawned + 1
+        manageRockCapacity()
+        print(string.format("[Quarry] Spawned marble block: %s", blockData.config))
+      end
+    end
+    
+    if #blocksToSpawn == 0 then
+      print("[Quarry] No marble blocks needed to spawn")
+    end
+  end
+  
+  -- ========== UPDATE STOCK ==========
+  if propsSpawned > 0 then
+    cache.spawnedPropCount = (cache.spawnedPropCount or 0) + propsSpawned
+    -- Stock is consumed when props are delivered, not when spawned
+    -- This allows player to "borrow" from stock and return unused props
+    print(string.format("[Quarry] Zone '%s': Spawned %d %s props (spawned: %d/%d, stock: %d/%d)", 
+      group.secondaryTag, propsSpawned, materialType, 
+      cache.spawnedPropCount, maxSpawned, cache.stock.current, cache.stock.max))
   end
 end
 
@@ -612,8 +1243,16 @@ local function beginActiveContractTrip()
   if isDispatching then return false end
   isDispatching = true
 
-  jobObjects.materialType = contract.material
+  uiHidden = false  -- Show UI when starting a job
+
+  -- activeGroup = the zone where we're loading (set when contract was accepted)
   jobObjects.activeGroup = contract.group
+  -- Use the zone's material type from tags (takes precedence over contract.material)
+  jobObjects.materialType = contract.group.materialType or contract.material or "rocks"
+  
+  -- Store the contract's destination (where the truck will deliver to)
+  -- This is SEPARATE from the loading zone
+  jobObjects.deliveryDestination = contract.destination
 
   markerCleared = false
   truckStoppedInLoading = false
@@ -640,18 +1279,52 @@ local function acceptContract(contractIndex)
   local contract = ContractSystem.availableContracts[contractIndex]
   if not contract then return end
 
+  local contractMaterial = contract.material or "rocks"
+  
+  -- Find all zones that can serve this material type
+  compatibleZones = getZonesByMaterial(contractMaterial)
+  
+  if #compatibleZones == 0 then
+    ui_message(string.format("No zones available for %s!", contractMaterial:upper()), 5, "error")
+    return
+  end
+  
+  -- Remove the contract from available list (it's now active)
+  table.remove(ContractSystem.availableContracts, contractIndex)
+  
+  -- DON'T bind to a zone yet - player will choose by driving to one
+  -- Store destination and material, but group = nil until zone is chosen
+  contract.group = nil  -- Will be set when player enters a compatible zone
+  contract.loadingZoneTag = nil
+  
+  -- Store the contract material for later
+  jobObjects.materialType = contractMaterial
+  jobObjects.deliveryDestination = contract.destination
+
   ContractSystem.activeContract = contract
   ContractSystem.contractProgress = {
     deliveredTons = 0,
     totalPaidSoFar = 0,
     startTime = os.clock(),
-    deliveryCount = 0
+    deliveryCount = 0,
+    deliveredBlocks = { big = 0, small = 0, total = 0 }
   }
-
-  if beginActiveContractTrip() then
-    Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_Start_01')
-    ui_message(string.format("Contract accepted: %s", contract.name), 5, "info")
+  
+  -- Enter "choosing zone" state - markers will be drawn on all compatible zones
+  currentState = STATE_CHOOSING_ZONE
+  
+  Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_Start_01')
+  
+  local zoneNames = {}
+  for _, z in ipairs(compatibleZones) do
+    table.insert(zoneNames, z.secondaryTag or "Unknown")
   end
+  
+  ui_message(string.format("Contract accepted! Drive to any %s zone to load: %s", 
+    contractMaterial:upper(), table.concat(zoneNames, ", ")), 8, "info")
+  
+  print(string.format("[Quarry] Contract accepted. Material: %s. Compatible zones: %s", 
+    contractMaterial, table.concat(zoneNames, ", ")))
 end
 
 local function clearProps()
@@ -693,6 +1366,7 @@ local function cleanupJob(deleteTruck)
   jobObjects.deliveredPropIds = nil
   jobObjects.materialType = nil
   jobObjects.activeGroup = nil
+  jobObjects.deliveryDestination = nil  -- Unlinked contract destination
   jobObjects.deferredTruckTargetPos = nil
   jobObjects.loadingZoneTargetPos = nil
   jobObjects.truckSpawnQueued = false
@@ -704,6 +1378,14 @@ local function cleanupJob(deleteTruck)
   jobObjects.lastDeliveryDamagePercent = 0
   jobObjects.deliveryBlocksStatus = nil
   marbleDamageState = {}
+  
+  -- Reset truck movement tracking
+  truckStoppedTimer = 0
+  truckLastPosition = nil
+  truckResendCount = 0
+  
+  -- Clear zone choice markers
+  compatibleZones = {}
 
   currentState = STATE_IDLE
 end
@@ -712,17 +1394,23 @@ local function abandonContract()
   if not ContractSystem.activeContract then return end
   ui_message(string.format("Contract abandoned! Penalty: $%d", Config.Contracts.AbandonPenalty or 0), 6, "warning")
 
-  local career = extensions.career_career
-  if career and career.isActive() then
-    local paymentModule = extensions.career_modules_payment
-    if paymentModule then
-      paymentModule.pay(-(Config.Contracts.AbandonPenalty or 0), {label = "Contract Abandonment"})
+  -- Safe career payment handling
+  local success, err = pcall(function()
+    local career = extensions.career_career
+    if career and type(career.isActive) == "function" and career.isActive() then
+      local paymentModule = extensions.career_modules_payment
+      if paymentModule and type(paymentModule.pay) == "function" then
+        paymentModule.pay(-(Config.Contracts.AbandonPenalty or 0), {label = "Contract Abandonment"})
+      end
     end
+  end)
+  if not success then
+    print("[Quarry] Warning: Could not apply abandonment penalty: " .. tostring(err))
   end
 
   PlayerData.contractsFailed = (PlayerData.contractsFailed or 0) + 1
   ContractSystem.activeContract = nil
-  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0}
+  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0, deliveredBlocks = { big = 0, small = 0, total = 0 }}
 
   cleanupJob(true)
 end
@@ -739,17 +1427,23 @@ local function failContract(penalty, message, msgType)
     ui_message(message, 5, msgType)
   end
 
-  local career = extensions.career_career
-  if career and career.isActive() then
-    local paymentModule = extensions.career_modules_payment
-    if paymentModule and penalty ~= 0 then
-      paymentModule.pay(-math.abs(penalty), {label = "Contract Failure"})
+  -- Safe career payment handling
+  local success, err = pcall(function()
+    local career = extensions.career_career
+    if career and type(career.isActive) == "function" and career.isActive() then
+      local paymentModule = extensions.career_modules_payment
+      if paymentModule and type(paymentModule.pay) == "function" and penalty ~= 0 then
+        paymentModule.pay(-math.abs(penalty), {label = "Contract Failure"})
+      end
     end
+  end)
+  if not success then
+    print("[Quarry] Warning: Could not apply failure penalty: " .. tostring(err))
   end
 
   PlayerData.contractsFailed = (PlayerData.contractsFailed or 0) + 1
   ContractSystem.activeContract = nil
-  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0}
+  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0, deliveredBlocks = { big = 0, small = 0, total = 0 }}
 
   cleanupJob(true)
 end
@@ -757,28 +1451,34 @@ end
 local function completeContract()
   if not ContractSystem.activeContract then return end
   local contract = ContractSystem.activeContract
-  local progress = ContractSystem.contractProgress or {}
 
+  -- Full payment on contract completion (no progressive payments)
   local totalPay = contract.totalPayout or 0
-  if contract.paymentType == "progressive" then
-    totalPay = totalPay - (progress.totalPaidSoFar or 0)
-  end
-  if totalPay < 0 then totalPay = 0 end
 
-  local career = extensions.career_career
-  if career and career.isActive() then
-    local paymentModule = extensions.career_modules_payment
-    if paymentModule then
-      local xpReward = math.floor((contract.requiredTons or 0) * 10)
-      paymentModule.reward({
-        money = { amount = totalPay, canBeNegative = false },
-        labor = { amount = xpReward, canBeNegative = false }
-      }, { label = string.format("Contract: %s", contract.name), tags = {"gameplay", "mission", "reward"} })
-
-      Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_01')
-      ui_message(string.format("CONTRACT COMPLETE! Earned $%d", totalPay), 8, "success")
+  -- Safe career reward handling
+  local careerPaid = false
+  local success, err = pcall(function()
+    local career = extensions.career_career
+    if career and type(career.isActive) == "function" and career.isActive() then
+      local paymentModule = extensions.career_modules_payment
+      if paymentModule and type(paymentModule.reward) == "function" then
+        local xpReward = math.floor((contract.requiredTons or 0) * 10)
+        paymentModule.reward({
+          money = { amount = totalPay, canBeNegative = false },
+          labor = { amount = xpReward, canBeNegative = false }
+        }, { label = string.format("Contract: %s", contract.name), tags = {"gameplay", "mission", "reward"} })
+        careerPaid = true
+        Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_01')
+        ui_message(string.format("CONTRACT COMPLETE! Earned $%d", totalPay), 8, "success")
+      end
     end
-  else
+  end)
+  
+  if not success then
+    print("[Quarry] Warning: Could not apply contract reward: " .. tostring(err))
+  end
+  
+  if not careerPaid then
     Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
     ui_message(string.format("SANDBOX: Contract payout: $%d", totalPay), 6, "success")
   end
@@ -787,7 +1487,7 @@ local function completeContract()
   PlayerData.level = (PlayerData.level or 1) + 1
 
   ContractSystem.activeContract = nil
-  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0}
+  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0, deliveredBlocks = { big = 0, small = 0, total = 0 }}
 
   clearProps()
   if jobObjects.truckID then
@@ -836,8 +1536,47 @@ local function driveTruckToPoint(truckId, targetPos)
   truck:queueLuaCommand("controller.mainController.setHandbrake(0)")
   core_jobsystem.create(function(job)
     job.sleep(0.5)
+    -- Configure AI to be more persistent and ignore collisions
+    truck:queueLuaCommand('ai.setAggressionMode("rubberBand")')  -- More aggressive driving
+    truck:queueLuaCommand('ai.setAggression(0.8)')  -- More aggressive driving
+    truck:queueLuaCommand('ai.setIgnoreCollision(true)')  -- Don't stop on collisions
+    job.sleep(0.1)
     truck:queueLuaCommand('driver.returnTargetPosition(' .. serialize(targetPos) .. ')')
   end)
+end
+
+local function resumeTruck()
+  if not jobObjects.truckID then
+    print("[Quarry] No truck to resume")
+    return
+  end
+  if not jobObjects.activeGroup then
+    print("[Quarry] No active group")
+    return
+  end
+  
+  local targetPos = nil
+  if currentState == STATE_DELIVERING and jobObjects.activeGroup.destination then
+    targetPos = vec3(jobObjects.activeGroup.destination.pos)
+    print("[Quarry] Resuming truck to destination")
+  elseif currentState == STATE_TRUCK_ARRIVING and jobObjects.loadingZoneTargetPos then
+    targetPos = jobObjects.loadingZoneTargetPos
+    print("[Quarry] Resuming truck to loading zone")
+  else
+    print("[Quarry] Unknown state or no target - current state: " .. tostring(currentState))
+    return
+  end
+  
+  -- Apply aggressive AI settings before resuming
+  local truck = be:getObjectByID(jobObjects.truckID)
+  if truck then
+    truck:queueLuaCommand('ai.setAggressionMode("rubberBand")')  -- More aggressive driving
+    truck:queueLuaCommand('ai.setAggression(0.8)')  -- More aggressive driving
+    truck:queueLuaCommand('ai.setIgnoreCollision(true)')  -- Don't stop on collisions
+  end
+  
+  driveTruckToPoint(jobObjects.truckID, targetPos)
+  print("[Quarry] Truck resumed!")
 end
 
 local function stopTruck(truckId)
@@ -1406,11 +2145,30 @@ local function getMarbleBlocksStatus()
   return blocks
 end
 
+-- Consume stock from a zone when materials are delivered
+local function consumeZoneStock(group, propsDelivered)
+  if not group then return end
+  local cache = ensureGroupCache(group)
+  if not cache or not cache.stock then return end
+  
+  local materialType = group.materialType or "rocks"
+  local stockCost = Config.Stock.StockCostPerProp[materialType] or 1
+  local totalCost = propsDelivered * stockCost
+  
+  local oldStock = cache.stock.current
+  cache.stock.current = math.max(0, cache.stock.current - totalCost)
+  cache.spawnedPropCount = math.max(0, (cache.spawnedPropCount or 0) - propsDelivered)
+  
+  print(string.format("[Quarry] Zone '%s': Consumed %d stock (delivered %d props). Stock: %d -> %d/%d, Spawned: %d", 
+    group.secondaryTag, totalCost, propsDelivered, oldStock, cache.stock.current, cache.stock.max, cache.spawnedPropCount))
+end
+
 local function despawnPropIds(propIds)
   if not propIds or #propIds == 0 then return end
   local idSet = {}
   for _, id in ipairs(propIds) do idSet[id] = true end
 
+  local propsRemoved = 0
   for i = #rockPileQueue, 1, -1 do
     local id = rockPileQueue[i].id
     if id and idSet[id] then
@@ -1419,7 +2177,13 @@ local function despawnPropIds(propIds)
       local obj = be:getObjectByID(id)
       if obj then obj:delete() end
       table.remove(rockPileQueue, i)
+      propsRemoved = propsRemoved + 1
     end
+  end
+  
+  -- Consume stock from the active zone for delivered props
+  if propsRemoved > 0 and jobObjects.activeGroup then
+    consumeZoneStock(jobObjects.activeGroup, propsRemoved)
   end
 end
 
@@ -1431,29 +2195,72 @@ local function handleDeliveryArrived()
     return
   end
 
+  -- Initialize progress if needed
+  ContractSystem.contractProgress = ContractSystem.contractProgress or {
+    deliveredTons = 0, 
+    totalPaidSoFar = 0, 
+    deliveryCount = 0,
+    deliveredBlocks = { big = 0, small = 0, total = 0 }
+  }
+  -- Ensure deliveredBlocks exists and has valid number values
+  if not ContractSystem.contractProgress.deliveredBlocks or type(ContractSystem.contractProgress.deliveredBlocks) ~= "table" then
+    ContractSystem.contractProgress.deliveredBlocks = { big = 0, small = 0, total = 0 }
+  end
+  -- Ensure values are numbers, not nil or something else
+  ContractSystem.contractProgress.deliveredBlocks.big = tonumber(ContractSystem.contractProgress.deliveredBlocks.big) or 0
+  ContractSystem.contractProgress.deliveredBlocks.small = tonumber(ContractSystem.contractProgress.deliveredBlocks.small) or 0
+  ContractSystem.contractProgress.deliveredBlocks.total = tonumber(ContractSystem.contractProgress.deliveredBlocks.total) or 0
+  
+  -- Sanity check: if values are unreasonably high (corrupted), reset them
+  local maxReasonableBlocks = 50  -- No contract should ever need more than 50 blocks
+  if ContractSystem.contractProgress.deliveredBlocks.big > maxReasonableBlocks or
+     ContractSystem.contractProgress.deliveredBlocks.small > maxReasonableBlocks then
+    print("[Quarry] WARNING: Corrupted block counts detected, resetting!")
+    ContractSystem.contractProgress.deliveredBlocks = { big = 0, small = 0, total = 0 }
+  end
+  
   local deliveredMass = jobObjects.lastDeliveredMass or 0
   local tons = deliveredMass / 1000
-
-  ContractSystem.contractProgress = ContractSystem.contractProgress or {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0}
+  
+  -- For marble contracts, count delivered blocks by type
+  local deliveredBigBlocks = 0
+  local deliveredSmallBlocks = 0
+  
+  if contract.material == "marble" and jobObjects.deliveredPropIds then
+    -- Create a lookup set for delivered prop IDs
+    local deliveredSet = {}
+    for _, id in ipairs(jobObjects.deliveredPropIds) do
+      deliveredSet[id] = true
+    end
+    
+    -- Check each entry in rockPileQueue to see what was delivered
+    for _, entry in ipairs(rockPileQueue) do
+      if entry.id and deliveredSet[entry.id] and entry.materialType == "marble" then
+        -- Check block type from config name
+        if entry.blockType == "big_rails" then
+          deliveredBigBlocks = deliveredBigBlocks + 1
+        elseif entry.blockType == "rails" then
+          deliveredSmallBlocks = deliveredSmallBlocks + 1
+        end
+      end
+    end
+    
+    -- Update block progress
+    ContractSystem.contractProgress.deliveredBlocks.big = ContractSystem.contractProgress.deliveredBlocks.big + deliveredBigBlocks
+    ContractSystem.contractProgress.deliveredBlocks.small = ContractSystem.contractProgress.deliveredBlocks.small + deliveredSmallBlocks
+    ContractSystem.contractProgress.deliveredBlocks.total = ContractSystem.contractProgress.deliveredBlocks.big + ContractSystem.contractProgress.deliveredBlocks.small
+    
+    print(string.format("[Quarry] Marble delivery: +%d big, +%d small. Total: %d/%d big, %d/%d small",
+      deliveredBigBlocks, deliveredSmallBlocks,
+      ContractSystem.contractProgress.deliveredBlocks.big, contract.requiredBlocks.big,
+      ContractSystem.contractProgress.deliveredBlocks.small, contract.requiredBlocks.small))
+  end
+  
+  -- Track tons for rocks contracts and progress display
   ContractSystem.contractProgress.deliveredTons = (ContractSystem.contractProgress.deliveredTons or 0) + tons
   ContractSystem.contractProgress.deliveryCount = (ContractSystem.contractProgress.deliveryCount or 0) + 1
-
-  if contract.paymentType == "progressive" then
-    local payment = math.floor(tons * (contract.payRate or 0))
-    
-    ContractSystem.contractProgress.totalPaidSoFar = (ContractSystem.contractProgress.totalPaidSoFar or 0) + payment
-
-    local career = extensions.career_career
-    if career and career.isActive() then
-      local paymentModule = extensions.career_modules_payment
-      if paymentModule then
-        paymentModule.pay(payment, {label = "Delivery Payment"})
-      end
-      ui_message(string.format("Delivery payment: $%d", payment), 3, "success")
-    else
-      ui_message(string.format("SANDBOX: Delivery payment: $%d", payment), 3, "success")
-    end
-  end
+  
+  -- No payment during delivery - full payment happens when contract is finalized at starter zone
 
   despawnPropIds(jobObjects.deliveredPropIds)
   jobObjects.deliveredPropIds = nil
@@ -1483,29 +2290,51 @@ local function handleDeliveryArrived()
     
     local playerVeh = be:getPlayerVehicle(0)
     local playerPos = playerVeh and playerVeh:getPosition() or nil
-    local atQuarry = false
-    if playerPos and group and group.loading and group.loading.containsPoint2D then
-      atQuarry = group.loading:containsPoint2D(playerPos)
-    end
     
-    if atQuarry then
+    -- Check if player is already at the starter zone
+    local atStarterZone = isPlayerInStarterZone(playerPos)
+    
+    if atStarterZone then
       currentState = STATE_AT_QUARRY_DECIDE
       Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-      ui_message("Contract complete! Finalize at quarry.", 6, "success")
+      ui_message("Contract complete! Ready to finalize.", 6, "success")
     else
       currentState = STATE_RETURN_TO_QUARRY
-      if group and group.loading and group.loading.center then
-        core_groundMarkers.setPath(vec3(group.loading.center))
+      -- Set marker to starter zone
+      local starterZone = getStarterZoneFromSites()
+      if starterZone and starterZone.center then
+        core_groundMarkers.setPath(vec3(starterZone.center))
       end
       Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-      ui_message("Contract complete! Return to quarry to finalize.", 6, "success")
+      ui_message("Contract complete! Return to the starter zone to finalize and get paid.", 6, "success")
     end
     return
   end
 
-  local remaining = (contract.requiredTons or 0) - (ContractSystem.contractProgress.deliveredTons or 0)
   Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-  ui_message(string.format("Delivery #%d complete! %.1f tons remaining.", ContractSystem.contractProgress.deliveryCount or 1, remaining), 6, "success")
+  
+  -- Show appropriate message based on material type
+  if contract.material == "marble" and contract.requiredBlocks then
+    local delivered = ContractSystem.contractProgress.deliveredBlocks or { big = 0, small = 0 }
+    local required = contract.requiredBlocks
+    local remainingBig = math.max(0, required.big - delivered.big)
+    local remainingSmall = math.max(0, required.small - delivered.small)
+    
+    local remainingStr = ""
+    if remainingBig > 0 and remainingSmall > 0 then
+      remainingStr = string.format("%d Large + %d Small remaining", remainingBig, remainingSmall)
+    elseif remainingBig > 0 then
+      remainingStr = string.format("%d Large remaining", remainingBig)
+    elseif remainingSmall > 0 then
+      remainingStr = string.format("%d Small remaining", remainingSmall)
+    else
+      remainingStr = "All blocks delivered!"
+    end
+    ui_message(string.format("Delivery #%d complete! %s", ContractSystem.contractProgress.deliveryCount or 1, remainingStr), 6, "success")
+  else
+    local remaining = (contract.requiredTons or 0) - (ContractSystem.contractProgress.deliveredTons or 0)
+    ui_message(string.format("Delivery #%d complete! %.1f tons remaining.", ContractSystem.contractProgress.deliveryCount or 1, remaining), 6, "success")
+  end
 
   if #rockPileQueue == 0 then
     spawnJobMaterials()
@@ -1581,8 +2410,68 @@ local function drawWorkSiteMarker(dt)
   debugDrawer:drawSphere(beamTop, sphereRadius + 0.3, ColorF(0.2, 1.0, 0.4, 0.15))
 end
 
+-- Draw markers on ALL compatible zones when choosing where to load
+local function drawZoneChoiceMarkers(dt)
+  if currentState ~= STATE_CHOOSING_ZONE then return end
+  if #compatibleZones == 0 then return end
+
+  markerAnim.time = markerAnim.time + dt
+  markerAnim.pulseScale = 1.0 + math.sin(markerAnim.time * 2.5) * 0.15
+  markerAnim.beamHeight = math.min(15.0, markerAnim.beamHeight + dt * 30)
+
+  -- Draw a marker on each compatible zone
+  for i, zone in ipairs(compatibleZones) do
+    if zone.loading and zone.loading.center then
+      local basePos = vec3(zone.loading.center)
+      
+      -- Alternate colors for different zones
+      local hue = (i - 1) / math.max(1, #compatibleZones)
+      local r = 0.3 + 0.7 * math.abs(math.sin(hue * 3.14159))
+      local g = 0.8 + 0.2 * math.sin(markerAnim.time * 2)
+      local b = 0.3 + 0.7 * math.abs(math.cos(hue * 3.14159))
+      
+      local color = ColorF(r, g, b, 0.85)
+      local colorFaded = ColorF(r, g, b, 0.3)
+      local beamTop = basePos + vec3(0, 0, markerAnim.beamHeight)
+      local beamRadius = 0.6 * markerAnim.pulseScale
+
+      debugDrawer:drawCylinder(basePos, beamTop, beamRadius, color)
+      debugDrawer:drawCylinder(basePos, beamTop, beamRadius + 0.25, colorFaded)
+
+      local sphereRadius = 1.2 * markerAnim.pulseScale
+      debugDrawer:drawSphere(beamTop, sphereRadius, color)
+      debugDrawer:drawSphere(beamTop, sphereRadius + 0.4, ColorF(r, g, b, 0.15))
+      
+      -- Draw zone name text above marker
+      local textPos = beamTop + vec3(0, 0, 2)
+      local materialType = zone.materialType or "rocks"
+      local text = string.format("%s (%s)", zone.secondaryTag or "Zone", materialType:upper())
+      debugDrawer:drawTextAdvanced(textPos, text, ColorF(1, 1, 1, 1), true, false, ColorI(0, 0, 0, 200))
+    end
+  end
+end
+
 local function drawUI(dt)
   if not imgui then return end
+
+  -- If hidden, show a small button to restore
+  if uiHidden and currentState ~= STATE_IDLE then
+    imgui.SetNextWindowPos(imgui.ImVec2(10, 200), imgui.Cond_FirstUseEver)
+    imgui.PushStyleVar1(imgui.StyleVar_WindowRounding, 8)
+    imgui.PushStyleColor2(imgui.Col_WindowBg, imgui.ImVec4(0.1, 0.1, 0.12, 0.9))
+    if imgui.Begin("##WL40Show", nil, imgui.WindowFlags_NoTitleBar + imgui.WindowFlags_AlwaysAutoResize + imgui.WindowFlags_NoCollapse) then
+      imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.2, 0.4, 0.2, 0.9))
+      imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.3, 0.6, 0.3, 1))
+      if imgui.Button("Show Job UI", imgui.ImVec2(100, 30)) then
+        uiHidden = false
+      end
+      imgui.PopStyleColor(2)
+    end
+    imgui.End()
+    imgui.PopStyleColor(1)
+    imgui.PopStyleVar(1)
+    return
+  end
 
   if currentState ~= STATE_IDLE then uiAnim.targetOpacity = 1.0 else uiAnim.targetOpacity = 0.0 end
   local speed = 8.0
@@ -1602,6 +2491,17 @@ local function drawUI(dt)
   imgui.SetNextWindowSizeConstraints(imgui.ImVec2(280, 100), imgui.ImVec2(350, 800))
 
   if imgui.Begin("##WL40System", nil, imgui.WindowFlags_NoTitleBar + imgui.WindowFlags_AlwaysAutoResize + imgui.WindowFlags_NoCollapse) then
+    -- Hide button in top-right corner
+    local windowWidth = imgui.GetWindowWidth()
+    imgui.SetCursorPosX(windowWidth - 30)
+    imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.5, 0.2, 0.2, 0.8 * uiAnim.opacity))
+    imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.7, 0.2, 0.2, 1))
+    if imgui.Button("X", imgui.ImVec2(20, 20)) then
+      uiHidden = true
+    end
+    imgui.PopStyleColor(2)
+    imgui.SetCursorPosX(0)
+    
     imgui.SetWindowFontScale(1.5)
     imgui.TextColored(imgui.ImVec4(1, 0.75, 0, uiAnim.opacity), "LOGISTICS JOB SYSTEM")
     imgui.SetWindowFontScale(1.0)
@@ -1626,9 +2526,16 @@ local function drawUI(dt)
         }
 
         for i, c in ipairs(ContractSystem.availableContracts) do
-          imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.15, 0.15, 0.2, 0.9))
-          imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.25, 0.25, 0.35, 1))
-          imgui.PushStyleColor2(imgui.Col_ButtonActive, imgui.ImVec4(0.3, 0.3, 0.4, 1))
+          -- Urgent contracts get special button styling
+          if c.isUrgent then
+            imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.3, 0.15, 0.1, 0.9))
+            imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.45, 0.25, 0.15, 1))
+            imgui.PushStyleColor2(imgui.Col_ButtonActive, imgui.ImVec4(0.5, 0.3, 0.2, 1))
+          else
+            imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.15, 0.15, 0.2, 0.9))
+            imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.25, 0.25, 0.35, 1))
+            imgui.PushStyleColor2(imgui.Col_ButtonActive, imgui.ImVec4(0.3, 0.3, 0.4, 1))
+          end
 
           local label = string.format("[%d] %s##contract%d", i, c.name or "Contract", i)
           if imgui.Button(label, imgui.ImVec2(contentWidth, 0)) then
@@ -1638,13 +2545,47 @@ local function drawUI(dt)
 
           imgui.Indent(20)
           local tierColor = tierColors[c.tier or 1] or imgui.ImVec4(1, 1, 1, 1)
-          imgui.TextColored(tierColor, string.format("Tier %d | %s | %s", c.tier or 1, tostring(c.groupTag or "?"), tostring((c.material or "rocks"):upper())))
+          imgui.TextColored(tierColor, string.format("Tier %d | %s", c.tier or 1, tostring((c.material or "rocks"):upper())))
           imgui.SameLine()
           imgui.TextColored(imgui.ImVec4(0.5, 1, 0.5, 1), string.format("  $%d", c.totalPayout or 0))
-          imgui.Text(string.format("• %d tons total (%d trips)", c.requiredTons or 0, c.estimatedTrips or 1))
-          imgui.Text(string.format("• Payment: %s", (c.paymentType == "progressive") and "Progressive" or "On completion"))
+          
+          -- Show urgent badge
+          if c.isUrgent then
+            imgui.SameLine()
+            imgui.TextColored(imgui.ImVec4(1, 0.6, 0, 1), " [+25% URGENT]")
+          end
+          
+          -- Show requirements based on material type
+          if c.material == "marble" and c.requiredBlocks then
+            local blockInfo = ""
+            if c.requiredBlocks.big > 0 and c.requiredBlocks.small > 0 then
+              blockInfo = string.format("* %d Large + %d Small blocks", 
+                c.requiredBlocks.big, c.requiredBlocks.small)
+            elseif c.requiredBlocks.big > 0 then
+              blockInfo = string.format("* %d Large block%s", 
+                c.requiredBlocks.big, c.requiredBlocks.big > 1 and "s" or "")
+            else
+              blockInfo = string.format("* %d Small block%s", 
+                c.requiredBlocks.small, c.requiredBlocks.small > 1 and "s" or "")
+            end
+            imgui.TextColored(imgui.ImVec4(0.8, 0.9, 1.0, 1), blockInfo)
+          else
+            imgui.Text(string.format("* %d tons total", c.requiredTons or 0))
+          end
+          imgui.Text(string.format("* Payment: %s", (c.paymentType == "progressive") and "Progressive" or "On completion"))
+          
+          -- Show expiration time
+          local hoursLeft = getContractHoursRemaining(c)
+          if hoursLeft <= 1 then
+            imgui.TextColored(imgui.ImVec4(1, 0.3, 0.3, 1), string.format("* EXPIRES SOON: %d min", math.floor(hoursLeft * 60)))
+          elseif hoursLeft <= 2 then
+            imgui.TextColored(imgui.ImVec4(1, 0.7, 0.3, 1), string.format("* Expires in: %.1f hrs", hoursLeft))
+          else
+            imgui.TextColored(imgui.ImVec4(0.6, 0.6, 0.6, 1), string.format("* Expires in: %.0f hrs", hoursLeft))
+          end
+          
           if c.modifiers and #c.modifiers > 0 then
-            local modText = "• Modifiers: "
+            local modText = "* Modifiers: "
             for j, mod in ipairs(c.modifiers) do
               modText = modText .. tostring(mod.name or "?")
               if j < #c.modifiers then modText = modText .. ", " end
@@ -1667,6 +2608,50 @@ local function drawUI(dt)
       if imgui.Button("DECLINE ALL", imgui.ImVec2(-1, 35)) then
         currentState = STATE_IDLE
         jobOfferSuppressed = true
+      end
+      imgui.PopStyleColor(2)
+
+    elseif currentState == STATE_CHOOSING_ZONE then
+      imgui.TextColored(imgui.ImVec4(1, 0.8, 0.2, pulseAlpha * uiAnim.opacity), ">> CHOOSE LOADING ZONE <<")
+      imgui.Dummy(imgui.ImVec2(0, 5))
+      
+      if ContractSystem.activeContract then
+        local c = ContractSystem.activeContract
+        imgui.Text(string.format("Contract: %s", c.name or "Contract"))
+        imgui.Text(string.format("Material needed: %s", (c.material or "rocks"):upper()))
+        imgui.Dummy(imgui.ImVec2(0, 8))
+      end
+      
+      imgui.TextColored(imgui.ImVec4(0.7, 1, 0.7, uiAnim.opacity), "Drive to any highlighted zone:")
+      imgui.Dummy(imgui.ImVec2(0, 5))
+      
+      -- List compatible zones
+      for i, zone in ipairs(compatibleZones) do
+        local zoneName = zone.secondaryTag or "Unknown Zone"
+        local materialType = (zone.materialType or "rocks"):upper()
+        
+        -- Show distance to each zone
+        local playerVeh = be:getPlayerVehicle(0)
+        local dist = 0
+        if playerVeh and zone.loading and zone.loading.center then
+          dist = (playerVeh:getPosition() - vec3(zone.loading.center)):length()
+        end
+        
+        local hue = (i - 1) / math.max(1, #compatibleZones)
+        local r = 0.3 + 0.7 * math.abs(math.sin(hue * 3.14159))
+        local g = 0.8
+        local b = 0.3 + 0.7 * math.abs(math.cos(hue * 3.14159))
+        
+        imgui.TextColored(imgui.ImVec4(r, g, b, uiAnim.opacity), 
+          string.format("  [%d] %s (%s) - %.0fm", i, zoneName, materialType, dist))
+      end
+      
+      imgui.Dummy(imgui.ImVec2(0, 15))
+      imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.5, 0.1, 0.1, uiAnim.opacity))
+      imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.7, 0.1, 0.1, uiAnim.opacity))
+      if imgui.Button("ABANDON CONTRACT", imgui.ImVec2(-1, 30)) then
+        compatibleZones = {}
+        abandonContract()
       end
       imgui.PopStyleColor(2)
 
@@ -1710,7 +2695,14 @@ local function drawUI(dt)
         local c = ContractSystem.activeContract
         local p = ContractSystem.contractProgress
         imgui.Text(string.format("Contract: %s", c.name or "Contract"))
-        imgui.Text(string.format("Progress: %.1f / %.1f tons", p.deliveredTons or 0, c.requiredTons or 0))
+        -- Show block progress for marble, tons for rocks
+        if c.material == "marble" and c.requiredBlocks then
+          local delivered = p.deliveredBlocks or { big = 0, small = 0 }
+          imgui.Text(string.format("Large: %d / %d", delivered.big, c.requiredBlocks.big))
+          imgui.Text(string.format("Small: %d / %d", delivered.small, c.requiredBlocks.small))
+        else
+          imgui.Text(string.format("Progress: %.1f / %.1f tons", p.deliveredTons or 0, c.requiredTons or 0))
+        end
         imgui.Separator()
       end
       local mass = jobObjects.currentLoadMass or 0
@@ -1767,7 +2759,16 @@ local function drawUI(dt)
       imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0, 0.4, 0, uiAnim.opacity))
       imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0, 0.6, 0, uiAnim.opacity))
       if imgui.Button("SEND TRUCK", imgui.ImVec2(-1, 45)) then
-        if jobObjects.truckID and jobObjects.activeGroup and jobObjects.activeGroup.destination then
+        -- Use contract's destination (unlinked from loading zone)
+        local destPos = nil
+        if jobObjects.deliveryDestination and jobObjects.deliveryDestination.pos then
+          destPos = vec3(jobObjects.deliveryDestination.pos)
+        elseif jobObjects.activeGroup and jobObjects.activeGroup.destination then
+          -- Fallback to legacy behavior
+          destPos = vec3(jobObjects.activeGroup.destination.pos)
+        end
+        
+        if jobObjects.truckID and destPos then
           -- Only count undamaged marble blocks for delivery weight
           if jobObjects.materialType == "marble" then
             jobObjects.lastDeliveredMass = calculateUndamagedTruckPayload()
@@ -1778,8 +2779,11 @@ local function drawUI(dt)
             jobObjects.deliveryBlocksStatus = nil
           end
           jobObjects.deliveredPropIds = getLoadedPropIdsInTruck(0.1)
-          local destPos = vec3(jobObjects.activeGroup.destination.pos)
           core_groundMarkers.setPath(nil)
+          -- Reset truck movement tracking
+          truckStoppedTimer = 0
+          truckLastPosition = nil
+          truckResendCount = 0
           driveTruckToPoint(jobObjects.truckID, destPos)
           currentState = STATE_DELIVERING
         else
@@ -1799,7 +2803,14 @@ local function drawUI(dt)
         local c = ContractSystem.activeContract
         local p = ContractSystem.contractProgress
         imgui.Text(string.format("Contract: %s", c.name or "Contract"))
-        imgui.Text(string.format("Progress: %.1f / %.1f tons", p.deliveredTons or 0, c.requiredTons or 0))
+        -- Show block progress for marble, tons for rocks
+        if c.material == "marble" and c.requiredBlocks then
+          local delivered = p.deliveredBlocks or { big = 0, small = 0 }
+          imgui.Text(string.format("Large: %d / %d", delivered.big, c.requiredBlocks.big))
+          imgui.Text(string.format("Small: %d / %d", delivered.small, c.requiredBlocks.small))
+        else
+          imgui.Text(string.format("Progress: %.1f / %.1f tons", p.deliveredTons or 0, c.requiredTons or 0))
+        end
         imgui.Separator()
       end
       imgui.Text("Truck driving to destination...")
@@ -1828,20 +2839,23 @@ local function drawUI(dt)
       end
 
     elseif currentState == STATE_RETURN_TO_QUARRY then
-      imgui.TextColored(imgui.ImVec4(1.0, 0.6, 0.2, pulseAlpha * uiAnim.opacity), ">> RETURN TO QUARRY <<")
+      imgui.TextColored(imgui.ImVec4(1.0, 0.6, 0.2, pulseAlpha * uiAnim.opacity), ">> RETURN TO STARTER ZONE <<")
       if ContractSystem.activeContract then
         local c = ContractSystem.activeContract
         local p = ContractSystem.contractProgress
         imgui.Text(string.format("Contract: %s", c.name or "Contract"))
         if checkContractCompletion() then
           imgui.TextColored(imgui.ImVec4(0, 1, 0, pulseAlpha), "CONTRACT COMPLETE!")
-          imgui.Text(string.format("Delivered: %.1f / %.1f tons", p.deliveredTons or 0, c.requiredTons or 0))
+        end
+        -- Show block progress for marble, tons for rocks
+        if c.material == "marble" and c.requiredBlocks then
+          local delivered = p.deliveredBlocks or { big = 0, small = 0 }
+          imgui.Text(string.format("Large: %d / %d", delivered.big, c.requiredBlocks.big))
+          imgui.Text(string.format("Small: %d / %d", delivered.small, c.requiredBlocks.small))
         else
           imgui.Text(string.format("Delivered: %.1f / %.1f tons", p.deliveredTons or 0, c.requiredTons or 0))
         end
-        if c.paymentType == "progressive" then
-          imgui.TextColored(imgui.ImVec4(0.5, 1, 0.5, 1), string.format("Earned so far: $%d", p.totalPaidSoFar or 0))
-        end
+        imgui.TextColored(imgui.ImVec4(0.5, 1, 0.5, 1), string.format("Payout: $%d (on completion)", c.totalPayout or 0))
       end
       imgui.Dummy(imgui.ImVec2(0, 10))
       if imgui.Button("ABANDON CONTRACT", imgui.ImVec2(-1, 30)) then
@@ -1849,17 +2863,22 @@ local function drawUI(dt)
       end
 
     elseif currentState == STATE_AT_QUARRY_DECIDE then
-      imgui.TextColored(imgui.ImVec4(0.2, 1.0, 0.4, pulseAlpha * uiAnim.opacity), ">> AT QUARRY <<")
+      imgui.TextColored(imgui.ImVec4(0.2, 1.0, 0.4, pulseAlpha * uiAnim.opacity), ">> AT STARTER ZONE <<")
       if ContractSystem.activeContract then
         local c = ContractSystem.activeContract
         local p = ContractSystem.contractProgress
-        local pct = 0
-        if (c.requiredTons or 0) > 0 then pct = (p.deliveredTons or 0) / (c.requiredTons or 1) end
         imgui.Text(string.format("Contract: %s", c.name or "Contract"))
-        imgui.Text(string.format("Progress: %.1f / %.1f tons (%.0f%%)", p.deliveredTons or 0, c.requiredTons or 0, pct * 100))
-        if c.paymentType == "progressive" then
-          imgui.TextColored(imgui.ImVec4(0.5, 1, 0.5, 1), string.format("Already paid: $%d", p.totalPaidSoFar or 0))
+        -- Show block progress for marble, tons for rocks
+        if c.material == "marble" and c.requiredBlocks then
+          local delivered = p.deliveredBlocks or { big = 0, small = 0 }
+          imgui.Text(string.format("Large: %d / %d", delivered.big, c.requiredBlocks.big))
+          imgui.Text(string.format("Small: %d / %d", delivered.small, c.requiredBlocks.small))
+        else
+          local pct = 0
+          if (c.requiredTons or 0) > 0 then pct = (p.deliveredTons or 0) / (c.requiredTons or 1) end
+          imgui.Text(string.format("Progress: %.1f / %.1f tons (%.0f%%)", p.deliveredTons or 0, c.requiredTons or 0, pct * 100))
         end
+        imgui.TextColored(imgui.ImVec4(0.5, 1, 0.5, 1), string.format("Payout: $%d", c.totalPayout or 0))
         imgui.Dummy(imgui.ImVec2(0, 10))
         if checkContractCompletion() then
           imgui.TextColored(imgui.ImVec4(0, 1, 0, pulseAlpha), "CONTRACT COMPLETE!")
@@ -1886,16 +2905,7 @@ local function drawUI(dt)
   imgui.PopStyleColor(2)
   imgui.PopStyleVar(3)
 end
-
-local function isPlayerInAnyLoadingZone(playerPos)
-  for _, g in ipairs(availableGroups) do
-    if g.loading and g.loading.containsPoint2D and g.loading:containsPoint2D(playerPos) then
-      return true
-    end
-  end
-  return false
-end
-
+-- Throttled zone checking functions
 local function getInAnyLoadingZoneThrottled(playerPos, dt)
   anyZoneCheckTimer = anyZoneCheckTimer + dt
   if anyZoneCheckTimer >= 0.25 then
@@ -1959,7 +2969,12 @@ local function onUpdate(dt)
     end
   end
 
+  -- Update zone stock regeneration
+  updateZoneStocks(dt)
+
   drawWorkSiteMarker(dt)
+  drawZoneChoiceMarkers(dt)  -- Draw markers on all compatible zones when choosing
+  
   if currentState == STATE_LOADING then
     payloadUpdateTimer = payloadUpdateTimer + dt
     if payloadUpdateTimer >= 0.25 then
@@ -1992,10 +3007,18 @@ local function onUpdate(dt)
     if jobOfferSuppressed and not inAnyZone then
       jobOfferSuppressed = false
     end
-    if not jobOfferSuppressed and playerVeh:getJBeamFilename() == "wl40" then
-      if inAnyZone then
-        if shouldRefreshContracts() or #ContractSystem.availableContracts == 0 then
-          generateContracts()
+    local vehicleName = playerVeh:getJBeamFilename()
+    local isWL40 = vehicleName == "wl40"
+    if not jobOfferSuppressed and isWL40 then
+      -- Only allow contract menu from STARTER zone
+      local inStarterZone = isPlayerInStarterZone(playerPos)
+      -- Debug: enabled to diagnose starter zone issues (can disable after fixing)
+      print(string.format("[Quarry] STATE_IDLE check: vehicle=%s, inStarterZone=%s, sitesData=%s", 
+        tostring(vehicleName), tostring(inStarterZone), tostring(sitesData ~= nil)))
+      if inStarterZone then
+        -- Generate initial contracts if needed
+        if shouldRefreshContracts() or not ContractSystem.initialContractsGenerated then
+          generateInitialContracts()
         end
         currentState = STATE_CONTRACT_SELECT
         Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_Unlock_01')
@@ -2003,13 +3026,88 @@ local function onUpdate(dt)
     end
 
   elseif currentState == STATE_CONTRACT_SELECT then
-    if #ContractSystem.availableContracts == 0 and #availableGroups > 0 then
-      generateContracts()
+    -- Dynamic contract management
+    contractUpdateTimer = contractUpdateTimer + dt
+    if contractUpdateTimer >= CONTRACT_UPDATE_INTERVAL then
+      contractUpdateTimer = 0
+      
+      -- Check for expired contracts
+      checkContractExpiration()
+      
+      -- Try to spawn new contracts (gradual fill to max)
+      trySpawnNewContract()
     end
-    if not inAnyZone then
+    
+    -- If all contracts expired/taken, generate new initial batch
+    if #ContractSystem.availableContracts == 0 and #availableGroups > 0 then
+      generateInitialContracts()
+    end
+    
+    -- Exit contract menu if player leaves the starter zone
+    local inStarterZone = isPlayerInStarterZone(playerPos)
+    if not inStarterZone then
       currentState = STATE_IDLE
       jobObjects.materialType = nil
       jobObjects.activeGroup = nil
+    end
+
+  elseif currentState == STATE_CHOOSING_ZONE then
+    -- Player is choosing which zone to load from
+    -- Check if they entered any compatible zone
+    local enteredZone = nil
+    for _, zone in ipairs(compatibleZones) do
+      if zone.loading and zone.loading.containsPoint2D and zone.loading:containsPoint2D(playerPos) then
+        enteredZone = zone
+        break
+      end
+    end
+    
+    if enteredZone then
+      -- Player entered a compatible zone - bind it as the loading zone
+      local contract = ContractSystem.activeContract
+      if contract then
+        contract.group = enteredZone
+        contract.loadingZoneTag = enteredZone.secondaryTag
+        
+        jobObjects.activeGroup = enteredZone
+        jobObjects.materialType = enteredZone.materialType or contract.material or "rocks"
+        
+        print(string.format("[Quarry] Player entered zone '%s' - binding as loading zone", 
+          enteredZone.secondaryTag))
+        
+        -- Spawn materials in this zone
+        if #rockPileQueue == 0 then
+          spawnJobMaterials()
+        end
+        
+        -- Spawn truck and transition to TRUCK_ARRIVING
+        local targetPos = vec3(enteredZone.loading.center)
+        jobObjects.deferredTruckTargetPos = targetPos
+        jobObjects.loadingZoneTargetPos = targetPos
+        
+        local truckId = spawnTruckForGroup(enteredZone, jobObjects.materialType, targetPos)
+        if truckId then
+          jobObjects.truckID = truckId
+          local truck = be:getObjectByID(truckId)
+          if truck then
+            truck:queueLuaCommand('if not driver then extensions.load("driver") end')
+          end
+          driveTruckToPoint(truckId, targetPos)
+          
+          currentState = STATE_TRUCK_ARRIVING
+          markerCleared = false
+          truckStoppedInLoading = false
+          
+          -- Clear zone markers
+          compatibleZones = {}
+          
+          Engine.Audio.playOnce('AudioGui', 'event:>UI>Countdown>3_seconds')
+          ui_message(string.format("Loading from %s. Truck arriving...", 
+            enteredZone.secondaryTag), 5, "success")
+        else
+          ui_message("Failed to spawn truck!", 5, "error")
+        end
+      end
     end
 
   elseif currentState == STATE_DRIVING_TO_SITE then
@@ -2064,13 +3162,98 @@ local function onUpdate(dt)
     end
 
   elseif currentState == STATE_DELIVERING then
-    local group = jobObjects.activeGroup
-    if jobObjects.truckID and group and group.destination then
+    -- Get destination from contract (unlinked from loading zone)
+    local destPos = nil
+    if jobObjects.deliveryDestination and jobObjects.deliveryDestination.pos then
+      destPos = vec3(jobObjects.deliveryDestination.pos)
+    elseif jobObjects.activeGroup and jobObjects.activeGroup.destination then
+      -- Fallback to legacy behavior
+      destPos = vec3(jobObjects.activeGroup.destination.pos)
+    end
+    
+    if jobObjects.truckID and destPos then
       local truck = be:getObjectByID(jobObjects.truckID)
       if truck then
-        local dist = (truck:getPosition() - vec3(group.destination.pos)):length()
+        local truckPos = truck:getPosition()
+        local dist = (truckPos - destPos):length()
+        
+        -- Check if truck reached destination
         if dist < 10 then
+          -- Reset tracking when arriving
+          truckStoppedTimer = 0
+          truckLastPosition = nil
+          truckResendCount = 0
           handleDeliveryArrived()
+          return
+        end
+        
+        -- Track truck movement to detect stops
+        local velocity = truck:getVelocity()
+        local speed = velocity and velocity:length() or 0
+        local isMoving = speed > truckStopSpeedThreshold
+        
+        -- Check if AI is applying throttle (helps detect rolling on hills)
+        local throttle = 0
+        local electrics = truck.electrics
+        if electrics and electrics.values then
+          throttle = electrics.values.throttle or 0
+        end
+        local isAIdriving = throttle > 0.1
+        
+        -- Truck is considered "actively driving" only if AI has throttle AND moving
+        -- OR if moving fast enough that throttle check doesn't matter
+        local isActivelyDriving = (isAIdriving and isMoving) or (speed > 3.0)
+        
+        if isActivelyDriving then
+          -- Truck is actively driving, reset stopped timer and update last position
+          truckStoppedTimer = 0
+          truckLastPosition = truckPos
+          truckResendCount = 0  -- Reset resend count when actively driving
+        else
+          -- Truck appears stopped or rolling without AI control
+          if truckLastPosition then
+            -- Check if truck has moved at all (might be stuck but vibrating slightly)
+            local movedDist = (truckPos - truckLastPosition):length()
+            
+            -- Consider stuck if: hasn't moved much OR is rolling but AI has no throttle
+            local isStuck = movedDist < 0.5 or (not isAIdriving and speed < 2.0)
+            
+            if isStuck then
+              -- Truck is stuck, increment stopped timer
+              truckStoppedTimer = truckStoppedTimer + dt
+              
+              -- If stopped for too long and not at destination, re-send
+              if truckStoppedTimer >= truckStoppedThreshold then
+                if truckResendCount < truckMaxResends then
+                  truckResendCount = truckResendCount + 1
+                  local reason = isAIdriving and "no movement" or "no throttle"
+                  print(string.format("[Quarry] Truck stuck (%s, speed=%.1f, throttle=%.2f), re-sending (attempt %d)", 
+                    reason, speed, throttle, truckResendCount))
+                  
+                  -- Re-issue drive command with more aggressive settings
+                  truck:queueLuaCommand('ai.setAggressionMode("rubberBand")')
+                  truck:queueLuaCommand('ai.setAggression(0.9)')  -- Even more aggressive
+                  driveTruckToPoint(jobObjects.truckID, destPos)
+                  
+                  -- Reset timer to give it time to start moving
+                  truckStoppedTimer = 0
+                  truckLastPosition = truckPos
+                else
+                  -- Too many resends, fail the contract
+                  print("[Quarry] Truck failed to reach destination after " .. truckMaxResends .. " attempts")
+                  failContract(Config.Contracts.CrashPenalty, "Truck stuck! Contract failed.", "warning")
+                  return
+                end
+              end
+            else
+              -- Truck moved enough, reset tracking
+              truckStoppedTimer = 0
+              truckLastPosition = truckPos
+            end
+          else
+            -- First frame tracking, just store position
+            truckLastPosition = truckPos
+          end
         end
       else
         failContract(Config.Contracts.CrashPenalty, "Truck destroyed! Contract failed.", "warning")
@@ -2080,20 +3263,21 @@ local function onUpdate(dt)
     end
 
   elseif currentState == STATE_RETURN_TO_QUARRY then
-    local group = jobObjects.activeGroup
-    if group and group.loading and group.loading.containsPoint2D and group.loading:containsPoint2D(playerPos) then
+    -- Check if player arrived at the starter zone
+    if isPlayerInStarterZone(playerPos) then
       currentState = STATE_AT_QUARRY_DECIDE
       core_groundMarkers.setPath(nil)
       Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_Unlock_01')
-      ui_message("Back at quarry!", 5, "info")
+      ui_message("At starter zone! Finalize your contract.", 5, "info")
     end
 
   elseif currentState == STATE_AT_QUARRY_DECIDE then
-    local group = jobObjects.activeGroup
-    if not (group and group.loading and group.loading.containsPoint2D and group.loading:containsPoint2D(playerPos)) then
+    -- Check if player left the starter zone
+    if not isPlayerInStarterZone(playerPos) then
       currentState = STATE_RETURN_TO_QUARRY
-      if group and group.loading and group.loading.center then
-        core_groundMarkers.setPath(vec3(group.loading.center))
+      local starterZone = getStarterZoneFromSites()
+      if starterZone and starterZone.center then
+        core_groundMarkers.setPath(vec3(starterZone.center))
       end
     end
   end
@@ -2108,13 +3292,20 @@ local function onClientStartMission()
   cleanupJob(true)
   ContractSystem.availableContracts = {}
   ContractSystem.activeContract = nil
-  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0}
+  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0, deliveredBlocks = { big = 0, small = 0, total = 0 }}
+  ContractSystem.lastContractSpawnTime = 0
+  ContractSystem.contractsGeneratedToday = 0
+  ContractSystem.initialContractsGenerated = false  -- Allow fresh generation on mission start
   jobOfferSuppressed = false
   anyZoneCheckTimer = 0
   cachedInAnyLoadingZone = false
   sitesLoadTimer = 0
   groupCachePrecomputeQueued = false
   marbleInitialState = {}
+  uiHidden = false
+  contractUpdateTimer = 0
+  stockRegenTimer = 0  -- Reset stock regeneration timer
+  compatibleZones = {}  -- Reset zone choice markers
 end
 
 local function onClientEndMission()
@@ -2130,9 +3321,208 @@ local function onClientEndMission()
   marbleDamageState = {}
 end
 
-M.onUpdate = onUpdate
+-- ============================================================================
+-- Phone UI API Functions
+-- ============================================================================
+
+local function getQuarryStateForUI()
+  local contractsForUI = {}
+  for i, c in ipairs(ContractSystem.availableContracts or {}) do
+    table.insert(contractsForUI, {
+      id = c.id,
+      name = c.name,
+      tier = c.tier,
+      material = c.material,
+      requiredTons = c.requiredTons,
+      requiredBlocks = c.requiredBlocks,  -- NEW: Block counts for marble {big, small, total}
+      isBulk = c.isBulk,
+      totalPayout = c.totalPayout,
+      paymentType = c.paymentType,
+      modifiers = c.modifiers,
+      groupTag = c.groupTag,
+      estimatedTrips = c.estimatedTrips,
+      isSpecial = c.isSpecial,
+      -- Expiration and urgency fields
+      isUrgent = c.isUrgent or false,
+      expiresAt = c.expiresAt,
+      hoursRemaining = getContractHoursRemaining(c),
+      expirationHours = c.expirationHours,
+      -- Unlinked contract destination info
+      destinationName = c.destination and c.destination.name or nil,
+      originZoneTag = c.destination and c.destination.originZoneTag or c.groupTag,
+    })
+  end
+
+  local activeContractForUI = nil
+  if ContractSystem.activeContract then
+    local c = ContractSystem.activeContract
+    activeContractForUI = {
+      id = c.id,
+      name = c.name,
+      tier = c.tier,
+      material = c.material,
+      requiredTons = c.requiredTons,
+      requiredBlocks = c.requiredBlocks,  -- NEW: Block counts for marble {big, small, total}
+      totalPayout = c.totalPayout,
+      paymentType = c.paymentType,
+      modifiers = c.modifiers,
+      groupTag = c.groupTag,
+      estimatedTrips = c.estimatedTrips,
+      -- Unlinked contract info
+      loadingZoneTag = c.loadingZoneTag,  -- Where we're loading from
+      destinationName = c.destination and c.destination.name or nil,  -- Where we're delivering to
+    }
+  end
+
+  local blocksStatus = {}
+  if jobObjects.materialType == "marble" then
+    blocksStatus = getMarbleBlocksStatus()
+  end
+
+  -- Get stock info for active zone
+  local zoneStockInfo = nil
+  if jobObjects.activeGroup then
+    zoneStockInfo = getZoneStockInfo(jobObjects.activeGroup)
+  end
+
+  return {
+    state = currentState,
+    playerLevel = PlayerData.level or 1,
+    contractsCompleted = PlayerData.contractsCompleted or 0,
+    availableContracts = contractsForUI,
+    activeContract = activeContractForUI,
+    contractProgress = {
+      deliveredTons = ContractSystem.contractProgress and ContractSystem.contractProgress.deliveredTons or 0,
+      totalPaidSoFar = ContractSystem.contractProgress and ContractSystem.contractProgress.totalPaidSoFar or 0,
+      deliveredBlocks = ContractSystem.contractProgress and ContractSystem.contractProgress.deliveredBlocks or { big = 0, small = 0, total = 0 },
+      deliveryCount = ContractSystem.contractProgress and ContractSystem.contractProgress.deliveryCount or 0
+    },
+    currentLoadMass = jobObjects.currentLoadMass or 0,
+    targetLoad = Config.TargetLoad or 25000,
+    materialType = jobObjects.materialType or "rocks",
+    marbleBlocks = blocksStatus,
+    anyMarbleDamaged = jobObjects.anyMarbleDamaged or false,
+    deliveryBlocks = jobObjects.deliveryBlocksStatus or {},
+    markerCleared = markerCleared,
+    truckStopped = truckStoppedInLoading,
+    -- Zone stock info
+    zoneStock = zoneStockInfo
+  }
+end
+
+local function requestQuarryState()
+  local stateData = getQuarryStateForUI()
+  guihooks.trigger('updateQuarryState', stateData)
+end
+
+local function acceptContractFromUI(contractIndex)
+  print("[Quarry] acceptContractFromUI called with index: " .. tostring(contractIndex))
+  print("[Quarry] Current state: " .. tostring(currentState) .. " (STATE_CONTRACT_SELECT = " .. tostring(STATE_CONTRACT_SELECT) .. ")")
+  if currentState ~= STATE_CONTRACT_SELECT then 
+    print("[Quarry] State check FAILED - not in CONTRACT_SELECT state, returning")
+    return 
+  end
+  print("[Quarry] State check passed, accepting contract...")
+  acceptContract(contractIndex)
+  requestQuarryState()
+end
+
+local function declineAllContracts()
+  if currentState ~= STATE_CONTRACT_SELECT then return end
+  currentState = STATE_IDLE
+  jobOfferSuppressed = true
+  requestQuarryState()
+end
+
+local function abandonContractFromUI()
+  abandonContract()
+  requestQuarryState()
+end
+
+local function sendTruckFromUI()
+  if currentState ~= STATE_LOADING then return end
+  
+  -- Get destination from contract (unlinked from loading zone)
+  local destPos = nil
+  if jobObjects.deliveryDestination and jobObjects.deliveryDestination.pos then
+    destPos = vec3(jobObjects.deliveryDestination.pos)
+  elseif jobObjects.activeGroup and jobObjects.activeGroup.destination then
+    -- Fallback to legacy behavior
+    destPos = vec3(jobObjects.activeGroup.destination.pos)
+  end
+  
+  if not jobObjects.truckID or not destPos then
+    abandonContract()
+    requestQuarryState()
+    return
+  end
+
+  -- Only count undamaged marble blocks for delivery weight
+  if jobObjects.materialType == "marble" then
+    jobObjects.lastDeliveredMass = calculateUndamagedTruckPayload()
+    jobObjects.deliveryBlocksStatus = getMarbleBlocksStatus()
+  else
+    jobObjects.lastDeliveredMass = jobObjects.currentLoadMass or 0
+    jobObjects.deliveryBlocksStatus = nil
+  end
+  jobObjects.deliveredPropIds = getLoadedPropIdsInTruck(0.1)
+  core_groundMarkers.setPath(nil)
+  -- Reset truck movement tracking
+  truckStoppedTimer = 0
+  truckLastPosition = nil
+  truckResendCount = 0
+  driveTruckToPoint(jobObjects.truckID, destPos)
+  currentState = STATE_DELIVERING
+  requestQuarryState()
+end
+
+local function finalizeContractFromUI()
+  if currentState ~= STATE_AT_QUARRY_DECIDE then return end
+  if not checkContractCompletion() then return end
+  completeContract()
+  requestQuarryState()
+end
+
+local function loadMoreFromUI()
+  if currentState ~= STATE_AT_QUARRY_DECIDE then return end
+  if checkContractCompletion() then return end
+  beginActiveContractTrip()
+  requestQuarryState()
+end
+
+-- Send state updates to UI periodically when in active states
+local uiUpdateTimer = 0
+local UI_UPDATE_INTERVAL = 0.5
+
+local originalOnUpdate = onUpdate
+local function onUpdateWithUI(dt)
+  originalOnUpdate(dt)
+  
+  -- Periodically send state to UI when in active job states
+  if currentState ~= STATE_IDLE then
+    uiUpdateTimer = uiUpdateTimer + dt
+    if uiUpdateTimer >= UI_UPDATE_INTERVAL then
+      uiUpdateTimer = 0
+      requestQuarryState()
+    end
+  end
+end
+
+M.onUpdate = onUpdateWithUI
 M.onClientStartMission = onClientStartMission
 M.onClientEndMission = onClientEndMission
 M.onMarbleDamageCallback = onMarbleDamageCallback
+
+-- Phone UI API exports
+M.requestQuarryState = requestQuarryState
+M.acceptContractFromUI = acceptContractFromUI
+M.declineAllContracts = declineAllContracts
+M.abandonContractFromUI = abandonContractFromUI
+M.sendTruckFromUI = sendTruckFromUI
+M.finalizeContractFromUI = finalizeContractFromUI
+M.loadMoreFromUI = loadMoreFromUI
+
+-- Console commands
+M.resumeTruck = resumeTruck
 
 return M
