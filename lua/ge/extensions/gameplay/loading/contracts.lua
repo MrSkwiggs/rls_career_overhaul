@@ -183,21 +183,45 @@ local function generateContract(availableGroups)
   local requiredTons = 0
   local requiredItems = 0
   local estimatedTrips = 1
+  local materialRequirements = {}
+  local tierStr = tostring(tier)
   
   if matConfig.unitType == "item" then
-    local tierStr = tostring(tier)
     local defaultRanges = Config.contracts.defaultContractRanges and Config.contracts.defaultContractRanges.item
-    local ranges = matConfig.contractRanges and matConfig.contractRanges[tierStr] or defaultRanges
-    if not ranges then
-      print("[Loading] Warning: No contract ranges for item material " .. materialType .. " tier " .. tierStr)
-      return nil
+    
+    if #materialsOfType > 1 then
+      for _, matKey in ipairs(materialsOfType) do
+        local mixedMatConfig = Config.materials[matKey]
+        if mixedMatConfig and mixedMatConfig.unitType == "item" then
+          local ranges = mixedMatConfig.contractRanges and mixedMatConfig.contractRanges[tierStr] or defaultRanges
+          if ranges then
+            local matRequiredItems = math.random(ranges.min, ranges.max)
+            materialRequirements[matKey] = matRequiredItems
+            requiredItems = requiredItems + matRequiredItems
+          else
+            print(string.format("[Loading] Warning: No contract ranges for item material %s tier %s", matKey, tierStr))
+          end
+        end
+      end
+      
+      if requiredItems == 0 then
+        print(string.format("[Loading] Warning: Could not generate requirements for any materials of typeName '%s' tier %s", selectedTypeName, tierStr))
+        return nil
+      end
+    else
+      local ranges = matConfig.contractRanges and matConfig.contractRanges[tierStr] or defaultRanges
+      if not ranges then
+        print("[Loading] Warning: No contract ranges for item material " .. materialType .. " tier " .. tierStr)
+        return nil
+      end
+      
+      requiredItems = math.random(ranges.min, ranges.max)
+      materialRequirements[materialType] = requiredItems
     end
     
-    requiredItems = math.random(ranges.min, ranges.max)
     estimatedTrips = 1
     requiredTons = 0
   else
-    local tierStr = tostring(tier)
     local defaultRanges = Config.contracts.defaultContractRanges and Config.contracts.defaultContractRanges.mass
     local ranges = matConfig.contractRanges and matConfig.contractRanges[tierStr]
     
@@ -221,7 +245,12 @@ local function generateContract(availableGroups)
 
   local unitPay = 0
   if matConfig.unitType == "item" then
-    unitPay = requiredItems * (matConfig.payPerUnit or 0)
+    for matKey, matRequiredItems in pairs(materialRequirements) do
+      local matConfigForPay = Config.materials[matKey]
+      if matConfigForPay then
+        unitPay = unitPay + (matRequiredItems * (matConfigForPay.payPerUnit or 0))
+      end
+    end
   else
     unitPay = requiredTons * (matConfig.payPerUnit or 0)
   end
@@ -244,6 +273,7 @@ local function generateContract(availableGroups)
     materialTypeName = selectedTypeName,
     requiredTons = requiredTons,
     requiredItems = requiredItems,
+    materialRequirements = materialRequirements,
     unitType = matConfig.unitType,
     units = matConfig.units,
     isBulk = isBulk,

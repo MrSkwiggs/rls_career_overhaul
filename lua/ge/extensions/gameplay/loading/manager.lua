@@ -156,6 +156,10 @@ local function getContractMaterialRequirements(contract)
     return {}
   end
   
+  if contract.materialRequirements and next(contract.materialRequirements) then
+    return contract.materialRequirements
+  end
+  
   local Config = extensions.gameplay_loading_config
   local materialsOfType = {}
   if Config and Config.materials then
