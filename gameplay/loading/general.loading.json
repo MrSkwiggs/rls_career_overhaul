@@ -167,9 +167,6 @@
             "3": 4,
             "4": 3
         },
-        "urgentContractChance": 0.15,
-        "urgentExpirationMult": 0.5,
-        "urgentPayBonus": 0.25,
         "tiers": [
             {
                 "name": "Easy",
@@ -177,9 +174,7 @@
                 "payMultiplier": {
                     "min": 0.8,
                     "max": 1.2
-                },
-                "modifierChance": 0.2,
-                "specialChance": 0.02
+                }
             },
             {
                 "name": "Standard",
@@ -187,9 +182,7 @@
                 "payMultiplier": {
                     "min": 1,
                     "max": 1.5
-                },
-                "modifierChance": 0.4,
-                "specialChance": 0.05
+                }
             },
             {
                 "name": "Hard",
@@ -197,9 +190,7 @@
                 "payMultiplier": {
                     "min": 1.25,
                     "max": 1.75
-                },
-                "modifierChance": 0.6,
-                "specialChance": 0.08
+                }
             },
             {
                 "name": "Expert",
@@ -207,56 +198,9 @@
                 "payMultiplier": {
                     "min": 1.5,
                     "max": 2.0
-                },
-                "modifierChance": 0.8,
-                "specialChance": 0.12
+                }
             }
         ],
-        "modifiers": {
-            "time": [
-                {
-                    "name": "Rush Delivery",
-                    "deadline": 8,
-                    "bonus": 0.3,
-                    "weight": 2
-                },
-                {
-                    "name": "Scheduled",
-                    "deadline": 15,
-                    "bonus": 0.15,
-                    "weight": 3
-                },
-                {
-                    "name": "Relaxed",
-                    "deadline": 25,
-                    "bonus": 0.05,
-                    "weight": 2
-                }
-            ],
-            "challenge": [
-                {
-                    "name": "Fragile Client",
-                    "damageLimit": 15,
-                    "parkingPrecision": 3,
-                    "bonus": 0.25,
-                    "weight": 2
-                },
-                {
-                    "name": "Careful Haul",
-                    "damageLimit": 25,
-                    "parkingPrecision": 3,
-                    "bonus": 0.15,
-                    "weight": 3
-                },
-                {
-                    "name": "Precision Parking",
-                    "damageLimit": 25,
-                    "parkingPrecision": 3,
-                    "bonus": 0.2,
-                    "weight": 2
-                }
-            ]
-        },
         "abandonPenalty": 500,
         "crashPenalty": 1000,
         "tierWeights": [
@@ -266,26 +210,6 @@
             0.15
         ],
         "bulkChance": 0.4,
-        "challengeModifierChanceMult": 0.6,
-        "specialBonusRange": [
-            0.5,
-            1.5
-        ],
-        "specialItemBonusRange": [
-            1,
-            2
-        ],
-        "specialMassBonusRanges": {
-            "low": [
-                10,
-                20
-            ],
-            "high": [
-                300,
-                500
-            ]
-        },
-        "specialMassBonusChance": 0.5,
         "defaultExpirationHours": 6,
         "defaultGameHour": 12,
         "defaultContractRanges": {

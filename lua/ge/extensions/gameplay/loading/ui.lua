@@ -156,8 +156,8 @@ local function getQuarryStateForUI(currentState, playerMod, contractsMod, manage
       materialTypeName = c.materialTypeName,
       requiredTons = c.requiredTons, requiredItems = c.requiredItems,
       isBulk = c.isBulk, totalPayout = c.totalPayout, paymentType = c.paymentType,
-      modifiers = c.modifiers, groupTag = c.groupTag, estimatedTrips = c.estimatedTrips,
-      isSpecial = c.isSpecial, isUrgent = c.isUrgent or false, expiresAt = c.expiresAt,
+      groupTag = c.groupTag, estimatedTrips = c.estimatedTrips,
+      expiresAt = c.expiresAt,
       hoursRemaining = contractsMod.getContractHoursRemaining(c), expirationHours = c.expirationHours,
       destinationName = c.destination and c.destination.name or nil,
       originZoneTag = c.destination and c.destination.originZoneTag or c.groupTag,
@@ -172,7 +172,7 @@ local function getQuarryStateForUI(currentState, playerMod, contractsMod, manage
       materialTypeName = c.materialTypeName,
       requiredTons = c.requiredTons, requiredItems = c.requiredItems,
       totalPayout = c.totalPayout, paymentType = c.paymentType,
-      modifiers = c.modifiers, groupTag = c.groupTag, estimatedTrips = c.estimatedTrips,
+      groupTag = c.groupTag, estimatedTrips = c.estimatedTrips,
       loadingZoneTag = c.loadingZoneTag,
       destinationName = c.destination and c.destination.name or nil,
     }
@@ -272,15 +272,9 @@ local function drawUI(dt, currentState, configStates, playerMod, contractsMod, m
       else
         local tierColors = { imgui.ImVec4(0.5, 0.8, 0.5, 1), imgui.ImVec4(0.5, 0.7, 1.0, 1), imgui.ImVec4(1.0, 0.7, 0.4, 1), imgui.ImVec4(1.0, 0.4, 0.4, 1) }
         for i, c in ipairs(contractsMod.ContractSystem.availableContracts) do
-          if c.isUrgent then
-            imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.3, 0.15, 0.1, 0.9))
-            imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.45, 0.25, 0.15, 1))
-            imgui.PushStyleColor2(imgui.Col_ButtonActive, imgui.ImVec4(0.5, 0.3, 0.2, 1))
-          else
-            imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.15, 0.15, 0.2, 0.9))
-            imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.25, 0.25, 0.35, 1))
-            imgui.PushStyleColor2(imgui.Col_ButtonActive, imgui.ImVec4(0.3, 0.3, 0.4, 1))
-          end
+          imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.15, 0.15, 0.2, 0.9))
+          imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.25, 0.25, 0.35, 1))
+          imgui.PushStyleColor2(imgui.Col_ButtonActive, imgui.ImVec4(0.3, 0.3, 0.4, 1))
           if imgui.Button(string.format("[%d] %s##contract%d", i, c.name or "Contract", i), imgui.ImVec2(contentWidth, 0)) then callbacks.onAcceptContract(i) end
           imgui.PopStyleColor(3)
 
@@ -293,7 +287,6 @@ local function drawUI(dt, currentState, configStates, playerMod, contractsMod, m
           imgui.TextColored(tierColors[c.tier or 1] or imgui.ImVec4(1, 1, 1, 1), string.format("Tier %d | %s", c.tier or 1, typeName))
           imgui.SameLine()
           imgui.TextColored(imgui.ImVec4(0.5, 1, 0.5, 1), string.format("  $%d", c.totalPayout or 0))
-          if c.isUrgent then imgui.SameLine(); imgui.TextColored(imgui.ImVec4(1, 0.6, 0, 1), " [+25% URGENT]") end
           
           if c.unitType == "item" then
             local breakdown = getMixedContractBreakdown(c)
@@ -323,12 +316,6 @@ local function drawUI(dt, currentState, configStates, playerMod, contractsMod, m
           if hoursLeft <= 1 then imgui.TextColored(imgui.ImVec4(1, 0.3, 0.3, 1), string.format("* EXPIRES SOON: %d min", math.floor(hoursLeft * 60)))
           elseif hoursLeft <= 2 then imgui.TextColored(imgui.ImVec4(1, 0.7, 0.3, 1), string.format("* Expires in: %.1f hrs", hoursLeft))
           else imgui.TextColored(imgui.ImVec4(0.6, 0.6, 0.6, 1), string.format("* Expires in: %.0f hrs", hoursLeft)) end
-          
-          if c.modifiers and #c.modifiers > 0 then
-            local mt = "* Modifiers: "
-            for j, m in ipairs(c.modifiers) do mt = mt .. tostring(m.name or "?") .. (j < #c.modifiers and ", " or "") end
-            imgui.TextColored(imgui.ImVec4(1, 1, 0.5, 1), mt)
-          end
           imgui.Unindent(20); imgui.Dummy(imgui.ImVec2(0, 8))
           if i < #contractsMod.ContractSystem.availableContracts then imgui.Separator(); imgui.Dummy(imgui.ImVec2(0, 5)) end
         end

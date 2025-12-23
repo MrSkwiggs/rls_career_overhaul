@@ -48,24 +48,6 @@ local function pickTier()
   return #tierWeights
 end
 
-local function weightedRandomChoice(items)
-  local totalWeight = 0
-  for _, item in ipairs(items or {}) do
-    totalWeight = totalWeight + (item.weight or 1)
-  end
-  if totalWeight <= 0 then return (items or {})[1] end
-
-  local roll = math.random() * totalWeight
-  local current = 0
-  for _, item in ipairs(items or {}) do
-    current = current + (item.weight or 1)
-    if roll <= current then
-      return item
-    end
-  end
-  return (items or {})[1]
-end
-
 local function getCurrentGameHour()
   if core_environment and core_environment.getTimeOfDay then
     local tod = core_environment.getTimeOfDay()
@@ -124,7 +106,6 @@ local function generateContract(availableGroups)
     tierData = Config.contracts.tiers[1]
   end
 
-  local isSpecial = math.random() < (tierData.specialChance or 0)
   local bulkChance = Config.contracts.bulkChance or 0.4
   local isBulk = math.random() < bulkChance
 
@@ -199,25 +180,6 @@ local function generateContract(availableGroups)
   local payMultiplier = tierData.payMultiplier and math.random(tierData.payMultiplier.min * 100, tierData.payMultiplier.max * 100) / 100 or 1.0
   local basePay = tierData.basePay or 0
 
-  local modifiers = {}
-  if math.random() < (tierData.modifierChance or 0) then
-    local timeMod = weightedRandomChoice(Config.contracts.modifiers.time)
-    if timeMod then
-      table.insert(modifiers, timeMod)
-    end
-  end
-  
-  local challengeChanceMult = Config.contracts.challengeModifierChanceMult or 0.6
-  if math.random() < (tierData.modifierChance or 0) * challengeChanceMult then
-    local challengeMod = weightedRandomChoice(Config.contracts.modifiers.challenge)
-    if challengeMod then
-      table.insert(modifiers, challengeMod)
-    end
-  end
-
-  local urgentChance = Config.contracts.urgentContractChance or 0.15
-  local isUrgent = math.random() < urgentChance
-
   local requiredTons = 0
   local requiredItems = 0
   local estimatedTrips = 1
@@ -232,11 +194,6 @@ local function generateContract(availableGroups)
     end
     
     requiredItems = math.random(ranges.min, ranges.max)
-    if isSpecial then
-      local itemBonusRange = Config.contracts.specialItemBonusRange or {1, 2}
-      requiredItems = requiredItems + math.random(itemBonusRange[1], itemBonusRange[2])
-    end
-    
     estimatedTrips = 1
     requiredTons = 0
   else
@@ -258,18 +215,6 @@ local function generateContract(availableGroups)
       print("[Loading] Warning: No contract ranges for mass material " .. materialType .. " tier " .. tierStr)
       return nil
     end
-
-    if isSpecial then
-      local specialRanges = Config.contracts.specialMassBonusRanges
-      local specialChance = Config.contracts.specialMassBonusChance or 0.5
-      if specialRanges then
-        if math.random() < specialChance then
-          requiredTons = math.random(specialRanges.low[1], specialRanges.low[2])
-        else
-          requiredTons = math.random(specialRanges.high[1], specialRanges.high[2])
-        end
-      end
-    end
     
     estimatedTrips = math.ceil(requiredTons / (Config.settings.targetLoad / 1000))
   end
@@ -285,14 +230,10 @@ local function generateContract(availableGroups)
 
   local name = selectedTypeName or matConfig.name or "Delivery"
   if isBulk then name = "Bulk " .. name end
-  if isUrgent then name = "URGENT: " .. name end
 
   local currentHour = getCurrentGameHour()
   local expirationTime = Config.contracts.contractExpirationTime[tostring(tier)]
   local baseExpiration = expirationTime or (Config.contracts.defaultExpirationHours or 6)
-  if isUrgent then
-    baseExpiration = baseExpiration * (Config.contracts.urgentExpirationMult or 0.5)
-  end
   local expiresAt = currentHour + baseExpiration
 
   return {
@@ -310,8 +251,6 @@ local function generateContract(availableGroups)
     unitPay = unitPay,
     payMultiplier = payMultiplier,
     totalPayout = totalPayout,
-    modifiers = modifiers,
-    isSpecial = isSpecial,
     destination = {
       pos = group.destination and group.destination.pos and vec3(group.destination.pos) or nil,
       name = group.destination and group.destination.name or "Destination",
@@ -320,7 +259,6 @@ local function generateContract(availableGroups)
     group = nil,
     groupTag = group.secondaryTag,
     estimatedTrips = estimatedTrips,
-    isUrgent = isUrgent,
     createdAt = currentHour,
     expiresAt = expiresAt,
     expirationHours = baseExpiration,
@@ -329,7 +267,6 @@ end
 
 local function sortContracts()
   table.sort(ContractSystem.availableContracts, function(a, b)
-    if a.isUrgent ~= b.isUrgent then return a.isUrgent end
     if a.tier == b.tier then return a.totalPayout < b.totalPayout end
     return a.tier < b.tier
   end)
@@ -374,8 +311,7 @@ local function trySpawnNewContract(availableGroups)
       ContractSystem.lastContractSpawnTime = currentHour
       ContractSystem.contractsGeneratedToday = (ContractSystem.contractsGeneratedToday or 0) + 1
       
-      local urgentText = contract.isUrgent and " (URGENT!)" or ""
-      ui_message("New contract available: " .. contract.name .. urgentText, 4, "info")
+      ui_message("New contract available: " .. contract.name, 4, "info")
       Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_Unlock_01')
       
       print("[Loading] Spawned new contract: " .. contract.name .. " (Tier " .. contract.tier .. ")")
