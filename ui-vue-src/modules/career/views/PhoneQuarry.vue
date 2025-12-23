@@ -442,27 +442,27 @@ const getExpirationClass = (hoursRemaining) => {
 const acceptContract = (index) => {
   console.log('[PhoneQuarry] Accepting contract at index:', index, '-> Lua index:', index + 1)
   console.log('[PhoneQuarry] Current state:', currentState.value)
-  bngApi.engineLua(`gameplay_quarry.acceptContractFromUI(${index + 1})`)
+  bngApi.engineLua(`gameplay_loading.acceptContractFromUI(${index + 1})`)
 }
 
 const declineAll = () => {
-  bngApi.engineLua('gameplay_quarry.declineAllContracts()')
+  bngApi.engineLua('gameplay_loading.declineAllContracts()')
 }
 
 const abandonContract = () => {
-  bngApi.engineLua('gameplay_quarry.abandonContractFromUI()')
+  bngApi.engineLua('gameplay_loading.abandonContractFromUI()')
 }
 
 const sendTruck = () => {
-  bngApi.engineLua('gameplay_quarry.sendTruckFromUI()')
+  bngApi.engineLua('gameplay_loading.sendTruckFromUI()')
 }
 
 const finalizeContract = () => {
-  bngApi.engineLua('gameplay_quarry.finalizeContractFromUI()')
+  bngApi.engineLua('gameplay_loading.finalizeContractFromUI()')
 }
 
 const loadMore = () => {
-  bngApi.engineLua('gameplay_quarry.loadMoreFromUI()')
+  bngApi.engineLua('gameplay_loading.loadMoreFromUI()')
 }
 
 // State update handler
@@ -501,7 +501,7 @@ const handleStateUpdate = (data) => {
 onMounted(() => {
   events.on('updateQuarryState', handleStateUpdate)
   // Request initial state using bngApi
-  bngApi.engineLua('gameplay_quarry.requestQuarryState()')
+  bngApi.engineLua('gameplay_loading.requestQuarryState()')
 })
 
 onUnmounted(() => {
