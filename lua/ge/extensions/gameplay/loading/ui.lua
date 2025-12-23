@@ -1,78 +1,160 @@
 local M = {}
 
 local Config = gameplay_loading_config
-M.uiAnim = { opacity = 0, yOffset = 50, pulse = 0, targetOpacity = 0 }
-M.uiHidden = false
-M.markerAnim = { time = 0, pulseScale = 1.0, rotationAngle = 0, beamHeight = 0, ringExpand = 0 }
+local uiAnim = { opacity = 0, yOffset = 50, pulse = 0, targetOpacity = 0 }
+local uiHidden = false
+local markerAnim = { time = 0, pulseScale = 1.0, rotationAngle = 0, beamHeight = 0, ringExpand = 0 }
 
 local imgui = ui_imgui
 
 local function lerp(a, b, t) return a + (b - a) * t end
 
-function M.drawWorkSiteMarker(dt, currentState, stateDrivingToSite, markerCleared, activeGroup)
+local function getMixedContractBreakdown(contract)
+  if not contract or contract.unitType ~= "item" or not contract.materialTypeName then
+    return nil
+  end
+  
+  local materialsOfType = {}
+  if Config.materials then
+    for matKey, matConfig in pairs(Config.materials) do
+      if matConfig.typeName == contract.materialTypeName then
+        table.insert(materialsOfType, { key = matKey, config = matConfig })
+      end
+    end
+  end
+  
+  if #materialsOfType <= 1 then
+    return nil
+  end
+  
+  table.sort(materialsOfType, function(a, b)
+    local aMass = (a.config.unitType == "mass" and a.config.massPerProp) or 0
+    local bMass = (b.config.unitType == "mass" and b.config.massPerProp) or 0
+    return aMass < bMass
+  end)
+  
+  local totalRequired = contract.requiredItems or 0
+  local breakdown = {}
+  
+  if totalRequired <= 0 then
+    return nil
+  end
+  
+  if #materialsOfType == 2 and totalRequired == 2 then
+    breakdown[materialsOfType[1].key] = 1
+    breakdown[materialsOfType[2].key] = 1
+  elseif #materialsOfType == 2 then
+    local smaller = materialsOfType[1]
+    local larger = materialsOfType[2]
+    local smallerCount = math.max(1, math.floor(totalRequired / 2))
+    breakdown[smaller.key] = smallerCount
+    breakdown[larger.key] = totalRequired - smallerCount
+  else
+    local remaining = totalRequired
+    for i, mat in ipairs(materialsOfType) do
+      if i == #materialsOfType then
+        breakdown[mat.key] = remaining
+      else
+        local count = math.max(1, math.floor(totalRequired / #materialsOfType))
+        breakdown[mat.key] = count
+        remaining = remaining - count
+      end
+    end
+  end
+  
+  return breakdown
+end
+
+local function drawWorkSiteMarker(dt, currentState, stateDrivingToSite, markerCleared, activeGroup)
   if currentState ~= stateDrivingToSite or markerCleared or not activeGroup or not activeGroup.loading then return end
 
-  M.markerAnim.time = M.markerAnim.time + dt
-  M.markerAnim.pulseScale = 1.0 + math.sin(M.markerAnim.time * 2.5) * 0.1
-  M.markerAnim.rotationAngle = M.markerAnim.rotationAngle + dt * 0.4
-  M.markerAnim.beamHeight = math.min(12.0, M.markerAnim.beamHeight + dt * 30)
-  M.markerAnim.ringExpand = (M.markerAnim.ringExpand + dt * 1.5) % 1.5
+  local uiSettings = Config.settings.ui or {}
+  local pulseSpeed = uiSettings.markerPulseSpeed or 2.5
+  local rotationSpeed = uiSettings.markerRotationSpeed or 0.4
+  local beamSpeed = uiSettings.markerBeamSpeed or 30.0
+  local maxBeamHeight = uiSettings.markerMaxBeamHeight or 12.0
+  local ringSpeed = uiSettings.markerRingExpandSpeed or 1.5
+
+  markerAnim.time = markerAnim.time + dt
+  markerAnim.pulseScale = 1.0 + math.sin(markerAnim.time * pulseSpeed) * 0.1
+  markerAnim.rotationAngle = markerAnim.rotationAngle + dt * rotationSpeed
+  markerAnim.beamHeight = math.min(maxBeamHeight, markerAnim.beamHeight + dt * beamSpeed)
+  markerAnim.ringExpand = (markerAnim.ringExpand + dt * ringSpeed) % ringSpeed
 
   local basePos = vec3(activeGroup.loading.center)
   local color = ColorF(0.2, 1.0, 0.4, 0.85)
   local colorFaded = ColorF(0.2, 1.0, 0.4, 0.3)
-  local beamTop = basePos + vec3(0, 0, M.markerAnim.beamHeight)
-  local beamRadius = 0.5 * M.markerAnim.pulseScale
+  local beamTop = basePos + vec3(0, 0, markerAnim.beamHeight)
+  local beamRadius = 0.5 * markerAnim.pulseScale
 
   debugDrawer:drawCylinder(basePos, beamTop, beamRadius, color)
   debugDrawer:drawCylinder(basePos, beamTop, beamRadius + 0.2, colorFaded)
 
-  local sphereRadius = 1.0 * M.markerAnim.pulseScale
+  local sphereRadius = 1.0 * markerAnim.pulseScale
   debugDrawer:drawSphere(beamTop, sphereRadius, color)
   debugDrawer:drawSphere(beamTop, sphereRadius + 0.3, ColorF(0.2, 1.0, 0.4, 0.15))
 end
 
-function M.drawZoneChoiceMarkers(dt, currentState, stateChoosingZone, compatibleZones)
+local function drawZoneChoiceMarkers(dt, currentState, stateChoosingZone, compatibleZones)
   if currentState ~= stateChoosingZone or #compatibleZones == 0 then return end
 
-  M.markerAnim.time = M.markerAnim.time + dt
-  M.markerAnim.pulseScale = 1.0 + math.sin(M.markerAnim.time * 2.5) * 0.15
-  M.markerAnim.beamHeight = math.min(15.0, M.markerAnim.beamHeight + dt * 30)
+  local uiSettings = Config.settings.ui or {}
+  local pulseSpeed = uiSettings.zoneMarkerPulseSpeed or 2.5
+  local beamSpeed = uiSettings.markerBeamSpeed or 30.0
+  local maxBeamHeight = uiSettings.zoneMarkerMaxBeamHeight or 15.0
+
+  markerAnim.time = markerAnim.time + dt
+  markerAnim.pulseScale = 1.0 + math.sin(markerAnim.time * pulseSpeed) * 0.15
+  markerAnim.beamHeight = math.min(maxBeamHeight, markerAnim.beamHeight + dt * beamSpeed)
 
   for i, zone in ipairs(compatibleZones) do
     if zone.loading and zone.loading.center then
       local basePos = vec3(zone.loading.center)
       local hue = (i - 1) / math.max(1, #compatibleZones)
       local r = 0.3 + 0.7 * math.abs(math.sin(hue * 3.14159))
-      local g = 0.8 + 0.2 * math.sin(M.markerAnim.time * 2)
+      local g = 0.8 + 0.2 * math.sin(markerAnim.time * 2)
       local b = 0.3 + 0.7 * math.abs(math.cos(hue * 3.14159))
       
       local color = ColorF(r, g, b, 0.85)
       local colorFaded = ColorF(r, g, b, 0.3)
-      local beamTop = basePos + vec3(0, 0, M.markerAnim.beamHeight)
-      local beamRadius = 0.6 * M.markerAnim.pulseScale
+      local beamTop = basePos + vec3(0, 0, markerAnim.beamHeight)
+      local beamRadius = 0.6 * markerAnim.pulseScale
 
       debugDrawer:drawCylinder(basePos, beamTop, beamRadius, color)
       debugDrawer:drawCylinder(basePos, beamTop, beamRadius + 0.25, colorFaded)
 
-      local sphereRadius = 1.2 * M.markerAnim.pulseScale
+      local sphereRadius = 1.2 * markerAnim.pulseScale
       debugDrawer:drawSphere(beamTop, sphereRadius, color)
       debugDrawer:drawSphere(beamTop, sphereRadius + 0.4, ColorF(r, g, b, 0.15))
       
       local textPos = beamTop + vec3(0, 0, 2)
-      local materialType = zone.materialType or "rocks"
-      local text = string.format("%s (%s)", zone.secondaryTag or "Zone", materialType:upper())
+      local materialNames = {}
+      if zone.materials then
+        for _, matKey in ipairs(zone.materials) do
+          local matConfig = Config.materials and Config.materials[matKey]
+          local matName = matConfig and matConfig.name or matKey
+          table.insert(materialNames, matName)
+        end
+      elseif zone.materialType then
+        local matConfig = Config.materials and Config.materials[zone.materialType]
+        local matName = matConfig and matConfig.name or zone.materialType
+        table.insert(materialNames, matName)
+      end
+      if #materialNames == 0 then return end
+      local materialsStr = table.concat(materialNames, ", ")
+      local text = string.format("%s (%s)", zone.secondaryTag or "Zone", materialsStr)
       debugDrawer:drawTextAdvanced(textPos, text, ColorF(1, 1, 1, 1), true, false, ColorI(0, 0, 0, 200))
     end
   end
 end
 
-function M.getQuarryStateForUI(currentState, playerMod, contractsMod, managerMod, zonesMod)
+local function getQuarryStateForUI(currentState, playerMod, contractsMod, managerMod, zonesMod)
   local contractsForUI = {}
   for i, c in ipairs(contractsMod.ContractSystem.availableContracts or {}) do
     table.insert(contractsForUI, {
       id = c.id, name = c.name, tier = c.tier, material = c.material,
-      requiredTons = c.requiredTons, requiredBlocks = c.requiredBlocks,
+      materialTypeName = c.materialTypeName,
+      requiredTons = c.requiredTons, requiredItems = c.requiredItems,
       isBulk = c.isBulk, totalPayout = c.totalPayout, paymentType = c.paymentType,
       modifiers = c.modifiers, groupTag = c.groupTag, estimatedTrips = c.estimatedTrips,
       isSpecial = c.isSpecial, isUrgent = c.isUrgent or false, expiresAt = c.expiresAt,
@@ -87,7 +169,8 @@ function M.getQuarryStateForUI(currentState, playerMod, contractsMod, managerMod
     local c = contractsMod.ContractSystem.activeContract
     activeContractForUI = {
       id = c.id, name = c.name, tier = c.tier, material = c.material,
-      requiredTons = c.requiredTons, requiredBlocks = c.requiredBlocks,
+      materialTypeName = c.materialTypeName,
+      requiredTons = c.requiredTons, requiredItems = c.requiredItems,
       totalPayout = c.totalPayout, paymentType = c.paymentType,
       modifiers = c.modifiers, groupTag = c.groupTag, estimatedTrips = c.estimatedTrips,
       loadingZoneTag = c.loadingZoneTag,
@@ -108,10 +191,10 @@ function M.getQuarryStateForUI(currentState, playerMod, contractsMod, managerMod
       deliveryCount = contractsMod.ContractSystem.contractProgress and contractsMod.ContractSystem.contractProgress.deliveryCount or 0
     },
     currentLoadMass = managerMod.jobObjects.currentLoadMass or 0,
-    targetLoad = Config.Config.TargetLoad or 25000,
-    materialType = managerMod.jobObjects.materialType or "rocks",
-    marbleBlocks = managerMod.jobObjects.materialType == "marble" and managerMod.getMarbleBlocksStatus() or {},
-    anyMarbleDamaged = managerMod.jobObjects.anyMarbleDamaged or false,
+    targetLoad = Config.settings.targetLoad or 25000,
+    materialType = managerMod.jobObjects.materialType or nil,
+    itemBlocks = (managerMod.jobObjects.materialType ~= "rocks") and managerMod.getItemBlocksStatus() or {},
+    anyItemDamaged = managerMod.jobObjects.anyItemDamaged or false,
     deliveryBlocks = managerMod.jobObjects.deliveryBlocksStatus or {},
     markerCleared = managerMod.markerCleared,
     truckStopped = managerMod.truckStoppedInLoading,
@@ -119,21 +202,21 @@ function M.getQuarryStateForUI(currentState, playerMod, contractsMod, managerMod
   }
 end
 
-function M.requestQuarryState(currentState, playerMod, contractsMod, managerMod, zonesMod)
-  guihooks.trigger('updateQuarryState', M.getQuarryStateForUI(currentState, playerMod, contractsMod, managerMod, zonesMod))
+local function requestQuarryState(currentState, playerMod, contractsMod, managerMod, zonesMod)
+  guihooks.trigger('updateQuarryState', getQuarryStateForUI(currentState, playerMod, contractsMod, managerMod, zonesMod))
 end
 
-function M.drawUI(dt, currentState, configStates, playerMod, contractsMod, managerMod, zonesMod, callbacks)
+local function drawUI(dt, currentState, configStates, playerMod, contractsMod, managerMod, zonesMod, callbacks)
   if not imgui then return end
 
-  if M.uiHidden and currentState ~= configStates.STATE_IDLE then
+  if uiHidden and currentState ~= configStates.STATE_IDLE then
     imgui.SetNextWindowPos(imgui.ImVec2(10, 200), imgui.Cond_FirstUseEver)
     imgui.PushStyleVar1(imgui.StyleVar_WindowRounding, 8)
     imgui.PushStyleColor2(imgui.Col_WindowBg, imgui.ImVec4(0.1, 0.1, 0.12, 0.9))
     if imgui.Begin("##WL40Show", nil, imgui.WindowFlags_NoTitleBar + imgui.WindowFlags_AlwaysAutoResize + imgui.WindowFlags_NoCollapse) then
       imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.2, 0.4, 0.2, 0.9))
       imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.3, 0.6, 0.3, 1))
-      if imgui.Button("Show Job UI", imgui.ImVec2(100, 30)) then M.uiHidden = false end
+      if imgui.Button("Show Job UI", imgui.ImVec2(100, 30)) then uiHidden = false end
       imgui.PopStyleColor(2)
     end
     imgui.End()
@@ -142,33 +225,37 @@ function M.drawUI(dt, currentState, configStates, playerMod, contractsMod, manag
     return
   end
 
-  M.uiAnim.targetOpacity = (currentState ~= configStates.STATE_IDLE) and 1.0 or 0.0
-  M.uiAnim.opacity = lerp(M.uiAnim.opacity, M.uiAnim.targetOpacity, dt * 8.0)
-  M.uiAnim.yOffset = lerp(M.uiAnim.yOffset, (1.0 - M.uiAnim.opacity) * 50, dt * 8.0)
-  if M.uiAnim.opacity < 0.01 then return end
+  local uiSettings = Config.settings.ui or {}
+  local animSpeed = uiSettings.animationSpeed or 8.0
+  local pulseSpeed = uiSettings.pulseSpeed or 5.0
 
-  M.uiAnim.pulse = M.uiAnim.pulse + dt * 5
-  local pulseAlpha = (math.sin(M.uiAnim.pulse) * 0.3) + 0.7
+  uiAnim.targetOpacity = (currentState ~= configStates.STATE_IDLE) and 1.0 or 0.0
+  uiAnim.opacity = lerp(uiAnim.opacity, uiAnim.targetOpacity, dt * animSpeed)
+  uiAnim.yOffset = lerp(uiAnim.yOffset, (1.0 - uiAnim.opacity) * 50, dt * animSpeed)
+  if uiAnim.opacity < 0.01 then return end
+
+  uiAnim.pulse = uiAnim.pulse + dt * pulseSpeed
+  local pulseAlpha = (math.sin(uiAnim.pulse) * 0.3) + 0.7
 
   imgui.PushStyleVar2(imgui.StyleVar_WindowPadding, imgui.ImVec2(20, 20))
   imgui.PushStyleVar1(imgui.StyleVar_WindowRounding, 12)
-  imgui.PushStyleColor2(imgui.Col_WindowBg, imgui.ImVec4(0.1, 0.1, 0.12, 0.95 * M.uiAnim.opacity))
-  imgui.PushStyleColor2(imgui.Col_Border, imgui.ImVec4(1.0, 0.7, 0.0, 0.8 * M.uiAnim.opacity))
+  imgui.PushStyleColor2(imgui.Col_WindowBg, imgui.ImVec4(0.1, 0.1, 0.12, 0.95 * uiAnim.opacity))
+  imgui.PushStyleColor2(imgui.Col_Border, imgui.ImVec4(1.0, 0.7, 0.0, 0.8 * uiAnim.opacity))
   imgui.PushStyleVar1(imgui.StyleVar_WindowBorderSize, 2)
-  imgui.SetNextWindowBgAlpha(0.95 * M.uiAnim.opacity)
+  imgui.SetNextWindowBgAlpha(0.95 * uiAnim.opacity)
   imgui.SetNextWindowSizeConstraints(imgui.ImVec2(280, 100), imgui.ImVec2(350, 800))
 
   if imgui.Begin("##WL40System", nil, imgui.WindowFlags_NoTitleBar + imgui.WindowFlags_AlwaysAutoResize + imgui.WindowFlags_NoCollapse) then
     local windowWidth = imgui.GetWindowWidth()
     imgui.SetCursorPosX(windowWidth - 30)
-    imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.5, 0.2, 0.2, 0.8 * M.uiAnim.opacity))
+    imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.5, 0.2, 0.2, 0.8 * uiAnim.opacity))
     imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.7, 0.2, 0.2, 1))
-    if imgui.Button("X", imgui.ImVec2(20, 20)) then M.uiHidden = true end
+    if imgui.Button("X", imgui.ImVec2(20, 20)) then uiHidden = true end
     imgui.PopStyleColor(2)
     imgui.SetCursorPosX(0)
     
     imgui.SetWindowFontScale(1.5)
-    imgui.TextColored(imgui.ImVec4(1, 0.75, 0, M.uiAnim.opacity), "LOGISTICS JOB SYSTEM")
+    imgui.TextColored(imgui.ImVec4(1, 0.75, 0, uiAnim.opacity), " LOGISTICS JOB SYSTEM")
     imgui.SetWindowFontScale(1.0)
     imgui.Separator()
     imgui.Dummy(imgui.ImVec2(0, 10))
@@ -176,12 +263,12 @@ function M.drawUI(dt, currentState, configStates, playerMod, contractsMod, manag
     local contentWidth = imgui.GetContentRegionAvailWidth()
 
     if currentState == configStates.STATE_CONTRACT_SELECT then
-      imgui.TextColored(imgui.ImVec4(1, 1, 1, M.uiAnim.opacity), "Available Contracts")
-      imgui.TextColored(imgui.ImVec4(0.7, 0.7, 0.7, M.uiAnim.opacity), string.format("Player Level: %d | Completed: %d", contractsMod.PlayerData.level or 1, contractsMod.PlayerData.contractsCompleted or 0))
+      imgui.TextColored(imgui.ImVec4(1, 1, 1, uiAnim.opacity), "Available Contracts")
+      imgui.TextColored(imgui.ImVec4(0.7, 0.7, 0.7, uiAnim.opacity), string.format("Player Level: %d | Completed: %d", contractsMod.PlayerData.level or 1, contractsMod.PlayerData.contractsCompleted or 0))
       imgui.Dummy(imgui.ImVec2(0, 10))
 
       if #contractsMod.ContractSystem.availableContracts == 0 then
-        imgui.TextColored(imgui.ImVec4(1, 0.3, 0.3, M.uiAnim.opacity), "No contracts available")
+        imgui.TextColored(imgui.ImVec4(1, 0.3, 0.3, uiAnim.opacity), "No contracts available")
       else
         local tierColors = { imgui.ImVec4(0.5, 0.8, 0.5, 1), imgui.ImVec4(0.5, 0.7, 1.0, 1), imgui.ImVec4(1.0, 0.7, 0.4, 1), imgui.ImVec4(1.0, 0.4, 0.4, 1) }
         for i, c in ipairs(contractsMod.ContractSystem.availableContracts) do
@@ -198,16 +285,37 @@ function M.drawUI(dt, currentState, configStates, playerMod, contractsMod, manag
           imgui.PopStyleColor(3)
 
           imgui.Indent(20)
-          imgui.TextColored(tierColors[c.tier or 1] or imgui.ImVec4(1, 1, 1, 1), string.format("Tier %d | %s", c.tier or 1, tostring((c.material or "rocks"):upper())))
+          local typeName = c.materialTypeName
+          if not typeName and c.material and Config.materials and Config.materials[c.material] then
+            typeName = Config.materials[c.material].typeName
+          end
+          typeName = typeName or "Unknown"
+          imgui.TextColored(tierColors[c.tier or 1] or imgui.ImVec4(1, 1, 1, 1), string.format("Tier %d | %s", c.tier or 1, typeName))
           imgui.SameLine()
           imgui.TextColored(imgui.ImVec4(0.5, 1, 0.5, 1), string.format("  $%d", c.totalPayout or 0))
           if c.isUrgent then imgui.SameLine(); imgui.TextColored(imgui.ImVec4(1, 0.6, 0, 1), " [+25% URGENT]") end
           
-          if c.material == "marble" and c.requiredBlocks then
-            local b = c.requiredBlocks
-            imgui.TextColored(imgui.ImVec4(0.8, 0.9, 1.0, 1), (b.big > 0 and b.small > 0) and string.format("* %d Large + %d Small blocks", b.big, b.small) or (b.big > 0 and string.format("* %d Large block%s", b.big, b.big > 1 and "s" or "") or string.format("* %d Small block%s", b.small, b.small > 1 and "s" or "")))
+          if c.unitType == "item" then
+            local breakdown = getMixedContractBreakdown(c)
+            if breakdown then
+              local parts = {}
+              for matKey, count in pairs(breakdown) do
+                if count > 0 then
+                  local matConfig = Config.materials and Config.materials[matKey]
+                  local matName = matConfig and matConfig.name or matKey
+                  table.insert(parts, string.format("%d %s", count, matName))
+                end
+              end
+              if #parts > 0 then
+                imgui.TextColored(imgui.ImVec4(0.8, 0.9, 1.0, 1), "* " .. table.concat(parts, " and "))
+              else
+                imgui.TextColored(imgui.ImVec4(0.8, 0.9, 1.0, 1), string.format("* %d %s total", c.requiredItems or 0, c.units or "items"))
+              end
+            else
+              imgui.TextColored(imgui.ImVec4(0.8, 0.9, 1.0, 1), string.format("* %d %s total", c.requiredItems or 0, c.units or "items"))
+            end
           else
-            imgui.Text(string.format("* %d tons total", c.requiredTons or 0))
+            imgui.Text(string.format("* %d %s total", c.requiredTons or 0, c.units or "tons"))
           end
           imgui.Text(string.format("* Payment: %s", (c.paymentType == "progressive") and "Progressive" or "On completion"))
           
@@ -226,41 +334,90 @@ function M.drawUI(dt, currentState, configStates, playerMod, contractsMod, manag
         end
       end
       imgui.Dummy(imgui.ImVec2(0, 10))
-      imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.5, 0.1, 0.1, M.uiAnim.opacity))
-      imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.7, 0.1, 0.1, M.uiAnim.opacity))
+      imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.5, 0.1, 0.1, uiAnim.opacity))
+      imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.7, 0.1, 0.1, uiAnim.opacity))
       if imgui.Button("DECLINE ALL", imgui.ImVec2(-1, 35)) then callbacks.onDeclineAll() end
       imgui.PopStyleColor(2)
 
     elseif currentState == configStates.STATE_CHOOSING_ZONE then
-      imgui.TextColored(imgui.ImVec4(1, 0.8, 0.2, pulseAlpha * M.uiAnim.opacity), ">> CHOOSE LOADING ZONE <<")
+      imgui.TextColored(imgui.ImVec4(1, 0.8, 0.2, pulseAlpha * uiAnim.opacity), ">> CHOOSE LOADING ZONE <<")
       imgui.Dummy(imgui.ImVec2(0, 5))
       if contractsMod.ContractSystem.activeContract then
         local c = contractsMod.ContractSystem.activeContract
         imgui.Text(string.format("Contract: %s", c.name or "Contract"))
-        imgui.Text(string.format("Material needed: %s", (c.material or "rocks"):upper()))
+        local typeName = c.materialTypeName or (c.material and Config.materials and Config.materials[c.material] and Config.materials[c.material].typeName) or "Unknown"
+        imgui.Text(string.format("Material type needed: %s", typeName))
         imgui.Dummy(imgui.ImVec2(0, 8))
       end
-      imgui.TextColored(imgui.ImVec4(0.7, 1, 0.7, M.uiAnim.opacity), "Drive to any highlighted zone:")
+      imgui.TextColored(imgui.ImVec4(0.7, 1, 0.7, uiAnim.opacity), "Select a loading zone:")
       imgui.Dummy(imgui.ImVec2(0, 5))
-      for i, zone in ipairs(callbacks.getCompatibleZones()) do
-        local dist = be:getPlayerVehicle(0) and (be:getPlayerVehicle(0):getPosition() - vec3(zone.loading.center)):length() or 0
-        local hue = (i - 1) / math.max(1, #callbacks.getCompatibleZones())
-        imgui.TextColored(imgui.ImVec4(0.3 + 0.7 * math.abs(math.sin(hue * 3.14159)), 0.8, 0.3 + 0.7 * math.abs(math.cos(hue * 3.14159)), M.uiAnim.opacity), string.format("  [%d] %s (%s) - %.0fm", i, zone.secondaryTag or "Zone", (zone.materialType or "rocks"):upper(), dist))
+      
+      local compatibleZones = callbacks.getCompatibleZones()
+      if #compatibleZones == 0 then
+        imgui.TextColored(imgui.ImVec4(1, 0.3, 0.3, uiAnim.opacity), "No compatible zones available!")
+      else
+        for i, zone in ipairs(compatibleZones) do
+          local dist = be:getPlayerVehicle(0) and (be:getPlayerVehicle(0):getPosition() - vec3(zone.loading.center)):length() or 0
+          local hue = (i - 1) / math.max(1, #compatibleZones)
+          local buttonColor = imgui.ImVec4(0.3 + 0.7 * math.abs(math.sin(hue * 3.14159)), 0.8, 0.3 + 0.7 * math.abs(math.cos(hue * 3.14159)), uiAnim.opacity)
+          
+          local materialNames = {}
+          if zone.materials then
+            for _, matKey in ipairs(zone.materials) do
+              local matConfig = Config.materials and Config.materials[matKey]
+              local matName = matConfig and matConfig.name or matKey
+              table.insert(materialNames, matName)
+            end
+          elseif zone.materialType then
+            local matConfig = Config.materials and Config.materials[zone.materialType]
+            local matName = matConfig and matConfig.name or zone.materialType
+            table.insert(materialNames, matName)
+          end
+          local materialsStr = #materialNames > 0 and table.concat(materialNames, ", ") or "Unknown"
+          
+          local stockInfo = zonesMod.getZoneStockInfo and zonesMod.getZoneStockInfo(zone, contractsMod.getCurrentGameHour)
+          local stockText = ""
+          if stockInfo and stockInfo.materialStocks then
+            local stockParts = {}
+            for matKey, stock in pairs(stockInfo.materialStocks) do
+              local matConfig = Config.materials and Config.materials[matKey]
+              local matName = matConfig and matConfig.name or matKey
+              table.insert(stockParts, string.format("%s: %d/%d", matName, stock.current, stock.max))
+            end
+            if #stockParts > 0 then
+              stockText = " | Stock: " .. table.concat(stockParts, ", ")
+            end
+          end
+          
+          imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(buttonColor.x * 0.3, buttonColor.y * 0.3, buttonColor.z * 0.3, 0.8 * uiAnim.opacity))
+          imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(buttonColor.x * 0.5, buttonColor.y * 0.5, buttonColor.z * 0.5, 1))
+          imgui.PushStyleColor2(imgui.Col_ButtonActive, imgui.ImVec4(buttonColor.x * 0.7, buttonColor.y * 0.7, buttonColor.z * 0.7, 1))
+          
+          local buttonText = string.format("%s (%s) - %.0fm%s", zone.secondaryTag or "Zone", materialsStr, dist, stockText)
+          if imgui.Button(buttonText, imgui.ImVec2(-1, 0)) then
+            callbacks.onSelectZone(i)
+          end
+          imgui.PopStyleColor(3)
+          if i < #compatibleZones then
+            imgui.Dummy(imgui.ImVec2(0, 3))
+          end
+        end
       end
+      
       imgui.Dummy(imgui.ImVec2(0, 15))
-      imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.5, 0.1, 0.1, M.uiAnim.opacity))
-      imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.7, 0.1, 0.1, M.uiAnim.opacity))
+      imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.5, 0.1, 0.1, uiAnim.opacity))
+      imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.7, 0.1, 0.1, uiAnim.opacity))
       if imgui.Button("ABANDON CONTRACT", imgui.ImVec2(-1, 30)) then callbacks.onAbandonContract() end
       imgui.PopStyleColor(2)
 
     elseif currentState == configStates.STATE_DRIVING_TO_SITE then
       if managerMod.jobObjects.activeGroup and managerMod.jobObjects.activeGroup.loading then
         if not managerMod.markerCleared then
-          imgui.TextColored(imgui.ImVec4(1, 1, 0, pulseAlpha * M.uiAnim.opacity), ">> TRAVEL TO MARKER <<")
+          imgui.TextColored(imgui.ImVec4(1, 1, 0, pulseAlpha * uiAnim.opacity), ">> TRAVEL TO MARKER <<")
           local dist = be:getPlayerVehicle(0) and (be:getPlayerVehicle(0):getPosition() - vec3(managerMod.jobObjects.activeGroup.loading.center)):length() or 99999
           imgui.ProgressBar(1.0 - math.min(1, dist / 200), imgui.ImVec2(-1, 20), string.format("%.0fm", dist))
         else
-          imgui.TextColored(imgui.ImVec4(1, 1, 0, pulseAlpha * M.uiAnim.opacity), ">> IN LOADING ZONE <<")
+          imgui.TextColored(imgui.ImVec4(1, 1, 0, pulseAlpha * uiAnim.opacity), ">> IN LOADING ZONE <<")
           imgui.Text(not managerMod.truckStoppedInLoading and "Waiting for truck to arrive..." or "Truck arrived. Ready to load.")
         end
       end
@@ -268,90 +425,156 @@ function M.drawUI(dt, currentState, configStates, playerMod, contractsMod, manag
       if imgui.Button("ABANDON CONTRACT", imgui.ImVec2(-1, 30)) then callbacks.onAbandonContract() end
 
     elseif currentState == configStates.STATE_TRUCK_ARRIVING then
-      imgui.TextColored(imgui.ImVec4(0, 1, 1, pulseAlpha * M.uiAnim.opacity), ">> TRUCK ARRIVING <<")
+      imgui.TextColored(imgui.ImVec4(0, 1, 1, pulseAlpha * uiAnim.opacity), ">> TRUCK ARRIVING <<")
       imgui.Text("Waiting for truck to arrive..."); imgui.Dummy(imgui.ImVec2(0, 10))
       if imgui.Button("ABANDON CONTRACT", imgui.ImVec2(-1, 30)) then callbacks.onAbandonContract() end
 
     elseif currentState == configStates.STATE_LOADING then
-      imgui.TextColored(imgui.ImVec4(0, 1, 0, pulseAlpha * M.uiAnim.opacity), ">> LOADING <<")
+      imgui.TextColored(imgui.ImVec4(0, 1, 0, pulseAlpha * uiAnim.opacity), ">> LOADING <<")
       if contractsMod.ContractSystem.activeContract then
         local c, p = contractsMod.ContractSystem.activeContract, contractsMod.ContractSystem.contractProgress
         imgui.Text(string.format("Contract: %s", c.name or "Contract"))
-        if c.material == "marble" and c.requiredBlocks then
-          imgui.Text(string.format("Large: %d / %d", p.deliveredBlocks.big, c.requiredBlocks.big))
-          imgui.Text(string.format("Small: %d / %d", p.deliveredBlocks.small, c.requiredBlocks.small))
+        if c.unitType == "item" then
+          local breakdown = getMixedContractBreakdown(c)
+          if breakdown then
+            local parts = {}
+            for matKey, count in pairs(breakdown) do
+              if count > 0 then
+                local matConfig = Config.materials and Config.materials[matKey]
+                local matName = matConfig and matConfig.name or matKey
+                table.insert(parts, string.format("%d %s", count, matName))
+              end
+            end
+            if #parts > 0 then
+              imgui.Text(string.format("Required: %s", table.concat(parts, " and ")))
+            end
+            imgui.Text(string.format("Delivered: %d / %d %s", p.deliveredItems or 0, c.requiredItems or 0, c.units or "items"))
+          else
+            imgui.Text(string.format("Delivered: %d / %d %s", p.deliveredItems or 0, c.requiredItems or 0, c.units or "items"))
+          end
         else
           imgui.Text(string.format("Progress: %.1f / %.1f tons", p.deliveredTons or 0, c.requiredTons or 0))
         end
         imgui.Separator()
       end
-      local percent = math.min(1.0, managerMod.jobObjects.currentLoadMass / Config.Config.TargetLoad)
-      imgui.Text(string.format("Payload: %.0f / %.0f kg", managerMod.jobObjects.currentLoadMass, Config.Config.TargetLoad))
-      imgui.PushStyleColor2(imgui.Col_PlotHistogram, percent > 0.8 and imgui.ImVec4(0, 1, 0, 1) or imgui.ImVec4(1, 1, 0, 1))
-      imgui.ProgressBar(percent, imgui.ImVec2(-1, 30), string.format("%.0f%%", percent * 100))
-      imgui.PopStyleColor(1)
+      local materialType = managerMod.jobObjects.materialType
+      local matConfig = materialType and Config.materials and Config.materials[materialType]
+      if not matConfig or matConfig.unitType ~= "item" then
+        local percent = math.min(1.0, managerMod.jobObjects.currentLoadMass / Config.settings.targetLoad)
+        imgui.Text(string.format("Payload: %.0f / %.0f kg", managerMod.jobObjects.currentLoadMass, Config.settings.targetLoad))
+        imgui.PushStyleColor2(imgui.Col_PlotHistogram, percent > 0.8 and imgui.ImVec4(0, 1, 0, 1) or imgui.ImVec4(1, 1, 0, 1))
+        imgui.ProgressBar(percent, imgui.ImVec2(-1, 30), string.format("%.0f%%", percent * 100))
+        imgui.PopStyleColor(1)
+      end
 
-      if managerMod.jobObjects.materialType == "marble" then
+      if matConfig and matConfig.unitType == "item" then 
         imgui.Dummy(imgui.ImVec2(0, 8)); imgui.Separator(); imgui.Dummy(imgui.ImVec2(0, 4))
-        if managerMod.jobObjects.anyMarbleDamaged then imgui.TextColored(imgui.ImVec4(1, 0.6, 0.2, M.uiAnim.opacity * 0.8), "Damaged blocks won't count"); imgui.Dummy(imgui.ImVec2(0, 2)) end
-        for _, block in ipairs(managerMod.getMarbleBlocksStatus()) do
-          imgui.TextColored(imgui.ImVec4(1, 1, 1, M.uiAnim.opacity), string.format("Block %d: ", block.index))
-          imgui.SameLine(); imgui.TextColored(block.isDamaged and imgui.ImVec4(1, 0.3, 0.2, ((math.sin(M.uiAnim.pulse * 2) * 0.3) + 0.7) * M.uiAnim.opacity) or imgui.ImVec4(0.3, 1, 0.3, M.uiAnim.opacity), block.isDamaged and "DAMAGED" or "OK")
-          imgui.SameLine(); imgui.TextColored(imgui.ImVec4(0.5, 0.5, 0.5, M.uiAnim.opacity), " | ")
-          imgui.SameLine(); imgui.TextColored(block.isLoaded and imgui.ImVec4(0.3, 0.8, 1, M.uiAnim.opacity) or imgui.ImVec4(0.6, 0.6, 0.6, M.uiAnim.opacity), block.isLoaded and "Loaded" or "Not loaded")
+        if managerMod.jobObjects.anyItemDamaged then imgui.TextColored(imgui.ImVec4(1, 0.6, 0.2, uiAnim.opacity * 0.8), "Damaged items won't count"); imgui.Dummy(imgui.ImVec2(0, 2)) end
+        for _, block in ipairs(managerMod.getItemBlocksStatus()) do
+          imgui.TextColored(imgui.ImVec4(1, 1, 1, uiAnim.opacity), string.format("Item %d: ", block.index))
+          imgui.SameLine(); imgui.TextColored(block.isDamaged and imgui.ImVec4(1, 0.3, 0.2, ((math.sin(uiAnim.pulse * 2) * 0.3) + 0.7) * uiAnim.opacity) or imgui.ImVec4(0.3, 1, 0.3, uiAnim.opacity), block.isDamaged and "DAMAGED" or "OK")
+          imgui.SameLine(); imgui.TextColored(imgui.ImVec4(0.5, 0.5, 0.5, uiAnim.opacity), " | ")
+          imgui.SameLine(); imgui.TextColored(block.isLoaded and imgui.ImVec4(0.3, 0.8, 1, uiAnim.opacity) or imgui.ImVec4(0.6, 0.6, 0.6, uiAnim.opacity), block.isLoaded and "Loaded" or "Not loaded")
         end
       end
       imgui.Dummy(imgui.ImVec2(0, 20))
-      imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0, 0.4, 0, M.uiAnim.opacity))
-      imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0, 0.6, 0, M.uiAnim.opacity))
+      imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0, 0.4, 0, uiAnim.opacity))
+      imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0, 0.6, 0, uiAnim.opacity))
       if imgui.Button("SEND TRUCK", imgui.ImVec2(-1, 45)) then callbacks.onSendTruck() end
       imgui.PopStyleColor(2); imgui.Dummy(imgui.ImVec2(0, 5))
       if imgui.Button("ABANDON CONTRACT", imgui.ImVec2(-1, 30)) then callbacks.onAbandonContract() end
 
     elseif currentState == configStates.STATE_DELIVERING then
-      imgui.TextColored(imgui.ImVec4(0, 1, 1, pulseAlpha * M.uiAnim.opacity), ">> DELIVERING <<")
+      imgui.TextColored(imgui.ImVec4(0, 1, 1, pulseAlpha * uiAnim.opacity), ">> DELIVERING <<")
       if contractsMod.ContractSystem.activeContract then
         local c, p = contractsMod.ContractSystem.activeContract, contractsMod.ContractSystem.contractProgress
         imgui.Text(string.format("Contract: %s", c.name or "Contract"))
-        if c.material == "marble" and c.requiredBlocks then
-          imgui.Text(string.format("Large: %d / %d", p.deliveredBlocks.big, c.requiredBlocks.big))
-          imgui.Text(string.format("Small: %d / %d", p.deliveredBlocks.small, c.requiredBlocks.small))
+        if c.unitType == "item" then
+          local breakdown = getMixedContractBreakdown(c)
+          if breakdown then
+            local parts = {}
+            for matKey, count in pairs(breakdown) do
+              if count > 0 then
+                local matConfig = Config.materials and Config.materials[matKey]
+                local matName = matConfig and matConfig.name or matKey
+                table.insert(parts, string.format("%d %s", count, matName))
+              end
+            end
+            if #parts > 0 then
+              imgui.Text(string.format("Required: %s", table.concat(parts, " and ")))
+            end
+            imgui.Text(string.format("Delivered: %d / %d %s", p.deliveredItems or 0, c.requiredItems or 0, c.units or "items"))
+          else
+            imgui.Text(string.format("Delivered: %d / %d %s", p.deliveredItems or 0, c.requiredItems or 0, c.units or "items"))
+          end
         else imgui.Text(string.format("Progress: %.1f / %.1f tons", p.deliveredTons or 0, c.requiredTons or 0)) end
         imgui.Separator()
       end
       imgui.Text("Truck driving to destination...")
-      if managerMod.jobObjects.materialType == "marble" and managerMod.jobObjects.deliveryBlocksStatus then
+      if managerMod.jobObjects.materialType ~= "rocks" and managerMod.jobObjects.deliveryBlocksStatus then
         imgui.Dummy(imgui.ImVec2(0, 5)); imgui.Text("Delivering:")
         for _, b in ipairs(managerMod.jobObjects.deliveryBlocksStatus) do
-          if b.isLoaded then imgui.TextColored(b.isDamaged and imgui.ImVec4(1, 0.4, 0.2, M.uiAnim.opacity * 0.7) or imgui.ImVec4(0.3, 1, 0.3, M.uiAnim.opacity), string.format("  Block %d (%s)", b.index, b.isDamaged and "DAMAGED" or "OK")) end
+          if b.isLoaded then imgui.TextColored(b.isDamaged and imgui.ImVec4(1, 0.4, 0.2, uiAnim.opacity * 0.7) or imgui.ImVec4(0.3, 1, 0.3, uiAnim.opacity), string.format("  Item %d (%s)", b.index, b.isDamaged and "DAMAGED" or "OK")) end
         end
       end
       imgui.Dummy(imgui.ImVec2(0, 10))
       if imgui.Button("ABANDON CONTRACT", imgui.ImVec2(-1, 30)) then callbacks.onAbandonContract() end
 
     elseif currentState == configStates.STATE_RETURN_TO_QUARRY then
-      imgui.TextColored(imgui.ImVec4(1.0, 0.6, 0.2, pulseAlpha * M.uiAnim.opacity), ">> RETURN TO STARTER ZONE <<")
+      imgui.TextColored(imgui.ImVec4(1.0, 0.6, 0.2, pulseAlpha * uiAnim.opacity), ">> RETURN TO LOADING ZONE <<")
       if contractsMod.ContractSystem.activeContract then
         local c, p = contractsMod.ContractSystem.activeContract, contractsMod.ContractSystem.contractProgress
         imgui.Text(string.format("Contract: %s", c.name or "Contract"))
         if contractsMod.checkContractCompletion() then imgui.TextColored(imgui.ImVec4(0, 1, 0, pulseAlpha), "CONTRACT COMPLETE!") end
-        if c.material == "marble" and c.requiredBlocks then
-          imgui.Text(string.format("Large: %d / %d", p.deliveredBlocks.big, c.requiredBlocks.big))
-          imgui.Text(string.format("Small: %d / %d", p.deliveredBlocks.small, c.requiredBlocks.small))
-        else imgui.Text(string.format("Delivered: %.1f / %.1f tons", p.deliveredTons or 0, c.requiredTons or 0)) end
+        if c.unitType == "item" then
+          local breakdown = getMixedContractBreakdown(c)
+          if breakdown then
+            local parts = {}
+            for matKey, count in pairs(breakdown) do
+              if count > 0 then
+                local matConfig = Config.materials and Config.materials[matKey]
+                local matName = matConfig and matConfig.name or matKey
+                table.insert(parts, string.format("%d %s", count, matName))
+              end
+            end
+            if #parts > 0 then
+              imgui.Text(string.format("Required: %s", table.concat(parts, " and ")))
+            end
+            imgui.Text(string.format("Delivered: %d / %d %s", p.deliveredItems or 0, c.requiredItems or 0, c.units or "items"))
+          else
+            imgui.Text(string.format("Delivered: %d / %d %s", p.deliveredItems or 0, c.requiredItems or 0, c.units or "items"))
+          end
+        else
+          imgui.Text(string.format("Delivered: %.1f / %.1f tons", p.deliveredTons or 0, c.requiredTons or 0))
+        end
         imgui.TextColored(imgui.ImVec4(0.5, 1, 0.5, 1), string.format("Payout: $%d (on completion)", c.totalPayout or 0))
       end
       imgui.Dummy(imgui.ImVec2(0, 10))
       if imgui.Button("ABANDON CONTRACT", imgui.ImVec2(-1, 30)) then callbacks.onAbandonContract() end
 
     elseif currentState == configStates.STATE_AT_QUARRY_DECIDE then
-      imgui.TextColored(imgui.ImVec4(0.2, 1.0, 0.4, pulseAlpha * M.uiAnim.opacity), ">> AT STARTER ZONE <<")
+      imgui.TextColored(imgui.ImVec4(0.2, 1.0, 0.4, pulseAlpha * uiAnim.opacity), ">> AT LOADING ZONE <<")
       if contractsMod.ContractSystem.activeContract then
         local c, p = contractsMod.ContractSystem.activeContract, contractsMod.ContractSystem.contractProgress
         imgui.Text(string.format("Contract: %s", c.name or "Contract"))
-        if c.material == "marble" and c.requiredBlocks then
-          imgui.Text(string.format("Large: %d / %d", p.deliveredBlocks.big, c.requiredBlocks.big))
-          imgui.Text(string.format("Small: %d / %d", p.deliveredBlocks.small, c.requiredBlocks.small))
+        if c.unitType == "item" then
+          local breakdown = getMixedContractBreakdown(c)
+          if breakdown then
+            local parts = {}
+            for matKey, count in pairs(breakdown) do
+              if count > 0 then
+                local matConfig = Config.materials and Config.materials[matKey]
+                local matName = matConfig and matConfig.name or matKey
+                table.insert(parts, string.format("%d %s", count, matName))
+              end
+            end
+            if #parts > 0 then
+              imgui.Text(string.format("Required: %s", table.concat(parts, " and ")))
+            end
+            imgui.Text(string.format("Delivered: %d / %d %s", p.deliveredItems or 0, c.requiredItems or 0, c.units or "items"))
+          else
+            imgui.Text(string.format("Delivered: %d / %d %s", p.deliveredItems or 0, c.requiredItems or 0, c.units or "items"))
+          end
         else
           local pct = (c.requiredTons or 0) > 0 and (p.deliveredTons or 0) / (c.requiredTons or 1) or 0
           imgui.Text(string.format("Progress: %.1f / %.1f tons (%.0f%%)", p.deliveredTons or 0, c.requiredTons or 0, pct * 100))
@@ -368,8 +591,54 @@ function M.drawUI(dt, currentState, configStates, playerMod, contractsMod, manag
         end
       end
     end
+    
+    imgui.Separator()
+    imgui.Dummy(imgui.ImVec2(0, 5))
+    if imgui.CollapsingHeader1("Zone Stock Status") then
+      local zonesStock = zonesMod.getAllZonesStockInfo and zonesMod.getAllZonesStockInfo(contractsMod.getCurrentGameHour) or {}
+      if #zonesStock == 0 then
+        imgui.TextColored(imgui.ImVec4(0.7, 0.7, 0.7, uiAnim.opacity), "No zones loaded")
+      else
+        for _, zoneStock in ipairs(zonesStock) do
+          imgui.PushID1("zone_" .. zoneStock.zoneName)
+          imgui.TextColored(imgui.ImVec4(0.8, 0.9, 1.0, uiAnim.opacity), zoneStock.zoneName)
+          imgui.Indent(15)
+          for _, mat in ipairs(zoneStock.materials) do
+            local stockPercent = mat.max > 0 and (mat.current / mat.max) or 0
+            local stockColor = imgui.ImVec4(1, 1, 1, uiAnim.opacity)
+            if stockPercent < 0.2 then
+              stockColor = imgui.ImVec4(1, 0.3, 0.3, uiAnim.opacity)
+            elseif stockPercent < 0.5 then
+              stockColor = imgui.ImVec4(1, 0.7, 0.3, uiAnim.opacity)
+            elseif stockPercent >= 1.0 then
+              stockColor = imgui.ImVec4(0.3, 1, 0.3, uiAnim.opacity)
+            end
+            imgui.TextColored(stockColor, string.format("  %s: %d/%d", mat.materialName, mat.current, mat.max))
+            if mat.regenRate > 0 then
+              imgui.SameLine()
+              imgui.TextColored(imgui.ImVec4(0.6, 0.6, 0.6, uiAnim.opacity), string.format(" (+%d/hr)", mat.regenRate))
+            end
+          end
+          imgui.Unindent(15)
+          imgui.Dummy(imgui.ImVec2(0, 3))
+          imgui.PopID()
+        end
+      end
+    end
   end
   imgui.End(); imgui.PopStyleColor(2); imgui.PopStyleVar(3)
 end
 
+-- API Exports
+M.uiAnim = uiAnim
+M.uiHidden = uiHidden
+M.markerAnim = markerAnim
+
+M.drawWorkSiteMarker = drawWorkSiteMarker
+M.drawZoneChoiceMarkers = drawZoneChoiceMarkers
+M.getQuarryStateForUI = getQuarryStateForUI
+M.requestQuarryState = requestQuarryState
+M.drawUI = drawUI
+
 return M
+

@@ -2,55 +2,50 @@ local M = {}
 
 local Config = gameplay_loading_config
 
-M.ContractSystem = {
+local ContractSystem = {
   availableContracts = {},
   activeContract = nil,
   lastRefreshDay = -999,
   contractProgress = {
-    deliveredTons = 0,        -- For rocks contracts
+    deliveredTons = 0,
     totalPaidSoFar = 0,
     startTime = 0,
     deliveryCount = 0,
-    -- For marble contracts (block-based)
-    deliveredBlocks = {
-      big = 0,
-      small = 0,
-      total = 0
-    }
+    deliveredItems = 0
   },
-  
-  -- Dynamic contract tracking
-  lastContractSpawnTime = 0,      -- In-game hour of last spawn
-  contractsGeneratedToday = 0,    -- Track daily generation
-  expiredContractsTotal = 0,      -- Track how many expired (for stats)
-  initialContractsGenerated = false,  -- Track if initial batch was generated
+  lastContractSpawnTime = 0,
+  contractsGeneratedToday = 0,
+  expiredContractsTotal = 0,
+  initialContractsGenerated = false,
 }
 
-M.PlayerData = {
-  level = 1,
+local PlayerData = {
   contractsCompleted = 0,
   contractsFailed = 0
 }
 
-local function pickTierForPlayer()
-  local level = M.PlayerData.level or 1
-  local roll = math.random()
-
-  if level <= 3 then
-    return roll < 0.7 and 1 or 2
-  elseif level <= 7 then
-    if roll < 0.15 then return 1
-    elseif roll < 0.65 then return 2
-    else return 3 end
-  elseif level <= 12 then
-    if roll < 0.20 then return 2
-    elseif roll < 0.65 then return 3
-    else return 4 end
-  else
-    if roll < 0.10 then return 2
-    elseif roll < 0.45 then return 3
-    else return 4 end
+local function pickTier()
+  local tierWeights = Config.contracts.tierWeights
+  if not tierWeights or #tierWeights == 0 then
+    return 1
   end
+  
+  local totalWeight = 0
+  for _, weight in ipairs(tierWeights) do
+    totalWeight = totalWeight + weight
+  end
+  
+  if totalWeight <= 0 then return 1 end
+  
+  local roll = math.random() * totalWeight
+  local current = 0
+  for i, weight in ipairs(tierWeights) do
+    current = current + weight
+    if roll <= current then
+      return i
+    end
+  end
+  return #tierWeights
 end
 
 local function weightedRandomChoice(items)
@@ -80,118 +75,223 @@ local function getCurrentGameHour()
       return tod * 24
     end
   end
-  return 12
+  return Config.contracts.defaultGameHour or 12
 end
 
-function M.generateContract(availableGroups)
+local function getFacilityPayMultiplier(zoneTag)
+  if not zoneTag then return 1.0 end
+  local facilities = Config.facilities
+  if not facilities then return 1.0 end
+  
+  for _, facility in pairs(facilities) do
+    if facility.sites and facility.sites[zoneTag] then
+      return facility.payMultiplier or 1.0
+    end
+  end
+  
+  return 1.0
+end
+
+local function getMaterialsByTypeName(typeName)
+  local materials = {}
+  if not Config.materials then return materials end
+  for matKey, matConfig in pairs(Config.materials) do
+    if matConfig.typeName == typeName then
+      table.insert(materials, matKey)
+    end
+  end
+  return materials
+end
+
+local function getTypeNameFromMaterial(materialType)
+  if not materialType then return nil end
+  local matConfig = Config.materials and Config.materials[materialType]
+  return matConfig and matConfig.typeName or nil
+end
+
+local function generateContract(availableGroups)
   if not availableGroups or #availableGroups == 0 then return nil end
-  local tier = pickTierForPlayer()
-  local tierData = Config.Config.Contracts.Tiers[tier] or Config.Config.Contracts.Tiers[1]
+  if not Config.materials or next(Config.materials) == nil then
+    print("[Loading] No materials configured in JSON; cannot generate contract.")
+    return nil
+  end
+
+  local tier = pickTier()
+  local tierData = Config.contracts.tiers[tier]
+  if not tierData then
+    print("[Loading] Invalid tier " .. tostring(tier) .. ", using tier 1")
+    tier = 1
+    tierData = Config.contracts.tiers[1]
+  end
 
   local isSpecial = math.random() < (tierData.specialChance or 0)
-  local isBulk = math.random() < 0.4
+  local bulkChance = Config.contracts.bulkChance or 0.4
+  local isBulk = math.random() < bulkChance
 
-  local group = availableGroups[math.random(#availableGroups)]
-  if not group then return nil end
+  local availableTypeNames = {}
+  local typeNameSet = {}
+  for _, g in ipairs(availableGroups) do
+    if g.materials then
+      for _, matKey in ipairs(g.materials) do
+        local matConfig = Config.materials[matKey]
+        local typeName = matConfig and matConfig.typeName
+        if typeName and not typeNameSet[typeName] then
+          typeNameSet[typeName] = true
+          table.insert(availableTypeNames, typeName)
+        end
+      end
+    elseif g.materialType then
+      local matConfig = Config.materials[g.materialType]
+      local typeName = matConfig and matConfig.typeName
+      if typeName and not typeNameSet[typeName] then
+        typeNameSet[typeName] = true
+        table.insert(availableTypeNames, typeName)
+      end
+    end
+  end
   
-  local material = group.materialType or "rocks"
-  local payRate = math.random(tierData.basePayRate.min, tierData.basePayRate.max)
+  if #availableTypeNames == 0 then
+    print("[Loading] No material type names available in zones; cannot generate contract.")
+    return nil
+  end
+  
+  local selectedTypeName = availableTypeNames[math.random(#availableTypeNames)]
+  local materialsOfType = getMaterialsByTypeName(selectedTypeName)
+  
+  if #materialsOfType == 0 then
+    print(string.format("[Loading] No materials found for typeName '%s'; cannot generate contract.", selectedTypeName))
+    return nil
+  end
+  
+  local materialType = materialsOfType[math.random(#materialsOfType)]
+  local matConfig = Config.materials[materialType]
+  if not matConfig then
+    print(string.format("[Loading] Material '%s' not found in Config.materials", materialType))
+    return nil
+  end
+  
+  local compatibleGroups = {}
+  for _, g in ipairs(availableGroups) do
+    if g.materials then
+      for _, matKey in ipairs(g.materials) do
+        local gMatConfig = Config.materials[matKey]
+        if gMatConfig and gMatConfig.typeName == selectedTypeName then
+          table.insert(compatibleGroups, g)
+          break
+        end
+      end
+    elseif g.materialType then
+      local gMatConfig = Config.materials[g.materialType]
+      if gMatConfig and gMatConfig.typeName == selectedTypeName then
+        table.insert(compatibleGroups, g)
+      end
+    end
+  end
+  
+  if #compatibleGroups == 0 then
+    print(string.format("[Loading] No groups available for typeName '%s'; cannot generate contract.", selectedTypeName))
+    return nil
+  end
+  
+  local group = compatibleGroups[math.random(#compatibleGroups)]
+  if not group then return nil end
+
+  local payMultiplier = tierData.payMultiplier and math.random(tierData.payMultiplier.min * 100, tierData.payMultiplier.max * 100) / 100 or 1.0
+  local basePay = tierData.basePay or 0
 
   local modifiers = {}
-  local bonusMultiplier = 1.0
   if math.random() < (tierData.modifierChance or 0) then
-    local timeMod = weightedRandomChoice(Config.Config.Contracts.Modifiers.time)
+    local timeMod = weightedRandomChoice(Config.contracts.modifiers.time)
     if timeMod then
       table.insert(modifiers, timeMod)
-      bonusMultiplier = bonusMultiplier + (timeMod.bonus or 0)
     end
   end
-  if math.random() < (tierData.modifierChance or 0) * 0.6 then
-    local challengeMod = weightedRandomChoice(Config.Config.Contracts.Modifiers.challenge)
+  
+  local challengeChanceMult = Config.contracts.challengeModifierChanceMult or 0.6
+  if math.random() < (tierData.modifierChance or 0) * challengeChanceMult then
+    local challengeMod = weightedRandomChoice(Config.contracts.modifiers.challenge)
     if challengeMod then
       table.insert(modifiers, challengeMod)
-      bonusMultiplier = bonusMultiplier + (challengeMod.bonus or 0)
     end
   end
-  if isSpecial then
-    bonusMultiplier = bonusMultiplier + math.random(50, 150) / 100
-  end
 
-  local isUrgent = math.random() < (Config.Config.Contracts.UrgentContractChance or 0.15)
-  if isUrgent then
-    bonusMultiplier = bonusMultiplier + (Config.Config.Contracts.UrgentPayBonus or 0.25)
-  end
+  local urgentChance = Config.contracts.urgentContractChance or 0.15
+  local isUrgent = math.random() < urgentChance
 
   local requiredTons = 0
-  local requiredBlocks = nil
+  local requiredItems = 0
   local estimatedTrips = 1
   
-  if material == "marble" then
-    local blockRanges = Config.Config.MarbleBlockRanges[tier] or Config.Config.MarbleBlockRanges[1]
-    local bigBlocks = math.random(blockRanges.big[1], blockRanges.big[2])
-    local smallBlocks = math.random(blockRanges.small[1], blockRanges.small[2])
+  if matConfig.unitType == "item" then
+    local tierStr = tostring(tier)
+    local defaultRanges = Config.contracts.defaultContractRanges and Config.contracts.defaultContractRanges.item
+    local ranges = matConfig.contractRanges and matConfig.contractRanges[tierStr] or defaultRanges
+    if not ranges then
+      print("[Loading] Warning: No contract ranges for item material " .. materialType .. " tier " .. tierStr)
+      return nil
+    end
     
-    if bigBlocks == 0 and smallBlocks == 0 then smallBlocks = 1 end
-    
+    requiredItems = math.random(ranges.min, ranges.max)
     if isSpecial then
-      bigBlocks = bigBlocks + math.random(1, 2)
-      smallBlocks = smallBlocks + math.random(1, 2)
+      local itemBonusRange = Config.contracts.specialItemBonusRange or {1, 2}
+      requiredItems = requiredItems + math.random(itemBonusRange[1], itemBonusRange[2])
     end
     
-    requiredBlocks = {
-      big = bigBlocks,
-      small = smallBlocks,
-      total = bigBlocks + smallBlocks
-    }
-    
-    requiredTons = (bigBlocks * 38) + (smallBlocks * 19)
-    
-    if bigBlocks >= smallBlocks then
-      estimatedTrips = bigBlocks
-    else
-      local remainingSmall = smallBlocks - bigBlocks
-      estimatedTrips = bigBlocks + math.ceil(remainingSmall / 2)
-    end
-    estimatedTrips = math.max(1, estimatedTrips)
+    estimatedTrips = 1
+    requiredTons = 0
   else
-    local tonnageRange = (isBulk and tierData.tonnageRange and tierData.tonnageRange.bulk) or (tierData.tonnageRange and tierData.tonnageRange.single) or {15, 25}
-    requiredTons = math.random(tonnageRange[1], tonnageRange[2])
+    local tierStr = tostring(tier)
+    local defaultRanges = Config.contracts.defaultContractRanges and Config.contracts.defaultContractRanges.mass
+    local ranges = matConfig.contractRanges and matConfig.contractRanges[tierStr]
+    
+    if ranges then
+      local tonnageRange = (isBulk and ranges.bulk) or ranges.single
+      if tonnageRange then
+        requiredTons = math.random(tonnageRange[1], tonnageRange[2])
+      else
+        print("[Loading] Warning: No tonnage range for mass material " .. materialType .. " tier " .. tierStr)
+        return nil
+      end
+    elseif defaultRanges then
+      requiredTons = math.random(defaultRanges[1], defaultRanges[2])
+    else
+      print("[Loading] Warning: No contract ranges for mass material " .. materialType .. " tier " .. tierStr)
+      return nil
+    end
 
     if isSpecial then
-      if math.random() < 0.5 then
-        requiredTons = math.random(10, 20)
-      else
-        requiredTons = math.random(300, 500)
+      local specialRanges = Config.contracts.specialMassBonusRanges
+      local specialChance = Config.contracts.specialMassBonusChance or 0.5
+      if specialRanges then
+        if math.random() < specialChance then
+          requiredTons = math.random(specialRanges.low[1], specialRanges.low[2])
+        else
+          requiredTons = math.random(specialRanges.high[1], specialRanges.high[2])
+        end
       end
     end
     
-    estimatedTrips = math.ceil(requiredTons / (Config.Config.TargetLoad / 1000))
+    estimatedTrips = math.ceil(requiredTons / (Config.settings.targetLoad / 1000))
   end
 
-  local totalPayout = math.floor(requiredTons * payRate * bonusMultiplier)
-
-  local contractNames
-  if material == "marble" then
-    contractNames = {
-      "Marble Delivery", "Stone Block Order", "Monument Supply",
-      "Sculpture Materials", "Premium Stone Haul", "Architectural Order",
-      "Building Block Contract", "Luxury Stone Supply"
-    }
+  local unitPay = 0
+  if matConfig.unitType == "item" then
+    unitPay = requiredItems * (matConfig.payPerUnit or 0)
   else
-    contractNames = {
-      "Standard Haul", "Local Delivery", "Construction Supply",
-      "Industrial Order", "Building Materials", "Infrastructure Project",
-      "Development Contract", "Municipal Supply"
-    }
+    unitPay = requiredTons * (matConfig.payPerUnit or 0)
   end
-  local name = contractNames[math.random(#contractNames)]
+  
+  local totalPayout = math.floor((basePay + unitPay) * payMultiplier)
+
+  local name = selectedTypeName or matConfig.name or "Delivery"
   if isBulk then name = "Bulk " .. name end
   if isUrgent then name = "URGENT: " .. name end
 
   local currentHour = getCurrentGameHour()
-  local baseExpiration = Config.Config.Contracts.ContractExpirationTime[tier] or 6
+  local expirationTime = Config.contracts.contractExpirationTime[tostring(tier)]
+  local baseExpiration = expirationTime or (Config.contracts.defaultExpirationHours or 6)
   if isUrgent then
-    baseExpiration = baseExpiration * (Config.Config.Contracts.UrgentExpirationMult or 0.5)
+    baseExpiration = baseExpiration * (Config.contracts.urgentExpirationMult or 0.5)
   end
   local expiresAt = currentHour + baseExpiration
 
@@ -199,14 +299,18 @@ function M.generateContract(availableGroups)
     id = os.time() + math.random(1000, 9999),
     name = name,
     tier = tier,
-    material = material,
+    material = materialType,
+    materialTypeName = selectedTypeName,
     requiredTons = requiredTons,
-    requiredBlocks = requiredBlocks,
+    requiredItems = requiredItems,
+    unitType = matConfig.unitType,
+    units = matConfig.units,
     isBulk = isBulk,
-    payRate = payRate,
+    basePay = basePay,
+    unitPay = unitPay,
+    payMultiplier = payMultiplier,
     totalPayout = totalPayout,
     modifiers = modifiers,
-    bonusMultiplier = bonusMultiplier,
     isSpecial = isSpecial,
     destination = {
       pos = group.destination and group.destination.pos and vec3(group.destination.pos) or nil,
@@ -223,54 +327,52 @@ function M.generateContract(availableGroups)
   }
 end
 
-function M.sortContracts()
-  table.sort(M.ContractSystem.availableContracts, function(a, b)
+local function sortContracts()
+  table.sort(ContractSystem.availableContracts, function(a, b)
     if a.isUrgent ~= b.isUrgent then return a.isUrgent end
     if a.tier == b.tier then return a.totalPayout < b.totalPayout end
     return a.tier < b.tier
   end)
 end
 
-function M.generateInitialContracts(availableGroups)
-  M.ContractSystem.availableContracts = {}
+local function generateInitialContracts(availableGroups)
+  ContractSystem.availableContracts = {}
   if not availableGroups or #availableGroups == 0 then return end
 
-  local initialCount = Config.Config.Contracts.InitialContracts or 4
-  local tierDistribution = { pickTierForPlayer(), pickTierForPlayer(), math.random(1, 2), math.random(2, 3) }
-
+  local initialCount = Config.contracts.initialContracts or 4
   for i = 1, initialCount do
-    local contract = M.generateContract(availableGroups)
+    local contract = generateContract(availableGroups)
     if contract then
-      table.insert(M.ContractSystem.availableContracts, contract)
+      table.insert(ContractSystem.availableContracts, contract)
     end
   end
 
-  M.sortContracts()
-  M.ContractSystem.lastContractSpawnTime = getCurrentGameHour()
-  M.ContractSystem.contractsGeneratedToday = initialCount
-  M.ContractSystem.initialContractsGenerated = true
-  print("[Loading] Generated " .. #M.ContractSystem.availableContracts .. " initial contracts")
+  sortContracts()
+  ContractSystem.lastContractSpawnTime = getCurrentGameHour()
+  ContractSystem.contractsGeneratedToday = initialCount
+  ContractSystem.initialContractsGenerated = true
+  print("[Loading] Generated " .. #ContractSystem.availableContracts .. " initial contracts")
 end
 
-function M.trySpawnNewContract(availableGroups)
-  if #M.ContractSystem.availableContracts >= (Config.Config.Contracts.MaxActiveContracts or 6) then
+local function trySpawnNewContract(availableGroups)
+  if #ContractSystem.availableContracts >= (Config.contracts.maxActiveContracts or 6) then
     return false
   end
   
   local currentHour = getCurrentGameHour()
-  local lastSpawn = M.ContractSystem.lastContractSpawnTime or 0
-  local interval = Config.Config.Contracts.ContractSpawnInterval or 2
+  local lastSpawn = ContractSystem.lastContractSpawnTime or 0
+  local interval = Config.contracts.contractSpawnInterval or 2
   
   local hoursSinceSpawn = currentHour - lastSpawn
   if hoursSinceSpawn < 0 then hoursSinceSpawn = hoursSinceSpawn + 24 end
   
   if hoursSinceSpawn >= interval then
-    local contract = M.generateContract(availableGroups)
+    local contract = generateContract(availableGroups)
     if contract then
-      table.insert(M.ContractSystem.availableContracts, contract)
-      M.sortContracts()
-      M.ContractSystem.lastContractSpawnTime = currentHour
-      M.ContractSystem.contractsGeneratedToday = (M.ContractSystem.contractsGeneratedToday or 0) + 1
+      table.insert(ContractSystem.availableContracts, contract)
+      sortContracts()
+      ContractSystem.lastContractSpawnTime = currentHour
+      ContractSystem.contractsGeneratedToday = (ContractSystem.contractsGeneratedToday or 0) + 1
       
       local urgentText = contract.isUrgent and " (URGENT!)" or ""
       ui_message("New contract available: " .. contract.name .. urgentText, 4, "info")
@@ -283,12 +385,12 @@ function M.trySpawnNewContract(availableGroups)
   return false
 end
 
-function M.checkContractExpiration()
+local function checkContractExpiration()
   local currentHour = getCurrentGameHour()
   local expiredCount = 0
   local remainingContracts = {}
   
-  for _, contract in ipairs(M.ContractSystem.availableContracts) do
+  for _, contract in ipairs(ContractSystem.availableContracts) do
     local expiresAt = contract.expiresAt or math.huge
     local hoursUntilExpire = expiresAt - currentHour
     if expiresAt > 24 and currentHour < 12 then
@@ -299,19 +401,19 @@ function M.checkContractExpiration()
       table.insert(remainingContracts, contract)
     else
       expiredCount = expiredCount + 1
-      M.ContractSystem.expiredContractsTotal = (M.ContractSystem.expiredContractsTotal or 0) + 1
+      ContractSystem.expiredContractsTotal = (ContractSystem.expiredContractsTotal or 0) + 1
       print("[Loading] Contract expired: " .. (contract.name or "Unknown"))
     end
   end
   
   if expiredCount > 0 then
-    M.ContractSystem.availableContracts = remainingContracts
+    ContractSystem.availableContracts = remainingContracts
     ui_message(expiredCount .. " contract" .. (expiredCount > 1 and "s" or "") .. " expired", 3, "warning")
   end
   return expiredCount
 end
 
-function M.getContractHoursRemaining(contract)
+local function getContractHoursRemaining(contract)
   if not contract or not contract.expiresAt then return 99 end
   local currentHour = getCurrentGameHour()
   local hoursLeft = contract.expiresAt - currentHour
@@ -324,54 +426,57 @@ function M.getContractHoursRemaining(contract)
   return hoursLeft
 end
 
-function M.shouldRefreshContracts()
+local function shouldRefreshContracts()
   local currentDay = math.floor(os.time() / 86400)
-  if currentDay - (M.ContractSystem.lastRefreshDay or -999) >= (Config.Config.Contracts.RefreshDays or 3) then
-    M.ContractSystem.lastRefreshDay = currentDay
-    M.ContractSystem.initialContractsGenerated = false
+  if currentDay - (ContractSystem.lastRefreshDay or -999) >= (Config.contracts.refreshDays or 3) then
+    ContractSystem.lastRefreshDay = currentDay
+    ContractSystem.initialContractsGenerated = false
     return true
   end
   return false
 end
 
-function M.checkContractCompletion()
-  if not M.ContractSystem.activeContract then return false end
-  local contract = M.ContractSystem.activeContract
-  local p = M.ContractSystem.contractProgress
+local function checkContractCompletion()
+  if not ContractSystem.activeContract then return false end
+  local contract = ContractSystem.activeContract
+  local p = ContractSystem.contractProgress
   
-  if contract.material == "marble" and contract.requiredBlocks then
-    local delivered = p.deliveredBlocks or { big = 0, small = 0 }
-    local required = contract.requiredBlocks
-    return (delivered.big >= required.big) and (delivered.small >= required.small)
+  if contract.unitType == "item" then
+    local delivered = p.deliveredItems or 0
+    return delivered >= (contract.requiredItems or 0)
   end
   
   return (p and p.deliveredTons or 0) >= (contract.requiredTons or math.huge)
 end
 
-function M.acceptContract(contractIndex, getZonesByMaterial)
-  local contract = M.ContractSystem.availableContracts[contractIndex]
+local function acceptContract(contractIndex, getZonesByTypeName)
+  local contract = ContractSystem.availableContracts[contractIndex]
   if not contract then return end
 
-  local contractMaterial = contract.material or "rocks"
-  local compatibleZones = getZonesByMaterial(contractMaterial)
+  local contractTypeName = contract.materialTypeName
+  if not contractTypeName then
+    print("[Loading] Error: Contract missing materialTypeName field")
+    return nil
+  end
+  local compatibleZones = getZonesByTypeName(contractTypeName)
   
   if #compatibleZones == 0 then
-    ui_message(string.format("No zones available for %s!", contractMaterial:upper()), 5, "error")
+    ui_message(string.format("No zones available for %s!", contractTypeName:upper()), 5, "error")
     return nil
   end
   
-  table.remove(M.ContractSystem.availableContracts, contractIndex)
+  table.remove(ContractSystem.availableContracts, contractIndex)
   
   contract.group = nil
   contract.loadingZoneTag = nil
   
-  M.ContractSystem.activeContract = contract
-  M.ContractSystem.contractProgress = {
+  ContractSystem.activeContract = contract
+  ContractSystem.contractProgress = {
     deliveredTons = 0,
     totalPaidSoFar = 0,
     startTime = os.clock(),
     deliveryCount = 0,
-    deliveredBlocks = { big = 0, small = 0, total = 0 }
+    deliveredItems = 0
   }
   
   Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_Start_01')
@@ -382,24 +487,24 @@ function M.acceptContract(contractIndex, getZonesByMaterial)
   end
   
   ui_message(string.format("Contract accepted! Drive to any %s zone to load: %s", 
-    contractMaterial:upper(), table.concat(zoneNames, ", ")), 8, "info")
+    contractTypeName:upper(), table.concat(zoneNames, ", ")), 8, "info")
   
-  print(string.format("[Loading] Contract accepted. Material: %s. Compatible zones: %s", 
-    contractMaterial, table.concat(zoneNames, ", ")))
+  print(string.format("[Loading] Contract accepted. TypeName: %s. Compatible zones: %s", 
+    contractTypeName, table.concat(zoneNames, ", ")))
   
   return contract, compatibleZones
 end
 
-function M.abandonContract(onCleanup)
-  if not M.ContractSystem.activeContract then return end
-  ui_message(string.format("Contract abandoned! Penalty: $%d", Config.Config.Contracts.AbandonPenalty or 0), 6, "warning")
+local function abandonContract(onCleanup)
+  if not ContractSystem.activeContract then return end
+  ui_message(string.format("Contract abandoned! Penalty: $%d", Config.contracts.abandonPenalty or 0), 6, "warning")
 
   local success, err = pcall(function()
     local career = career_career
     if career and type(career.isActive) == "function" and career.isActive() then
       local paymentModule = career_modules_payment
       if paymentModule and type(paymentModule.pay) == "function" then
-        paymentModule.pay(-(Config.Config.Contracts.AbandonPenalty or 0), {label = "Contract Abandonment"})
+        paymentModule.pay(-(Config.contracts.abandonPenalty or 0), {label = "Contract Abandonment"})
       end
     end
   end)
@@ -407,15 +512,15 @@ function M.abandonContract(onCleanup)
     print("[Loading] Warning: Could not apply abandonment penalty: " .. tostring(err))
   end
 
-  M.PlayerData.contractsFailed = (M.PlayerData.contractsFailed or 0) + 1
-  M.ContractSystem.activeContract = nil
-  M.ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0, deliveredBlocks = { big = 0, small = 0, total = 0 }}
+  PlayerData.contractsFailed = (PlayerData.contractsFailed or 0) + 1
+  ContractSystem.activeContract = nil
+  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0, deliveredItems = 0}
 
   if onCleanup then onCleanup(true) end
 end
 
-function M.failContract(penalty, message, msgType, onCleanup)
-  if not M.ContractSystem.activeContract then
+local function failContract(penalty, message, msgType, onCleanup)
+  if not ContractSystem.activeContract then
     if onCleanup then onCleanup(true) end
     return
   end
@@ -437,18 +542,20 @@ function M.failContract(penalty, message, msgType, onCleanup)
     print("[Loading] Warning: Could not apply failure penalty: " .. tostring(err))
   end
 
-  M.PlayerData.contractsFailed = (M.PlayerData.contractsFailed or 0) + 1
-  M.ContractSystem.activeContract = nil
-  M.ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0, deliveredBlocks = { big = 0, small = 0, total = 0 }}
+  PlayerData.contractsFailed = (PlayerData.contractsFailed or 0) + 1
+  ContractSystem.activeContract = nil
+  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0, deliveredItems = 0}
 
   if onCleanup then onCleanup(true) end
 end
 
-function M.completeContract(onCleanup, onClearProps)
-  if not M.ContractSystem.activeContract then return end
-  local contract = M.ContractSystem.activeContract
+local function completeContract(onCleanup, onClearProps)
+  if not ContractSystem.activeContract then return end
+  local contract = ContractSystem.activeContract
 
-  local totalPay = contract.totalPayout or 0
+  local zoneTag = contract.loadingZoneTag or contract.groupTag
+  local facilityPayMultiplier = getFacilityPayMultiplier(zoneTag)
+  local totalPay = math.floor((contract.totalPayout or 0) * facilityPayMultiplier)
 
   local careerPaid = false
   local success, err = pcall(function()
@@ -456,7 +563,13 @@ function M.completeContract(onCleanup, onClearProps)
     if career and type(career.isActive) == "function" and career.isActive() then
       local paymentModule = career_modules_payment
       if paymentModule and type(paymentModule.reward) == "function" then
-        local xpReward = math.floor((contract.requiredTons or 0) * 10)
+        local xpMultiplier = 10
+        local xpReward = 0
+        if contract.unitType == "item" then
+          xpReward = math.floor((contract.requiredItems or 0) * xpMultiplier)
+        else
+          xpReward = math.floor((contract.requiredTons or 0) * xpMultiplier)
+        end
         paymentModule.reward({
           money = { amount = totalPay, canBeNegative = false },
           labor = { amount = xpReward, canBeNegative = false }
@@ -477,16 +590,35 @@ function M.completeContract(onCleanup, onClearProps)
     ui_message(string.format("SANDBOX: Contract payout: $%d", totalPay), 6, "success")
   end
 
-  M.PlayerData.contractsCompleted = (M.PlayerData.contractsCompleted or 0) + 1
-  M.PlayerData.level = (M.PlayerData.level or 1) + 1
+  PlayerData.contractsCompleted = (PlayerData.contractsCompleted or 0) + 1
 
-  M.ContractSystem.activeContract = nil
-  M.ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0, deliveredBlocks = { big = 0, small = 0, total = 0 }}
+  ContractSystem.activeContract = nil
+  ContractSystem.contractProgress = {deliveredTons = 0, totalPaidSoFar = 0, deliveryCount = 0, deliveredItems = 0}
 
   if onClearProps then onClearProps() end
   if onCleanup then onCleanup(true) end
 end
 
+M.ContractSystem = ContractSystem
+M.PlayerData = PlayerData
+
 M.getCurrentGameHour = getCurrentGameHour
+M.generateContract = generateContract
+M.sortContracts = sortContracts
+M.generateInitialContracts = generateInitialContracts
+M.trySpawnNewContract = trySpawnNewContract
+M.checkContractExpiration = checkContractExpiration
+M.getContractHoursRemaining = getContractHoursRemaining
+M.shouldRefreshContracts = shouldRefreshContracts
+M.checkContractCompletion = checkContractCompletion
+M.acceptContract = acceptContract
+M.abandonContract = abandonContract
+M.failContract = failContract
+M.completeContract = completeContract
+M.getMaterialsByTypeName = getMaterialsByTypeName
+M.getTypeNameFromMaterial = getTypeNameFromMaterial
+M.getFacilityPayMultiplier = getFacilityPayMultiplier
 
 return M
+
+

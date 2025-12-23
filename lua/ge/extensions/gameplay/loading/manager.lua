@@ -14,21 +14,22 @@ M.jobObjects = {
   truckSpawnQueued = false,
   truckSpawnPos = nil,
   truckSpawnRot = nil,
-  marbleDamage = {},
-  totalMarbleDamagePercent = 0,
-  anyMarbleDamaged = false,
+  itemDamage = {},
+  totalItemDamagePercent = 0,
+  anyItemDamaged = false,
   lastDeliveryDamagePercent = 0,
   deliveryDestination = nil,
   deliveryBlocksStatus = nil,
 }
 
-M.rockPileQueue = {}
-M.marbleInitialState = {}
-M.marbleDamageState = {}
+M.propQueue = {}
+M.propQueueById = {}
+M.itemInitialState = {}
+M.itemDamageState = {}
 M.debugDrawCache = {
   bedData = nil,
   nodePoints = {},
-  marblePieces = {}
+  itemPieces = {}
 }
 
 M.markerCleared = false
@@ -39,9 +40,10 @@ M.truckStoppedTimer = 0
 M.truckLastPosition = nil
 M.truckResendCount = 0
 
-local truckStoppedThreshold = 2.0
-local truckStopSpeedThreshold = 1.0
-local truckMaxResends = 15
+M.cachedBedData = {}
+M.cachedMaterialConfigs = {}
+M.lastPayloadMass = 0
+M.payloadStationaryCount = 0
 
 function M.calculateSpawnTransformForLocation(spawnPos, targetPos)
   local dir = vec3(0, 1, 0)
@@ -127,50 +129,184 @@ function M.calculateSpawnTransformForLocation(spawnPos, targetPos)
   return spawnPos, rotation
 end
 
-function M.manageRockCapacity()
-  while #M.rockPileQueue > Config.Config.MaxRockPiles do
-    local oldEntry = table.remove(M.rockPileQueue, 1)
+function M.getMaterialConfig(materialType)
+  if M.cachedMaterialConfigs[materialType] then
+    return M.cachedMaterialConfigs[materialType]
+  end
+  local matConfig = Config.materials and Config.materials[materialType]
+  if matConfig then
+    M.cachedMaterialConfigs[materialType] = matConfig
+  end
+  return matConfig
+end
+
+function M.managePropCapacity()
+  while #M.propQueue > Config.settings.maxProps do
+    local oldEntry = table.remove(M.propQueue, 1)
     if oldEntry and oldEntry.id then
+      M.propQueueById[oldEntry.id] = nil
       local obj = be:getObjectByID(oldEntry.id)
       if obj then obj:delete() end
     end
   end
 end
 
+local function getContractMaterialRequirements(contract)
+  if not contract or contract.unitType ~= "item" or not contract.materialTypeName then
+    return {}
+  end
+  
+  local Config = extensions.gameplay_loading_config
+  local materialsOfType = {}
+  if Config and Config.materials then
+    for matKey, matConfig in pairs(Config.materials) do
+      if matConfig.typeName == contract.materialTypeName then
+        table.insert(materialsOfType, { key = matKey, config = matConfig })
+      end
+    end
+  end
+  
+  if #materialsOfType <= 1 then
+    if #materialsOfType == 1 then
+      return { [materialsOfType[1].key] = contract.requiredItems or 0 }
+    end
+    return {}
+  end
+  
+  table.sort(materialsOfType, function(a, b)
+    local aMass = (a.config.unitType == "mass" and a.config.massPerProp) or 0
+    local bMass = (b.config.unitType == "mass" and b.config.massPerProp) or 0
+    return aMass < bMass
+  end)
+  
+  local totalRequired = contract.requiredItems or 0
+  local breakdown = {}
+  
+  if totalRequired <= 0 then
+    return {}
+  end
+  
+  if #materialsOfType == 2 and totalRequired == 2 then
+    breakdown[materialsOfType[1].key] = 1
+    breakdown[materialsOfType[2].key] = 1
+  elseif #materialsOfType == 2 then
+    local smaller = materialsOfType[1]
+    local larger = materialsOfType[2]
+    local smallerCount = math.max(1, math.floor(totalRequired / 2))
+    breakdown[smaller.key] = smallerCount
+    breakdown[larger.key] = totalRequired - smallerCount
+  else
+    local remaining = totalRequired
+    for i, mat in ipairs(materialsOfType) do
+      if i == #materialsOfType then
+        breakdown[mat.key] = remaining
+      else
+        local count = math.max(1, math.floor(totalRequired / #materialsOfType))
+        breakdown[mat.key] = count
+        remaining = remaining - count
+      end
+    end
+  end
+  
+  return breakdown
+end
+
+function M.repairAndRespawnDamagedItem(propId, zonesMod, contractsMod)
+  local entry = M.propQueueById[propId]
+  if not entry then return false end
+  
+  local obj = be:getObjectByID(propId)
+  if not obj then return false end
+  
+  local matConfig = M.getMaterialConfig(entry.materialType)
+  if not matConfig then return false end
+  
+  local group = M.jobObjects.activeGroup
+  if not group then return false end
+  
+  local cache = zonesMod.ensureGroupCache(group, contractsMod.getCurrentGameHour)
+  if not cache or not cache.materialStocks then return false end
+  
+  local stock = cache.materialStocks[entry.materialType]
+  if not stock or stock.current <= 0 then return false end
+  
+  local basePos = cache.offRoadCentroid
+  if not basePos then
+    basePos = zonesMod.findOffRoadCentroid(group.loading, 5, 1000)
+    if basePos then cache.offRoadCentroid = basePos end
+  end
+  if not basePos then return false end
+  
+  obj:repair()
+  obj:setPosition(basePos + vec3(0, 0, 0.2))
+  obj:setLinearVelocity(vec3(0, 0, 0))
+  obj:setAngularVelocity(vec3(0, 0, 0))
+  
+  if M.jobObjects.itemDamage and M.jobObjects.itemDamage[propId] then
+    M.jobObjects.itemDamage[propId].isDamaged = false
+    M.jobObjects.itemDamage[propId].damage = 0
+  end
+  if M.itemDamageState[propId] then
+    M.itemDamageState[propId].isDamaged = false
+  end
+  
+  stock.current = stock.current - 1
+  
+  print(string.format("[Loading] Repaired and respawned damaged item %s (consumed 1 stock)", entry.materialType))
+  return true
+end
+
 function M.spawnJobMaterials(contractsMod, zonesMod)
   if not M.jobObjects.activeGroup or not M.jobObjects.activeGroup.loading then return end
 
   local group = M.jobObjects.activeGroup
-  local materialType = group.materialType or M.jobObjects.materialType or "rocks"
   local zone = group.loading
   
   local cache = zonesMod.ensureGroupCache(group, contractsMod.getCurrentGameHour)
-  if not cache then return end
+  if not cache or not cache.materialStocks then return end
   
   zonesMod.ensureGroupOffRoadCentroid(group, contractsMod.getCurrentGameHour)
   
-  if cache.stock and cache.stock.current <= 0 then
-    ui_message("This zone is out of stock! Wait for regeneration.", 5, "warning")
+  local contract = contractsMod.ContractSystem.activeContract
+  if not contract or not contract.materialTypeName then
+    print("[Loading] Error: No active contract with materialTypeName for spawn")
     return
   end
   
-  local maxSpawned = Config.Config.Stock.MaxSpawnedProps[materialType] or 2
-  local currentlySpawned = 0
-  for _, entry in ipairs(M.rockPileQueue) do
-    if entry.materialType == materialType then
-      currentlySpawned = currentlySpawned + 1
+  local contractTypeName = contract.materialTypeName
+  local compatibleMaterials = {}
+  
+  if group.materials then
+    for _, matKey in ipairs(group.materials) do
+      local matConfig = M.getMaterialConfig(matKey)
+      if matConfig and matConfig.typeName == contractTypeName then
+        table.insert(compatibleMaterials, matKey)
+      end
+    end
+  elseif group.materialType then
+    local matConfig = M.getMaterialConfig(group.materialType)
+    if matConfig and matConfig.typeName == contractTypeName then
+      table.insert(compatibleMaterials, group.materialType)
     end
   end
-  cache.spawnedPropCount = currentlySpawned
   
-  if currentlySpawned >= maxSpawned then return end
+  if #compatibleMaterials == 0 then
+    print(string.format("[Loading] No compatible materials found for typeName '%s' in zone '%s'", contractTypeName, group.secondaryTag))
+    return
+  end
   
-  local roomForMore = maxSpawned - currentlySpawned
-  local stockAvailable = cache.stock and cache.stock.current or Config.Config.Stock.DefaultMaxStock
-  local stockCost = Config.Config.Stock.StockCostPerProp[materialType] or 1
-  local propsToSpawn = math.min(roomForMore, math.floor(stockAvailable / stockCost))
+  if not cache.spawnedPropCounts then
+    cache.spawnedPropCounts = {}
+  end
   
-  if propsToSpawn <= 0 then return end
+  local materialRequirements = {}
+  if contract.unitType == "item" then
+    materialRequirements = getContractMaterialRequirements(contract)
+  else
+    for _, matKey in ipairs(compatibleMaterials) do
+      materialRequirements[matKey] = math.huge
+    end
+  end
   
   local basePos = cache.offRoadCentroid or nil
   if not basePos then
@@ -180,90 +316,112 @@ function M.spawnJobMaterials(contractsMod, zonesMod)
   if not basePos then return end
   basePos = basePos + vec3(0,0,0.2)
 
-  local propsSpawned = 0
+  local totalPropsSpawned = 0
+  local offsetIdx = 1
+  local offsets = { vec3(-2, 0, 0), vec3(2, 0, 0), vec3(0, 2, 0), vec3(0, -2, 0), vec3(-2, 2, 0), vec3(2, 2, 0), vec3(-2, -2, 0), vec3(2, -2, 0) }
   
-  if materialType == "rocks" then
-    for i = 1, propsToSpawn do
-      local offset = vec3((i - 1) * 3, 0, 0)
-      local rocks = core_vehicles.spawnNewVehicle(Config.Config.RockProp, { 
-        config = "default", 
-        pos = basePos + offset, 
-        rot = quatFromDir(vec3(0,1,0)), 
-        autoEnterVehicle = false 
-      })
-      if rocks then
-        table.insert(M.rockPileQueue, { id = rocks:getID(), mass = Config.Config.RockMassPerPile, materialType = "rocks" })
-        propsSpawned = propsSpawned + 1
-        M.manageRockCapacity()
+  for _, materialType in ipairs(compatibleMaterials) do
+    local matConfig = M.getMaterialConfig(materialType)
+    if matConfig then
+      local stock = cache.materialStocks[materialType]
+      if stock and stock.current > 0 then
+        local currentlySpawned = 0
+        for _, entry in ipairs(M.propQueue) do
+          if entry.materialType == materialType then
+            currentlySpawned = currentlySpawned + 1
+          end
+        end
+        
+        local required = materialRequirements[materialType] or 0
+        local delivered = 0
+        if contractsMod.ContractSystem.contractProgress and contractsMod.ContractSystem.contractProgress.deliveredItemsByMaterial then
+          delivered = contractsMod.ContractSystem.contractProgress.deliveredItemsByMaterial[materialType] or 0
+        end
+        local stillNeeded = math.max(0, required - delivered - currentlySpawned)
+        
+        if stillNeeded > 0 then
+          local stockAvailable = stock.current
+          local propsToSpawn = math.min(stillNeeded, stockAvailable)
+          
+          if propsToSpawn > 0 then
+            if matConfig.unitType == "mass" then
+              for i = 1, propsToSpawn do
+                local offset = vec3((i - 1) * 3, 0, 0)
+                local obj = core_vehicles.spawnNewVehicle(matConfig.model, { 
+                  config = matConfig.config, 
+                  pos = basePos + offset, 
+                  rot = quatFromDir(vec3(0,1,0)), 
+                  autoEnterVehicle = false 
+                })
+                if obj then
+                  local propId = obj:getID()
+                  local entry = { id = propId, mass = matConfig.massPerProp or 41000, materialType = materialType }
+                  table.insert(M.propQueue, entry)
+                  M.propQueueById[propId] = entry
+                  totalPropsSpawned = totalPropsSpawned + 1
+                  stock.current = stock.current - 1
+                  if not cache.spawnedPropCounts[materialType] then
+                    cache.spawnedPropCounts[materialType] = 0
+                  end
+                  cache.spawnedPropCounts[materialType] = cache.spawnedPropCounts[materialType] + 1
+                  M.managePropCapacity()
+                end
+              end
+            elseif matConfig.unitType == "item" then
+              for i = 1, propsToSpawn do
+                local pos = basePos + (offsets[offsetIdx] or vec3(0,0,0))
+                offsetIdx = (offsetIdx % #offsets) + 1
+                
+                local obj = core_vehicles.spawnNewVehicle(matConfig.model, { 
+                  config = matConfig.config, 
+                  pos = pos, 
+                  rot = quatFromDir(vec3(0,1,0)), 
+                  autoEnterVehicle = false 
+                })
+                if obj then
+                  local propId = obj:getID()
+                  local entry = { 
+                    id = propId, 
+                    mass = 0, 
+                    materialType = materialType, 
+                    blockType = matConfig.config 
+                  }
+                  table.insert(M.propQueue, entry)
+                  M.propQueueById[propId] = entry
+                  totalPropsSpawned = totalPropsSpawned + 1
+                  stock.current = stock.current - 1
+                  if not cache.spawnedPropCounts[materialType] then
+                    cache.spawnedPropCounts[materialType] = 0
+                  end
+                  cache.spawnedPropCounts[materialType] = cache.spawnedPropCounts[materialType] + 1
+                  M.managePropCapacity()
+                end
+              end
+            end
+          end
+        end
       end
-    end
-  elseif materialType == "marble" then
-    local offsets = { vec3(-2, 0, 0), vec3(2, 0, 0) }
-    local offsetIdx = 1
-    
-    local contract = contractsMod.ContractSystem.activeContract
-    local requiredBlocks = contract and contract.requiredBlocks or { big = 1, small = 1 }
-    local delivered = contractsMod.ContractSystem.contractProgress and contractsMod.ContractSystem.contractProgress.deliveredBlocks or { big = 0, small = 0 }
-    
-    local spawnedBig = 0
-    local spawnedSmall = 0
-    for _, entry in ipairs(M.rockPileQueue) do
-      if entry.materialType == "marble" then
-        if entry.blockType == "big_rails" then spawnedBig = spawnedBig + 1
-        elseif entry.blockType == "rails" then spawnedSmall = spawnedSmall + 1 end
-      end
-    end
-    
-    local needBig = math.max(0, (requiredBlocks.big or 0) - (delivered.big or 0) - spawnedBig)
-    local needSmall = math.max(0, (requiredBlocks.small or 0) - (delivered.small or 0) - spawnedSmall)
-    
-    local blocksToSpawn = {}
-    local maxToSpawn = math.min(propsToSpawn, 2)
-    
-    for i = 1, math.min(needBig, maxToSpawn - #blocksToSpawn) do
-      table.insert(blocksToSpawn, { config = "big_rails", mass = 38000 })
-    end
-    for i = 1, math.min(needSmall, maxToSpawn - #blocksToSpawn) do
-      table.insert(blocksToSpawn, { config = "rails", mass = 19000 })
-    end
-    
-    for _, blockData in ipairs(blocksToSpawn) do
-      local pos = basePos + (offsets[offsetIdx] or vec3(0,0,0))
-      offsetIdx = offsetIdx + 1
-      local block = core_vehicles.spawnNewVehicle(Config.Config.MarbleProp, { 
-        config = blockData.config, 
-        pos = pos, 
-        rot = quatFromDir(vec3(0,1,0)), 
-        autoEnterVehicle = false 
-      })
-      if block then
-        table.insert(M.rockPileQueue, { 
-          id = block:getID(), 
-          mass = blockData.mass, 
-          materialType = "marble", 
-          blockType = blockData.config 
-        })
-        propsSpawned = propsSpawned + 1
-        M.manageRockCapacity()
-      end
+    else
+      print(string.format("[Loading] Material type '%s' not found in config; skipping.", materialType))
     end
   end
   
-  if propsSpawned > 0 then
-    cache.spawnedPropCount = (cache.spawnedPropCount or 0) + propsSpawned
+  if totalPropsSpawned > 0 then
+    print(string.format("[Loading] Spawned %d props for contract typeName '%s'", totalPropsSpawned, contractTypeName))
   end
 end
 
 function M.clearProps()
-  for i = #M.rockPileQueue, 1, -1 do
-    local id = M.rockPileQueue[i].id
+  for i = #M.propQueue, 1, -1 do
+    local id = M.propQueue[i].id
     if id then
-      M.marbleInitialState[id] = nil
-      M.marbleDamageState[id] = nil
+      M.propQueueById[id] = nil
+      M.itemInitialState[id] = nil
+      M.itemDamageState[id] = nil
       local obj = be:getObjectByID(id)
       if obj then obj:delete() end
     end
-    table.remove(M.rockPileQueue, i)
+    table.remove(M.propQueue, i)
   end
 end
 
@@ -276,11 +434,12 @@ function M.cleanupJob(deleteTruck, stateIdle)
 
   M.debugDrawCache.bedData = nil
   M.debugDrawCache.nodePoints = {}
-  M.debugDrawCache.marblePieces = {}
+  M.debugDrawCache.itemPieces = {}
 
   M.clearProps()
 
   if deleteTruck and M.jobObjects.truckID then
+    M.cachedBedData[M.jobObjects.truckID] = nil
     local obj = be:getObjectByID(M.jobObjects.truckID)
     if obj then obj:delete() end
   end
@@ -297,25 +456,35 @@ function M.cleanupJob(deleteTruck, stateIdle)
   M.jobObjects.truckSpawnQueued = false
   M.jobObjects.truckSpawnPos = nil
   M.jobObjects.truckSpawnRot = nil
-  M.jobObjects.marbleDamage = {}
-  M.jobObjects.totalMarbleDamagePercent = 0
-  M.jobObjects.anyMarbleDamaged = false
+  M.jobObjects.itemDamage = {}
+  M.jobObjects.totalItemDamagePercent = 0
+  M.jobObjects.anyItemDamaged = false
   M.jobObjects.lastDeliveryDamagePercent = 0
   M.jobObjects.deliveryBlocksStatus = nil
-  M.marbleDamageState = {}
+  M.itemDamageState = {}
   
   M.truckStoppedTimer = 0
   M.truckLastPosition = nil
   M.truckResendCount = 0
+  M.lastPayloadMass = 0
+  M.payloadStationaryCount = 0
   
   return stateIdle
 end
 
 function M.spawnTruckForGroup(group, materialType, targetPos)
   if not group or not group.spawn or not group.spawn.pos then return nil end
+  
+  local matConfig = M.getMaterialConfig(materialType)
+  if not matConfig or not matConfig.deliveryVehicle then
+    print(string.format("[Loading] No delivery vehicle configured for material '%s'.", materialType))
+    return nil
+  end
+
+  local truckModel = matConfig.deliveryVehicle.model
+  local truckConfig = matConfig.deliveryVehicle.config
+
   local pos, rot = M.calculateSpawnTransformForLocation(vec3(group.spawn.pos), targetPos)
-  local truckModel = (materialType == "marble") and Config.Config.MarbleTruckModel or Config.Config.RockTruckModel
-  local truckConfig = (materialType == "marble") and Config.Config.MarbleTruckConfig or Config.Config.RockTruckConfig
   local truck = core_vehicles.spawnNewVehicle(truckModel, { pos = pos, rot = rot, config = truckConfig, autoEnterVehicle = false })
   if not truck then return nil end
   M.jobObjects.truckSpawnPos = pos
@@ -330,8 +499,6 @@ function M.driveTruckToPoint(truckId, targetPos)
   truck:queueLuaCommand("controller.mainController.setHandbrake(0)")
   core_jobsystem.create(function(job)
     job.sleep(0.5)
-    truck:queueLuaCommand('ai.setAggressionMode("rubberBand")')
-    truck:queueLuaCommand('ai.setAggression(0.8)')
     truck:queueLuaCommand('ai.setIgnoreCollision(true)')
     job.sleep(0.1)
     truck:queueLuaCommand('driver.returnTargetPosition(' .. serialize(targetPos) .. ')')
@@ -346,22 +513,63 @@ end
 
 function M.getTruckBedData(obj)
   if not obj then return nil end
+  local truckId = obj:getID()
+  if M.cachedBedData[truckId] then
+    local cached = M.cachedBedData[truckId]
+    local pos = obj:getPosition()
+    local dir = obj:getDirectionVector():normalized()
+    local up = obj:getDirectionVectorUp():normalized()
+    local right = dir:cross(up):normalized()
+    up = right:cross(dir):normalized()
+    
+    local offsetBack, offsetSide = cached.settings.offsetBack or 0, cached.settings.offsetSide or 0
+    local bedCenterHeight = (cached.settings.floorHeight or 0) + ((cached.settings.loadHeight or 0) / 2)
+    local bedCenter = pos - (dir * offsetBack) + (right * offsetSide) + (up * bedCenterHeight)
+    
+    cached.center = bedCenter
+    cached.axisX = right
+    cached.axisY = dir
+    cached.axisZ = up
+    return cached
+  end
+  
   local pos = obj:getPosition()
   local dir = obj:getDirectionVector():normalized()
   local up = obj:getDirectionVectorUp():normalized()
   local right = dir:cross(up):normalized()
   up = right:cross(dir):normalized()
+  
   local modelName = obj:getJBeamFilename()
-  local bedSettings = Config.Config.TruckBedSettings[modelName] or Config.Config.TruckBedSettings.dumptruck
+  
+  local bedSettings = Config.bedSettings and Config.bedSettings[modelName]
+  
+  if not bedSettings then
+    local materialType = M.jobObjects.materialType
+    local matConfig = M.getMaterialConfig(materialType)
+    if matConfig and matConfig.deliveryVehicle and matConfig.deliveryVehicle.bedSettings then
+      bedSettings = Config.bedSettings and Config.bedSettings[matConfig.deliveryVehicle.bedSettings]
+    end
+  end
+
+  if not bedSettings then
+    bedSettings = Config.bedSettings and (Config.bedSettings[next(Config.bedSettings)] or Config.bedSettings.dumptruck)
+  end
+
+  if not bedSettings then return nil end
+
   local offsetBack, offsetSide = bedSettings.offsetBack or 0, bedSettings.offsetSide or 0
   local bedCenterHeight = (bedSettings.floorHeight or 0) + ((bedSettings.loadHeight or 0) / 2)
   local bedCenter = pos - (dir * offsetBack) + (right * offsetSide) + (up * bedCenterHeight)
-  return {
+  
+  local bedData = {
     center = bedCenter, axisX = right, axisY = dir, axisZ = up,
     halfWidth = (bedSettings.width or 1) / 2, halfLength = (bedSettings.length or 1) / 2,
     halfHeight = (bedSettings.loadHeight or 1) / 2, floorHeight = bedSettings.floorHeight or 0,
     settings = bedSettings
   }
+  
+  M.cachedBedData[truckId] = bedData
+  return bedData
 end
 
 function M.isPointInTruckBed(point, bedData)
@@ -371,56 +579,30 @@ function M.isPointInTruckBed(point, bedData)
   return (math.abs(localX) <= bedData.halfWidth and math.abs(localY) <= bedData.halfLength and math.abs(localZ) <= bedData.halfHeight)
 end
 
-function M.calculateTruckPayload()
-  if #M.rockPileQueue == 0 or not M.jobObjects.truckID then return 0 end
-  local truck = be:getObjectByID(M.jobObjects.truckID)
-  if not truck then return 0 end
-  local bedData = M.getTruckBedData(truck)
-  if not bedData then return 0 end
-  M.debugDrawCache.bedData = bedData
-  local defaultMass = (M.jobObjects.materialType == "marble") and (Config.Config.MarbleMassDefault or Config.Config.RockMassPerPile) or Config.Config.RockMassPerPile
-  if Config.Config.ENABLE_DEBUG then M.debugDrawCache.nodePoints = {} end
-  local totalMass = 0
-  for _, rockEntry in ipairs(M.rockPileQueue) do
-    local obj = be:getObjectByID(rockEntry.id)
-    if obj then
-      local tf = obj:getTransform()
-      local axisX, axisY, axisZ = tf:getColumn(0), tf:getColumn(1), tf:getColumn(2)
-      local objPos, nodeCount = obj:getPosition(), obj:getNodeCount()
-      local step, nodesInside, nodesChecked = 10, 0, 0
-      for i = 0, nodeCount - 1, step do
-        nodesChecked = nodesChecked + 1
-        local worldPoint = objPos - (axisX * obj:getNodePosition(i).x) - (axisY * obj:getNodePosition(i).y) + (axisZ * obj:getNodePosition(i).z)
-        local isInside = M.isPointInTruckBed(worldPoint, bedData)
-        if isInside then nodesInside = nodesInside + 1 end
-        if Config.Config.ENABLE_DEBUG then table.insert(M.debugDrawCache.nodePoints, {pos = worldPoint, inside = isInside}) end
-      end
-      if nodesChecked > 0 then totalMass = totalMass + ((rockEntry.mass or defaultMass) * (nodesInside / nodesChecked)) end
-    end
+local function calculatePayloadForProps(propEntries, bedData, materialType, includeDamaged)
+  local matConfig = M.getMaterialConfig(materialType)
+  local defaultMass = 0
+  if matConfig and matConfig.unitType == "mass" then
+    defaultMass = matConfig.massPerProp or 41000
   end
-  return totalMass
-end
-
-function M.calculateUndamagedTruckPayload()
-  if #M.rockPileQueue == 0 or not M.jobObjects.truckID then return 0 end
-  local truck = be:getObjectByID(M.jobObjects.truckID)
-  if not truck then return 0 end
-  local bedData = M.getTruckBedData(truck)
-  if not bedData then return 0 end
-  local defaultMass = (M.jobObjects.materialType == "marble") and (Config.Config.MarbleMassDefault or Config.Config.RockMassPerPile) or Config.Config.RockMassPerPile
+  local nodeStep = Config.settings.payload and Config.settings.payload.nodeSamplingStep or 10
+  
   local totalMass = 0
-  for _, rockEntry in ipairs(M.rockPileQueue) do
-    if not (M.jobObjects.marbleDamage and M.jobObjects.marbleDamage[rockEntry.id] and M.jobObjects.marbleDamage[rockEntry.id].isDamaged) then
+  for _, rockEntry in ipairs(propEntries) do
+    if not includeDamaged and M.jobObjects.itemDamage and M.jobObjects.itemDamage[rockEntry.id] and M.jobObjects.itemDamage[rockEntry.id].isDamaged then
+      -- Skip damaged items
+    else
       local obj = be:getObjectByID(rockEntry.id)
       if obj then
         local tf = obj:getTransform()
         local axisX, axisY, axisZ = tf:getColumn(0), tf:getColumn(1), tf:getColumn(2)
         local objPos, nodeCount = obj:getPosition(), obj:getNodeCount()
-        local step, nodesInside, nodesChecked = 10, 0, 0
-        for i = 0, nodeCount - 1, step do
+        local nodesInside, nodesChecked = 0, 0
+        for i = 0, nodeCount - 1, nodeStep do
           nodesChecked = nodesChecked + 1
           local worldPoint = objPos - (axisX * obj:getNodePosition(i).x) - (axisY * obj:getNodePosition(i).y) + (axisZ * obj:getNodePosition(i).z)
           if M.isPointInTruckBed(worldPoint, bedData) then nodesInside = nodesInside + 1 end
+          if Config.settings.enableDebug then table.insert(M.debugDrawCache.nodePoints, {pos = worldPoint, inside = M.isPointInTruckBed(worldPoint, bedData)}) end
         end
         if nodesChecked > 0 then totalMass = totalMass + ((rockEntry.mass or defaultMass) * (nodesInside / nodesChecked)) end
       end
@@ -429,69 +611,173 @@ function M.calculateUndamagedTruckPayload()
   return totalMass
 end
 
-function M.captureMarbleInitialState(objId)
-  local obj = be:getObjectByID(objId)
-  if not obj then return end
-  M.marbleInitialState[objId] = { nodeCount = obj:getNodeCount(), captureTime = os.clock(), captured = true }
-  M.marbleDamageState[objId] = { isDamaged = false, lastUpdate = 0 }
+function M.calculateTruckPayload()
+  if #M.propQueue == 0 or not M.jobObjects.truckID then 
+    M.lastPayloadMass = 0
+    return 0 
+  end
+  local truck = be:getObjectByID(M.jobObjects.truckID)
+  if not truck then 
+    M.lastPayloadMass = 0
+    return 0 
+  end
+
+  local materialType = M.jobObjects.materialType
+  if not materialType then
+    print("[Loading] Error: No material type in jobObjects")
+    return 0
+  end
+  
+  local matConfig = M.getMaterialConfig(materialType)
+  if matConfig and matConfig.unitType == "item" then
+    M.lastPayloadMass = 0
+    return 0
+  end
+  
+  local currentMass = truck:getMass()
+  if M.lastPayloadMass > 0 and math.abs(currentMass - M.lastPayloadMass) < 10 then
+    M.payloadStationaryCount = M.payloadStationaryCount + 1
+    if M.payloadStationaryCount > 10 then
+      return M.lastPayloadMass
+    end
+  else
+    M.payloadStationaryCount = 0
+  end
+  
+  local bedData = M.getTruckBedData(truck)
+  if not bedData then 
+    M.lastPayloadMass = 0
+    return 0 
+  end
+  M.debugDrawCache.bedData = bedData
+  
+  if Config.settings.enableDebug then M.debugDrawCache.nodePoints = {} end
+  local totalMass = calculatePayloadForProps(M.propQueue, bedData, materialType, true)
+  M.lastPayloadMass = totalMass
+  return totalMass
 end
 
-function M.calculateMarbleDamage()
-  if M.jobObjects.materialType ~= "marble" or #M.rockPileQueue == 0 then
-    M.jobObjects.marbleDamage, M.jobObjects.totalMarbleDamagePercent, M.jobObjects.anyMarbleDamaged = {}, 0, false
-    M.debugDrawCache.marblePieces = {}
+function M.calculateUndamagedTruckPayload()
+  if #M.propQueue == 0 or not M.jobObjects.truckID then return 0 end
+  local truck = be:getObjectByID(M.jobObjects.truckID)
+  if not truck then return 0 end
+
+  local materialType = M.jobObjects.materialType
+  if not materialType then
+    print("[Loading] Error: No material type in jobObjects")
+    return 0
+  end
+  
+  local matConfig = M.getMaterialConfig(materialType)
+  if matConfig and matConfig.unitType == "item" then
+    return 0
+  end
+  
+  local bedData = M.getTruckBedData(truck)
+  if not bedData then return 0 end
+
+  return calculatePayloadForProps(M.propQueue, bedData, materialType, false)
+end
+
+function M.captureItemInitialState(objId)
+  local obj = be:getObjectByID(objId)
+  if not obj then return end
+  M.itemInitialState[objId] = { nodeCount = obj:getNodeCount(), captureTime = os.clock(), captured = true }
+  M.itemDamageState[objId] = { isDamaged = false, lastUpdate = 0 }
+end
+
+function M.calculateItemDamage()
+  local materialType = M.jobObjects.materialType
+  if not materialType then
+    print("[Loading] Error: No material type in jobObjects")
+    return 0
+  end
+  local matConfig = M.getMaterialConfig(materialType)
+  
+  if not matConfig or matConfig.unitType ~= "item" or #M.propQueue == 0 then
+    M.jobObjects.itemDamage, M.jobObjects.totalItemDamagePercent, M.jobObjects.anyItemDamaged = {}, 0, false
+    M.debugDrawCache.itemPieces = {}
     return
   end
+  
   local totalDamage, damagedCount, checkedCount = 0, 0, 0
-  if Config.Config.ENABLE_DEBUG then M.debugDrawCache.marblePieces = {} end
-  for _, rockEntry in ipairs(M.rockPileQueue) do
+  if Config.settings.enableDebug then M.debugDrawCache.itemPieces = {} end
+  
+  for _, rockEntry in ipairs(M.propQueue) do
     local obj = be:getObjectByID(rockEntry.id)
     if obj then
       checkedCount = checkedCount + 1
-      if not M.marbleInitialState[rockEntry.id] then M.captureMarbleInitialState(rockEntry.id) end
-      local initialState = M.marbleInitialState[rockEntry.id]
+      if not M.itemInitialState[rockEntry.id] then M.captureItemInitialState(rockEntry.id) end
+      
+      local initialState = M.itemInitialState[rockEntry.id]
       if initialState and (os.clock() - initialState.captureTime) < 2.0 then
-        M.jobObjects.marbleDamage[rockEntry.id] = { damage = 0, isDamaged = false, settling = true, brokenPieces = 0 }
+        M.jobObjects.itemDamage[rockEntry.id] = { damage = 0, isDamaged = false, settling = true, brokenPieces = 0 }
       else
-        local damageCache = M.marbleDamageState[rockEntry.id]
+        local damageCache = M.itemDamageState[rockEntry.id]
         if not damageCache or (os.clock() - damageCache.lastUpdate) > 0.5 then
-          obj:queueLuaCommand('obj:queueGameEngineLua("gameplay_loading.onMarbleDamageCallback(' .. rockEntry.id .. ', " .. tostring(beamstate and beamstate.getPartDamageData and (function() for k,v in pairs(beamstate.getPartDamageData()) do if not string.find(string.lower(k), "rails") and v.damage > 0 then return true end end return false end)()) .. ")")')
+          -- Dynamic damage detection from JSON
+          local ignoreList = matConfig.damage and matConfig.damage.ignore or {}
+          local threshold = matConfig.damage and matConfig.damage.damageThreshold or 0.01
+          local ignoreStr = ""
+          if #ignoreList > 0 then
+            local patterns = {}
+            for _, p in ipairs(ignoreList) do table.insert(patterns, string.format('"%s"', p:lower())) end
+            ignoreStr = "local patterns = {" .. table.concat(patterns, ",") .. "} "
+            ignoreStr = ignoreStr .. "for _, p in ipairs(patterns) do if string.find(string.lower(k), p) then shouldIgnore = true; break end end "
+          end
+          
+          local luaCmd = string.format('obj:queueGameEngineLua("gameplay_loading.onItemDamageCallback(' .. rockEntry.id .. ', " .. tostring(beamstate and beamstate.getPartDamageData and (function() for k,v in pairs(beamstate.getPartDamageData()) do local shouldIgnore = false; %s if not shouldIgnore and v.damage > %f then return true end end return false end)()) .. ")")', ignoreStr, threshold)
+          obj:queueLuaCommand(luaCmd)
         end
+        
         local isDamaged = damageCache and damageCache.isDamaged or false
+        local wasDamaged = M.jobObjects.itemDamage[rockEntry.id] and M.jobObjects.itemDamage[rockEntry.id].isDamaged or false
         local damagePercent = isDamaged and 1 or 0
-        M.jobObjects.marbleDamage[rockEntry.id] = { damage = damagePercent, isDamaged = isDamaged, brokenPieces = isDamaged and 1 or 0 }
-        if Config.Config.ENABLE_DEBUG then
-          table.insert(M.debugDrawCache.marblePieces, { center = obj:getPosition(), brokenCount = isDamaged and 1 or 0, totalGroups = 1, damagePercent = damagePercent * 100 })
+        M.jobObjects.itemDamage[rockEntry.id] = { damage = damagePercent, isDamaged = isDamaged, brokenPieces = isDamaged and 1 or 0 }
+        
+        if isDamaged and not wasDamaged then
+          local Contracts = gameplay_loading_contracts
+          local Zones = gameplay_loading_zones
+          if Contracts and Zones then
+            M.repairAndRespawnDamagedItem(rockEntry.id, Zones, Contracts)
+          end
         end
+        
+        if Config.settings.enableDebug then
+          table.insert(M.debugDrawCache.itemPieces, { center = obj:getPosition(), brokenCount = isDamaged and 1 or 0, totalGroups = 1, damagePercent = damagePercent * 100 })
+        end
+        
         totalDamage = totalDamage + damagePercent
         if isDamaged then damagedCount = damagedCount + 1 end
       end
     end
   end
+  
   if checkedCount > 0 then
-    M.jobObjects.totalMarbleDamagePercent = (totalDamage / checkedCount) * 100
-    M.jobObjects.anyMarbleDamaged = damagedCount > 0
+    M.jobObjects.totalItemDamagePercent = (totalDamage / checkedCount) * 100
+    M.jobObjects.anyItemDamaged = damagedCount > 0
   else
-    M.jobObjects.totalMarbleDamagePercent, M.jobObjects.anyMarbleDamaged = 0, false
+    M.jobObjects.totalItemDamagePercent, M.jobObjects.anyItemDamaged = 0, false
   end
 end
 
 function M.getLoadedPropIdsInTruck(minRatio)
-  minRatio = minRatio or 0.25
-  if #M.rockPileQueue == 0 or not M.jobObjects.truckID then return {} end
+  minRatio = minRatio or (Config.settings.payload and Config.settings.payload.minLoadRatio or 0.25)
+  if #M.propQueue == 0 or not M.jobObjects.truckID then return {} end
   local truck = be:getObjectByID(M.jobObjects.truckID)
   if not truck then return {} end
   local bedData = M.getTruckBedData(truck)
   if not bedData then return {} end
+  local nodeStep = Config.settings.payload and Config.settings.payload.nodeSamplingStep or 10
   local ids = {}
-  for _, rockEntry in ipairs(M.rockPileQueue) do
+  for _, rockEntry in ipairs(M.propQueue) do
     local obj = be:getObjectByID(rockEntry.id)
     if obj then
       local tf = obj:getTransform()
       local axisX, axisY, axisZ = tf:getColumn(0), tf:getColumn(1), tf:getColumn(2)
       local objPos, nodeCount = obj:getPosition(), obj:getNodeCount()
-      local step, nodesInside, nodesChecked = 10, 0, 0
-      for i = 0, nodeCount - 1, step do
+      local nodesInside, nodesChecked = 0, 0
+      for i = 0, nodeCount - 1, nodeStep do
         nodesChecked = nodesChecked + 1
         if M.isPointInTruckBed(objPos - (axisX * obj:getNodePosition(i).x) - (axisY * obj:getNodePosition(i).y) + (axisZ * obj:getNodePosition(i).z), bedData) then nodesInside = nodesInside + 1 end
       end
@@ -512,21 +798,22 @@ function M.getBlockLoadRatio(blockId)
   local tf = obj:getTransform()
   local axisX, axisY, axisZ = tf:getColumn(0), tf:getColumn(1), tf:getColumn(2)
   local objPos, nodeCount = obj:getPosition(), obj:getNodeCount()
-  local step, nodesInside, nodesChecked = 10, 0, 0
-  for i = 0, nodeCount - 1, step do
+  local nodeStep = Config.settings.payload and Config.settings.payload.nodeSamplingStep or 10
+  local nodesInside, nodesChecked = 0, 0
+  for i = 0, nodeCount - 1, nodeStep do
     nodesChecked = nodesChecked + 1
     if M.isPointInTruckBed(objPos - (axisX * obj:getNodePosition(i).x) - (axisY * obj:getNodePosition(i).y) + (axisZ * obj:getNodePosition(i).z), bedData) then nodesInside = nodesInside + 1 end
   end
   return nodesChecked > 0 and (nodesInside / nodesChecked) or 0
 end
 
-function M.getMarbleBlocksStatus()
+function M.getItemBlocksStatus()
   local blocks = {}
-  for i, rockEntry in ipairs(M.rockPileQueue) do
+  for i, rockEntry in ipairs(M.propQueue) do
     local loadRatio = M.getBlockLoadRatio(rockEntry.id)
     table.insert(blocks, {
       index = i, id = rockEntry.id, loadRatio = loadRatio, isLoaded = loadRatio >= 0.1,
-      isDamaged = M.jobObjects.marbleDamage and M.jobObjects.marbleDamage[rockEntry.id] and M.jobObjects.marbleDamage[rockEntry.id].isDamaged or false
+      isDamaged = M.jobObjects.itemDamage and M.jobObjects.itemDamage[rockEntry.id] and M.jobObjects.itemDamage[rockEntry.id].isDamaged or false
     })
   end
   return blocks
@@ -535,10 +822,25 @@ end
 function M.consumeZoneStock(group, propsDelivered, zonesMod, contractsMod)
   if not group then return end
   local cache = zonesMod.ensureGroupCache(group, contractsMod.getCurrentGameHour)
-  if not cache or not cache.stock then return end
-  local totalCost = propsDelivered * (Config.Config.Stock.StockCostPerProp[group.materialType or "rocks"] or 1)
-  cache.stock.current = math.max(0, cache.stock.current - totalCost)
-  cache.spawnedPropCount = math.max(0, (cache.spawnedPropCount or 0) - propsDelivered)
+  if not cache or not cache.materialStocks then return end
+  
+  local materialCounts = {}
+  for _, entry in ipairs(M.propQueue) do
+    if entry.materialType then
+      materialCounts[entry.materialType] = (materialCounts[entry.materialType] or 0) + 1
+    end
+  end
+  
+  for matKey, count in pairs(materialCounts) do
+    local stock = cache.materialStocks[matKey]
+    if stock then
+      local delivered = math.min(count, propsDelivered)
+      stock.current = math.max(0, stock.current - delivered)
+      if cache.spawnedPropCounts and cache.spawnedPropCounts[matKey] then
+        cache.spawnedPropCounts[matKey] = math.max(0, cache.spawnedPropCounts[matKey] - delivered)
+      end
+    end
+  end
 end
 
 function M.despawnPropIds(propIds, zonesMod, contractsMod)
@@ -546,13 +848,14 @@ function M.despawnPropIds(propIds, zonesMod, contractsMod)
   local idSet = {}
   for _, id in ipairs(propIds) do idSet[id] = true end
   local propsRemoved = 0
-  for i = #M.rockPileQueue, 1, -1 do
-    local id = M.rockPileQueue[i].id
+  for i = #M.propQueue, 1, -1 do
+    local id = M.propQueue[i].id
     if id and idSet[id] then
-      M.marbleInitialState[id], M.marbleDamageState[id] = nil, nil
+      M.propQueueById[id] = nil
+      M.itemInitialState[id], M.itemDamageState[id] = nil, nil
       local obj = be:getObjectByID(id)
       if obj then obj:delete() end
-      table.remove(M.rockPileQueue, i)
+      table.remove(M.propQueue, i)
       propsRemoved = propsRemoved + 1
     end
   end
@@ -588,29 +891,35 @@ function M.handleTruckMovement(dt, destPos, contractsMod)
   if not M.jobObjects.truckID or not destPos then return end
   local truck = be:getObjectByID(M.jobObjects.truckID)
   if not truck then
-    contractsMod.failContract(Config.Config.Contracts.CrashPenalty, "Truck destroyed! Contract failed.", "warning", M.cleanupJob)
+    contractsMod.failContract(Config.contracts.crashPenalty, "Truck destroyed! Contract failed.", "warning", M.cleanupJob)
     return
   end
+  
+  local arrivalDist = Config.settings.truck and Config.settings.truck.arrivalDistanceThreshold or 10.0
   local truckPos = truck:getPosition()
-  if (truckPos - destPos):length() < 10 then
+  if (truckPos - destPos):length() < arrivalDist then
     M.truckStoppedTimer, M.truckLastPosition, M.truckResendCount = 0, nil, 0
-    return true -- Signal arrived
+    return true
   end
+  
+  local speedThreshold = Config.settings.truck and Config.settings.truck.stopSpeedThreshold or 1.0
+  local stoppedThreshold = Config.settings.truck and Config.settings.truck.stoppedThreshold or 2.0
+  local maxResends = Config.settings.truck and Config.settings.truck.maxResends or 15
+  
   local speed = truck:getVelocity():length()
   local throttle = truck.electrics and truck.electrics.values and truck.electrics.values.throttle or 0
-  if (throttle > 0.1 and speed > truckStopSpeedThreshold) or speed > 3.0 then
+  if (throttle > 0.1 and speed > speedThreshold) or speed > 3.0 then
     M.truckStoppedTimer, M.truckLastPosition, M.truckResendCount = 0, truckPos, 0
   elseif M.truckLastPosition then
     if (truckPos - M.truckLastPosition):length() < 0.5 or (throttle <= 0.1 and speed < 2.0) then
       M.truckStoppedTimer = M.truckStoppedTimer + dt
-      if M.truckStoppedTimer >= truckStoppedThreshold then
-        if M.truckResendCount < truckMaxResends then
+      if M.truckStoppedTimer >= stoppedThreshold then
+        if M.truckResendCount < maxResends then
           M.truckResendCount = M.truckResendCount + 1
-          truck:queueLuaCommand('ai.setAggressionMode("rubberBand") ai.setAggression(0.9)')
           M.driveTruckToPoint(M.jobObjects.truckID, destPos)
           M.truckStoppedTimer, M.truckLastPosition = 0, truckPos
         else
-          contractsMod.failContract(Config.Config.Contracts.CrashPenalty, "Truck stuck! Contract failed.", "warning", M.cleanupJob)
+          contractsMod.failContract(Config.contracts.crashPenalty, "Truck stuck! Contract failed.", "warning", M.cleanupJob)
         end
       end
     else
@@ -631,7 +940,11 @@ function M.beginActiveContractTrip(contractsMod, zonesMod, uiMod)
   if uiMod then uiMod.uiHidden = false end
 
   M.jobObjects.activeGroup = contract.group
-  M.jobObjects.materialType = contract.group.materialType or contract.material or "rocks"
+  M.jobObjects.materialType = contract.group.materialType or contract.material
+  if not M.jobObjects.materialType then
+    print("[Loading] Error: Contract missing material type")
+    return false
+  end
   M.jobObjects.deliveryDestination = contract.destination
 
   M.markerCleared = false
@@ -642,7 +955,7 @@ function M.beginActiveContractTrip(contractsMod, zonesMod, uiMod)
 
   local targetPos = vec3(M.jobObjects.activeGroup.loading.center)
 
-  if #M.rockPileQueue == 0 then
+  if #M.propQueue == 0 then
     M.spawnJobMaterials(contractsMod, zonesMod)
   end
   M.jobObjects.deferredTruckTargetPos = targetPos
@@ -655,3 +968,4 @@ function M.beginActiveContractTrip(contractsMod, zonesMod, uiMod)
 end
 
 return M
+

@@ -1,0 +1,340 @@
+{
+    "materials": {
+        "marbleSmall": {
+            "name": "Marble Block",
+            "typeName": "Marble",
+            "model": "marble_block",
+            "config": "rails",
+            "maxSpawned": 4,
+            "units": "Blocks",
+            "unitType": "item",
+            "payPerUnit": 1000,
+            "contractRanges": {
+                "1": {
+                    "min": 1,
+                    "max": 3
+                },
+                "2": {
+                    "min": 2,
+                    "max": 4
+                },
+                "3": {
+                    "min": 4,
+                    "max": 6
+                },
+                "4": {
+                    "min": 6,
+                    "max": 9
+                }
+            },
+            "damage": {
+                "ignore": [
+                    "rails"
+                ],
+                "damageThreshold": 0.01
+            },
+            "deliveryVehicle": {
+                "model": "dumptruck",
+                "config": "quarry",
+                "bedSettings": "dumptruck"
+            }
+        },
+        "marbleBig": {
+            "name": "Large Marble Block",
+            "typeName": "Marble",
+            "model": "marble_block",
+            "config": "big_rails",
+            "maxSpawned": 2,
+            "units": "Blocks",
+            "unitType": "item",
+            "payPerUnit": 3500,
+            "contractRanges": {
+                "1": {
+                    "min": 1,
+                    "max": 1
+                },
+                "2": {
+                    "min": 1,
+                    "max": 2
+                },
+                "3": {
+                    "min": 2,
+                    "max": 4
+                },
+                "4": {
+                    "min": 4,
+                    "max": 6
+                }
+            },
+            "damage": {
+                "ignore": [
+                    "rails"
+                ],
+                "damageThreshold": 0.01
+            },
+            "deliveryVehicle": {
+                "model": "dumptruck",
+                "config": "quarry",
+                "bedSettings": "dumptruck"
+            }
+        },
+        "rocks": {
+            "name": "Rock Pile",
+            "typeName": "Rocks",
+            "model": "rock_pile",
+            "config": "default",
+            "maxSpawned": 1,
+            "units": "Tons",
+            "unitType": "mass",
+            "massPerProp": 41000,
+            "massPerUnit": 1000,
+            "payPerUnit": 100,
+            "deliveryVehicle": {
+                "model": "us_semi",
+                "config": "default",
+                "bedSettings": "us_semi"
+            },
+            "contractRanges": {
+                "2": {
+                    "bulk": [
+                        60,
+                        100
+                    ],
+                    "single": [
+                        20,
+                        35
+                    ]
+                },
+                "4": {
+                    "bulk": [
+                        200,
+                        350
+                    ],
+                    "single": [
+                        40,
+                        60
+                    ]
+                },
+                "1": {
+                    "bulk": [
+                        30,
+                        50
+                    ],
+                    "single": [
+                        15,
+                        25
+                    ]
+                },
+                "3": {
+                    "bulk": [
+                        100,
+                        180
+                    ],
+                    "single": [
+                        30,
+                        45
+                    ]
+                }
+            }
+        }
+    },
+    "bedSettings": {
+        "dumptruck": {
+            "offsetBack": 4.0,
+            "offsetSide": -0.75,
+            "length": 6.5,
+            "width": 4,
+            "floorHeight": 1.0,
+            "loadHeight": 3.5
+        },
+        "us_semi": {
+            "offsetBack": 3.0,
+            "offsetSide": -0.45,
+            "length": 6.0,
+            "width": 2.4,
+            "floorHeight": 0.3,
+            "loadHeight": 3.5
+        }
+    },
+    "contracts": {
+        "maxActiveContracts": 6,
+        "initialContracts": 4,
+        "refreshDays": 3,
+        "contractSpawnInterval": 2,
+        "contractExpirationTime": {
+            "1": 8,
+            "2": 6,
+            "3": 4,
+            "4": 3
+        },
+        "urgentContractChance": 0.15,
+        "urgentExpirationMult": 0.5,
+        "urgentPayBonus": 0.25,
+        "tiers": [
+            {
+                "name": "Easy",
+                "basePay": 300,
+                "payMultiplier": {
+                    "min": 0.8,
+                    "max": 1.2
+                },
+                "modifierChance": 0.2,
+                "specialChance": 0.02
+            },
+            {
+                "name": "Standard",
+                "basePay": 600,
+                "payMultiplier": {
+                    "min": 1,
+                    "max": 1.5
+                },
+                "modifierChance": 0.4,
+                "specialChance": 0.05
+            },
+            {
+                "name": "Hard",
+                "basePay": 900,
+                "payMultiplier": {
+                    "min": 1.25,
+                    "max": 1.75
+                },
+                "modifierChance": 0.6,
+                "specialChance": 0.08
+            },
+            {
+                "name": "Expert",
+                "basePay": 1200,
+                "payMultiplier": {
+                    "min": 1.5,
+                    "max": 2.0
+                },
+                "modifierChance": 0.8,
+                "specialChance": 0.12
+            }
+        ],
+        "modifiers": {
+            "time": [
+                {
+                    "name": "Rush Delivery",
+                    "deadline": 8,
+                    "bonus": 0.3,
+                    "weight": 2
+                },
+                {
+                    "name": "Scheduled",
+                    "deadline": 15,
+                    "bonus": 0.15,
+                    "weight": 3
+                },
+                {
+                    "name": "Relaxed",
+                    "deadline": 25,
+                    "bonus": 0.05,
+                    "weight": 2
+                }
+            ],
+            "challenge": [
+                {
+                    "name": "Fragile Client",
+                    "damageLimit": 15,
+                    "parkingPrecision": 3,
+                    "bonus": 0.25,
+                    "weight": 2
+                },
+                {
+                    "name": "Careful Haul",
+                    "damageLimit": 25,
+                    "parkingPrecision": 3,
+                    "bonus": 0.15,
+                    "weight": 3
+                },
+                {
+                    "name": "Precision Parking",
+                    "damageLimit": 25,
+                    "parkingPrecision": 3,
+                    "bonus": 0.2,
+                    "weight": 2
+                }
+            ]
+        },
+        "abandonPenalty": 500,
+        "crashPenalty": 1000,
+        "tierWeights": [
+            0.25,
+            0.35,
+            0.25,
+            0.15
+        ],
+        "bulkChance": 0.4,
+        "challengeModifierChanceMult": 0.6,
+        "specialBonusRange": [
+            0.5,
+            1.5
+        ],
+        "specialItemBonusRange": [
+            1,
+            2
+        ],
+        "specialMassBonusRanges": {
+            "low": [
+                10,
+                20
+            ],
+            "high": [
+                300,
+                500
+            ]
+        },
+        "specialMassBonusChance": 0.5,
+        "defaultExpirationHours": 6,
+        "defaultGameHour": 12,
+        "defaultContractRanges": {
+            "item": {
+                "min": 1,
+                "max": 2
+            },
+            "mass": [
+                15,
+                25
+            ]
+        }
+    },
+    "settings": {
+        "maxProps": 6,
+        "propDespawnTime": 120,
+        "targetLoad": 25000,
+        "stockRegenCheckInterval": 30,
+        "enableDebug": true,
+        "minDisplayDamagePercent": 5,
+        "contractUpdateInterval": 5,
+        "ui": {
+            "updateInterval": 0.5,
+            "animationSpeed": 8.0,
+            "pulseSpeed": 5.0,
+            "markerPulseSpeed": 2.5,
+            "markerRotationSpeed": 0.4,
+            "markerBeamSpeed": 30.0,
+            "markerMaxBeamHeight": 12.0,
+            "markerRingExpandSpeed": 1.5,
+            "zoneMarkerMaxBeamHeight": 15.0,
+            "zoneMarkerPulseSpeed": 2.5
+        },
+        "truck": {
+            "stoppedThreshold": 2.0,
+            "stopSpeedThreshold": 1.0,
+            "maxResends": 15,
+            "arrivalSpeedThreshold": 2.0,
+            "arrivalDistanceThreshold": 10.0
+        },
+        "payload": {
+            "updateInterval": 0.25,
+            "nodeSamplingStep": 10,
+            "minLoadRatio": 0.25
+        },
+        "zones": {
+            "checkInterval": 0.1,
+            "detectionRadius": 10.0,
+            "sitesLoadRetryInterval": 1.0
+        }
+    }
+}

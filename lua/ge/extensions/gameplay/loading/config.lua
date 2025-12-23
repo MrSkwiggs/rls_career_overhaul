@@ -1,129 +1,11 @@
 local M = {}
 
-M.Config = {
-  -- Trucks per material type
-  RockTruckModel   = "us_semi",
-  RockTruckConfig  = "tc83s_dump",
-  MarbleTruckModel  = "dumptruck",
-  MarbleTruckConfig = "quarry",
-
-  -- Material props
-  RockProp      = "rock_pile",
-  MarbleProp    = "marble_block",
-  MarbleConfigs = {
-    { config = "big_rails", mass = 38000, blockType = "big", displayName = "Large Block" },
-    { config = "rails", mass = 19000, blockType = "small", displayName = "Small Block" }
-  },
-  MarbleMassDefault = 8000,
-  
-  -- Block-based contract settings for marble
-  MarbleBlockRanges = {
-    -- Per tier: {bigMin, bigMax, smallMin, smallMax}
-    [1] = { big = {0, 1}, small = {1, 2} },   -- Tier 1: 0-1 big, 1-2 small
-    [2] = { big = {1, 2}, small = {1, 3} },   -- Tier 2: 1-2 big, 1-3 small
-    [3] = { big = {1, 3}, small = {2, 4} },   -- Tier 3: 1-3 big, 2-4 small
-    [4] = { big = {2, 4}, small = {3, 5} },   -- Tier 4: 2-4 big, 3-5 small
-  },
-
-  MaxRockPiles    = 2,
-  RockDespawnTime = 120,
-  TargetLoad      = 25000,
-  RockMassPerPile = 41000,
-
-  TruckBedSettings = {
-    dumptruck = {
-      offsetBack = 4.0,
-      offsetSide = -0.75,
-      length = 6.5,
-      width = 4,
-      floorHeight = 1.0,
-      loadHeight = 3.5
-    },
-    us_semi = {
-      offsetBack = 3.0,
-      offsetSide = -0.45,
-      length = 6.0,
-      width = 2.4,
-      floorHeight = 0.3,
-      loadHeight = 3.5
-    }
-  },
-
-  Economy = {
-    BasePay   = 300,
-    PayPerTon = 100,
-    BaseXP    = 25,
-    XPPerTon  = 5
-  },
-
-  Contracts = {
-    MaxActiveContracts = 6,
-    InitialContracts = 4,           -- Start with only 4 contracts
-    RefreshDays = 3,
-    
-    -- Dynamic contract generation
-    ContractSpawnInterval = 2,      -- In-game hours between new contracts
-    ContractExpirationTime = {      -- Hours until contract expires (by tier)
-      [1] = 8,   -- Tier 1: Easy contracts stay 8 hours
-      [2] = 6,   -- Tier 2: 6 hours
-      [3] = 4,   -- Tier 3: Hard contracts are more urgent
-      [4] = 3,   -- Tier 4: Expert contracts are rare opportunities
-    },
-    
-    -- Urgency system
-    UrgentContractChance = 0.15,    -- 15% chance a contract is "URGENT"
-    UrgentExpirationMult = 0.5,     -- Urgent contracts expire 50% faster
-    UrgentPayBonus = 0.25,          -- +25% pay for urgent contracts
-
-    Tiers = {
-      [1] = { name = "Easy",    tonnageRange = { single = {15, 25}, bulk = {30, 50} },   basePayRate = { min = 80,  max = 100 }, modifierChance = 0.2, specialChance = 0.02 },
-      [2] = { name = "Standard",tonnageRange = { single = {20, 35}, bulk = {60, 100} },  basePayRate = { min = 100, max = 130 }, modifierChance = 0.4, specialChance = 0.05 },
-      [3] = { name = "Hard",    tonnageRange = { single = {30, 45}, bulk = {100, 180} }, basePayRate = { min = 130, max = 170 }, modifierChance = 0.6, specialChance = 0.08 },
-      [4] = { name = "Expert",  tonnageRange = { single = {40, 60}, bulk = {200, 350} }, basePayRate = { min = 180, max = 250 }, modifierChance = 0.8, specialChance = 0.12 },
-    },
-
-    Modifiers = {
-      time = {
-        {name = "Rush Delivery", deadline = 8,  bonus = 0.30, weight = 2},
-        {name = "Scheduled",     deadline = 15, bonus = 0.15, weight = 3},
-        {name = "Relaxed",       deadline = 25, bonus = 0.05, weight = 2},
-      },
-      challenge = {
-        {name = "Fragile Client",     damageLimit = 15, parkingPrecision = 3, bonus = 0.25, weight = 2},
-        {name = "Careful Haul",       damageLimit = 25, parkingPrecision = 3, bonus = 0.15, weight = 3},
-        {name = "Precision Parking",  damageLimit = 25, parkingPrecision = 3, bonus = 0.20, weight = 2},
-      }
-    },
-
-    AbandonPenalty = 500,
-    CrashPenalty = 1000,
-  },
-
-  -- ============================================================================
-  -- ZONE STOCK SYSTEM CONFIG
-  -- ============================================================================
-  -- Each zone has limited stock that regenerates over time.
-  -- Material type is determined by zone tags in the sites JSON (add "marble" or "rocks" tag)
-  Stock = {
-    -- Default stock settings per zone (can be extended per-zone via customFields.values if needed)
-    DefaultMaxStock = 10,           -- Max units a zone can hold
-    DefaultRegenRate = 1,           -- Units regenerated per in-game hour
-    RegenCheckInterval = 30,        -- Seconds (real time) between regen checks
-    
-    -- Max props to spawn at once per material type (performance limit)
-    -- This prevents spawning too many physics objects at once
-    MaxSpawnedProps = {
-      marble = 2,   -- Max 2 marble blocks spawned at once (1 big + 1 small typically)
-      rocks = 2,    -- Max 2 rock piles spawned at once
-    },
-    
-    -- How much stock each prop type consumes when spawned
-    StockCostPerProp = {
-      marble = 1,   -- Each marble block costs 1 stock unit
-      rocks = 1,    -- Each rock pile costs 1 stock unit
-    },
-  },
-}
+M.materials = {}
+M.bedSettings = {}
+M.facilities = {}
+M.economy = {}
+M.contracts = {}
+M.settings = {}
 
 M.STATE_IDLE             = 0
 M.STATE_CONTRACT_SELECT  = 1
@@ -135,8 +17,149 @@ M.STATE_DELIVERING       = 6
 M.STATE_RETURN_TO_QUARRY = 7
 M.STATE_AT_QUARRY_DECIDE = 8
 
-M.ENABLE_DEBUG = true
-M.MARBLE_MIN_DISPLAY_DAMAGE = 5
-M.CONTRACT_UPDATE_INTERVAL = 5
+local function validateMaterial(materialKey, materialData)
+  local required = {"name", "model", "config", "unitType", "deliveryVehicle"}
+  local missing = {}
+  for _, field in ipairs(required) do
+    if not materialData[field] then
+      table.insert(missing, field)
+    end
+  end
+  if #missing > 0 then
+    print(string.format("[Loading] Warning: Material '%s' missing required fields: %s", materialKey, table.concat(missing, ", ")))
+    return false
+  end
+  if materialData.unitType == "mass" and not materialData.massPerProp then
+    print(string.format("[Loading] Warning: Mass material '%s' missing massPerProp", materialKey))
+  end
+  if materialData.unitType == "item" and not materialData.contractRanges then
+    print(string.format("[Loading] Warning: Item material '%s' missing contractRanges", materialKey))
+  end
+  if materialData.deliveryVehicle and not materialData.deliveryVehicle.model then
+    print(string.format("[Loading] Warning: Material '%s' deliveryVehicle missing model", materialKey))
+  end
+  return true
+end
+
+local function applyDefaults()
+  if not M.settings.ui then M.settings.ui = {} end
+  M.settings.ui.updateInterval = M.settings.ui.updateInterval or 0.5
+  M.settings.ui.animationSpeed = M.settings.ui.animationSpeed or 8.0
+  M.settings.ui.pulseSpeed = M.settings.ui.pulseSpeed or 5.0
+  M.settings.ui.markerPulseSpeed = M.settings.ui.markerPulseSpeed or 2.5
+  M.settings.ui.markerRotationSpeed = M.settings.ui.markerRotationSpeed or 0.4
+  M.settings.ui.markerBeamSpeed = M.settings.ui.markerBeamSpeed or 30.0
+  M.settings.ui.markerMaxBeamHeight = M.settings.ui.markerMaxBeamHeight or 12.0
+  M.settings.ui.markerRingExpandSpeed = M.settings.ui.markerRingExpandSpeed or 1.5
+  M.settings.ui.zoneMarkerMaxBeamHeight = M.settings.ui.zoneMarkerMaxBeamHeight or 15.0
+  M.settings.ui.zoneMarkerPulseSpeed = M.settings.ui.zoneMarkerPulseSpeed or 2.5
+
+  if not M.settings.truck then M.settings.truck = {} end
+  M.settings.truck.stoppedThreshold = M.settings.truck.stoppedThreshold or 2.0
+  M.settings.truck.stopSpeedThreshold = M.settings.truck.stopSpeedThreshold or 1.0
+  M.settings.truck.maxResends = M.settings.truck.maxResends or 15
+  M.settings.truck.arrivalSpeedThreshold = M.settings.truck.arrivalSpeedThreshold or 2.0
+  M.settings.truck.arrivalDistanceThreshold = M.settings.truck.arrivalDistanceThreshold or 10.0
+
+  if not M.settings.payload then M.settings.payload = {} end
+  M.settings.payload.updateInterval = M.settings.payload.updateInterval or 0.25
+  M.settings.payload.nodeSamplingStep = M.settings.payload.nodeSamplingStep or 10
+  M.settings.payload.minLoadRatio = M.settings.payload.minLoadRatio or 0.25
+
+  if not M.settings.zones then M.settings.zones = {} end
+  M.settings.zones.checkInterval = M.settings.zones.checkInterval or 0.1
+  M.settings.zones.detectionRadius = M.settings.zones.detectionRadius or 10.0
+  M.settings.zones.sitesLoadRetryInterval = M.settings.zones.sitesLoadRetryInterval or 1.0
+
+  M.settings.maxProps = M.settings.maxProps or 2
+  M.settings.targetLoad = M.settings.targetLoad or 25000
+  M.settings.stockRegenCheckInterval = M.settings.stockRegenCheckInterval or 30
+  M.settings.contractUpdateInterval = M.settings.contractUpdateInterval or 5
+end
+
+local function loadConfiguration()
+  M.materials = {}
+  M.bedSettings = {}
+  M.facilities = {}
+  M.contracts = {}
+  M.settings = {}
+
+  local globalPath = "/gameplay/loading/"
+  local globalFiles = FS:findFiles(globalPath, "*.loading.json", -1, true, false)
+  if globalFiles then
+    for _, filePath in ipairs(globalFiles) do
+      local data = jsonReadFile(filePath)
+      if data then
+        if data.materials then
+          for k, v in pairs(data.materials) do
+            if validateMaterial(k, v) then
+              M.materials[k] = v
+            end
+          end
+        end
+        if data.bedSettings then
+          for k, v in pairs(data.bedSettings) do
+            M.bedSettings[k] = v
+          end
+        end
+        if data.contracts then
+          for k, v in pairs(data.contracts) do
+            M.contracts[k] = v
+          end
+        end
+        if data.settings then
+          for k, v in pairs(data.settings) do
+            if type(v) == "table" then
+              if not M.settings[k] then M.settings[k] = {} end
+              for sk, sv in pairs(v) do
+                M.settings[k][sk] = sv
+              end
+            else
+              M.settings[k] = v
+            end
+          end
+        end
+      end
+    end
+  end
+
+  local levelName = getCurrentLevelIdentifier()
+  if levelName then
+    local facilityPath = "/levels/" .. levelName .. "/facilities/"
+    local facilityFiles = FS:findFiles(facilityPath, "*.loading.json", -1, true, false)
+    if facilityFiles then
+      for _, filePath in ipairs(facilityFiles) do
+        local data = jsonReadFile(filePath)
+        if data and data.facilities then
+          for facilityKey, facilityData in pairs(data.facilities) do
+            local id = facilityData.id or facilityKey
+            M.facilities[id] = facilityData
+          end
+        end
+      end
+    end
+  end
+
+  applyDefaults()
+  
+  if next(M.materials) == nil then
+    print("[Loading] Warning: No materials loaded! System may not function correctly.")
+  end
+end
+
+local function onExtensionLoaded()
+  loadConfiguration()
+end
+
+local function onWorldReadyState(state)
+  if state == 2 then
+    loadConfiguration()
+  end
+end
+
+M.onWorldReadyState = onWorldReadyState
+M.onExtensionLoaded = onExtensionLoaded
+M.loadConfiguration = loadConfiguration
+M.validateMaterial = validateMaterial
 
 return M

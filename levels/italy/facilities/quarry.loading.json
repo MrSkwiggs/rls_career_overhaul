@@ -1,63 +1,66 @@
 {
     "facilities": {
-        "id": "quarry",
-        "name": "Marble Quarry",
-        "description": "Cuts and extracts large marble blocks from exposed rock for processing into building and decorative materials.",
-        "associatedOrganization": null,
-        "preview": "facilities/loading/quarry.jpg",
-        "sites":{
-            "starter": {
-                "name": "Starting Zone",
-                "materials": {
-                    "marbleSmall": {
-                        "maxStock": 10,
-                        "regenRate": 1
-                    },
-                    "marbleBig": {
-                        "maxStock": 5,
-                        "regenRate": 1
+        "marbleQuarry": {
+            "name": "Marble Quarry",
+            "description": "Cuts and extracts large marble blocks from exposed rock for processing into building and decorative materials.",
+            "associatedOrganization": null,
+            "preview": "facilities/loading/quarry.jpg",
+            "payMultiplier": 1.0,
+            "sites": {
+                "starter": {
+                    "name": "Starting Zone",
+                    "materials": {
+                        "marbleSmall": {
+                            "maxStock": 10,
+                            "regenRate": 1
+                        },
+                        "marbleBig": {
+                            "maxStock": 5,
+                            "regenRate": 1
+                        }
+                    }
+                },
+                "Zone B": {
+                    "name": "Zone B",
+                    "materials": {
+                        "marbleSmall": {
+                            "maxStock": 10,
+                            "regenRate": 1
+                        },
+                        "marbleBig": {
+                            "maxStock": 5,
+                            "regenRate": 1
+                        }
+                    }
+                },
+                "Zone C": {
+                    "name": "Zone C",
+                    "materials": {
+                        "marbleSmall": {
+                            "maxStock": 10,
+                            "regenRate": 1
+                        },
+                        "marbleBig": {
+                            "maxStock": 5,
+                            "regenRate": 1
+                        }
+                    }
+                },
+                "Zone D": {
+                    "name": "Zone D",
+                    "materials": {
+                        "marbleSmall": {
+                            "maxStock": 10,
+                            "regenRate": 1
+                        },
+                        "marbleBig": {
+                            "maxStock": 5,
+                            "regenRate": 1
+                        }
                     }
                 }
             },
-            "Zone B": {
-                "name": "Zone B",
-                "materials": {
-                    "marbleSmall": {
-                        "maxStock": 10,
-                        "regenRate": 1
-                    },
-                    "marbleBig": {
-                        "maxStock": 5,
-                        "regenRate": 1
-                    }
-                }
-            },
-            "Zone C": {
-                "name": "Zone C",
-                "materials": {
-                    "marbleSmall": {
-                        "maxStock": 10,
-                        "regenRate": 1
-                    },
-                    "marbleBig": {
-                        "maxStock": 5,
-                        "regenRate": 1
-                    }
-                }
-            },
-            "Zone D": {
-                "name": "Zone D",
-                "materials": {
-                    "marbleSmall": {
-                        "maxStock": 10,
-                        "regenRate": 1
-                    },
-                    "marbleBig": {
-                        "maxStock": 5,
-                        "regenRate": 1
-                    }
-                }
-            }
+            "contracts": {}
         }
     }
 }

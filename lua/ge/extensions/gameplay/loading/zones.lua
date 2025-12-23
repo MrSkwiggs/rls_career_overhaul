@@ -1,7 +1,5 @@
 local M = {}
 
-local Config = gameplay_loading_config
-
 M.sitesData = nil
 M.sitesFilePath = nil
 M.availableGroups = {}
@@ -9,6 +7,7 @@ M.groupCache = {}
 M.stockRegenTimer = 0
 M.groupCachePrecomputeQueued = false
 M.sitesLoadTimer = 0
+M.materialZoneMap = {}
 
 local function findOffRoadCentroid(zone, minRoadDist, maxPoints)
   if not zone or not zone.aabb or zone.aabb.invalid then return nil end
@@ -50,29 +49,66 @@ local function findOffRoadCentroid(zone, minRoadDist, maxPoints)
   return centroid
 end
 
-function M.ensureGroupCache(group, getCurrentGameHour)
+local function ensureGroupCache(group, getCurrentGameHour)
   if not group or not group.secondaryTag then return nil end
   local key = tostring(group.secondaryTag)
   local cache = M.groupCache[key]
-  if not cache then
-    cache = {
-      stock = {
-        current = Config.Config.Stock.DefaultMaxStock,
-        max = Config.Config.Stock.DefaultMaxStock,
-        regenRate = Config.Config.Stock.DefaultRegenRate,
-        lastRegenCheck = getCurrentGameHour(),
-      },
-      spawnedPropCount = 0,
-    }
-    M.groupCache[key] = cache
-    print(string.format("[Loading] Initialized stock for zone '%s': %d/%d", 
-      key, cache.stock.current, cache.stock.max))
+  if cache then return cache end
+
+  -- Strict check: Find this site in the loaded facilities JSON
+  local siteConfig = nil
+  local facilities = extensions.gameplay_loading_config.facilities
+  if facilities then
+    for _, facility in pairs(facilities) do
+      if facility.sites and facility.sites[key] then
+        siteConfig = facility.sites[key]
+        break
+      end
+    end
   end
+
+  -- No JSON config = No stock logic for this zone
+  if not siteConfig then
+    print(string.format("[Loading] Zone '%s' has no JSON configuration; skipping stock system.", key))
+    return nil
+  end
+
+  local materials = siteConfig.materials or {}
+  
+  if not materials or next(materials) == nil then
+    print(string.format("[Loading] Zone '%s' has no material data in JSON; skipping stock system.", key))
+    return nil
+  end
+
+  local materialStocks = {}
+  for matKey, matData in pairs(materials) do
+    materialStocks[matKey] = {
+      current = matData.maxStock or 0,
+      max = matData.maxStock or 0,
+      regenRate = matData.regenRate or 0,
+      lastRegenCheck = getCurrentGameHour(),
+    }
+  end
+
+  cache = {
+    materialStocks = materialStocks,
+    spawnedPropCounts = {},
+    name = siteConfig.name or key,
+  }
+  M.groupCache[key] = cache
+  
+  local stockSummary = {}
+  for matKey, stock in pairs(materialStocks) do
+    table.insert(stockSummary, string.format("%s: %d/%d", matKey, stock.current, stock.max))
+  end
+  print(string.format("[Loading] Initialized stock for zone '%s' from JSON: %s", 
+    key, table.concat(stockSummary, ", ")))
+  
   return cache
 end
 
-function M.ensureGroupOffRoadCentroid(group, getCurrentGameHour)
-  local cache = M.ensureGroupCache(group, getCurrentGameHour)
+local function ensureGroupOffRoadCentroid(group, getCurrentGameHour)
+  local cache = ensureGroupCache(group, getCurrentGameHour)
   if not cache then return nil end
   if group and group.loading and not cache.offRoadCentroid then
     cache.offRoadCentroid = findOffRoadCentroid(group.loading, 5, 1000)
@@ -80,50 +116,59 @@ function M.ensureGroupOffRoadCentroid(group, getCurrentGameHour)
   return cache
 end
 
-function M.updateZoneStocks(dt, getCurrentGameHour)
+local function updateZoneStocks(dt, getCurrentGameHour)
+  local Config = extensions.gameplay_loading_config
   M.stockRegenTimer = M.stockRegenTimer + dt
-  if M.stockRegenTimer < Config.Config.Stock.RegenCheckInterval then return end
+  if M.stockRegenTimer < Config.settings.stockRegenCheckInterval then return end
   M.stockRegenTimer = 0
 
   local currentHour = getCurrentGameHour()
 
   for _, group in ipairs(M.availableGroups) do
     local cache = M.groupCache[tostring(group.secondaryTag)]
-    if cache and cache.stock then
-      local stock = cache.stock
-      local hoursPassed = currentHour - stock.lastRegenCheck
-      if hoursPassed < 0 then hoursPassed = hoursPassed + 24 end
-      
-      if hoursPassed >= 1 then
-        local regenAmount = math.floor(hoursPassed * stock.regenRate)
-        if regenAmount > 0 and stock.current < stock.max then
-          local oldStock = stock.current
-          stock.current = math.min(stock.max, stock.current + regenAmount)
-          stock.lastRegenCheck = currentHour
-          
-          if stock.current > oldStock then
-            print(string.format("[Loading] Zone '%s': Stock regenerated %d -> %d/%d", 
-              group.secondaryTag, oldStock, stock.current, stock.max))
+    if cache and cache.materialStocks then
+      for matKey, stock in pairs(cache.materialStocks) do
+        local hoursPassed = currentHour - stock.lastRegenCheck
+        if hoursPassed < 0 then hoursPassed = hoursPassed + 24 end
+        
+        if hoursPassed >= 1 then
+          local regenAmount = math.floor(hoursPassed * stock.regenRate)
+          if regenAmount > 0 and stock.current < stock.max then
+            local oldStock = stock.current
+            stock.current = math.min(stock.max, stock.current + regenAmount)
+            stock.lastRegenCheck = currentHour
+            
+            if stock.current > oldStock then
+              print(string.format("[Loading] Zone '%s' material '%s': Stock regenerated %d -> %d/%d", 
+                group.secondaryTag, matKey, oldStock, stock.current, stock.max))
+            end
+          else
+            stock.lastRegenCheck = currentHour
           end
-        else
-          stock.lastRegenCheck = currentHour
         end
       end
     end
   end
 end
 
-function M.getZoneStockInfo(group, getCurrentGameHour)
+local function getZoneStockInfo(group, getCurrentGameHour)
   if not group then return nil end
-  local cache = M.ensureGroupCache(group, getCurrentGameHour)
-  if not cache or not cache.stock then return nil end
+  local cache = ensureGroupCache(group, getCurrentGameHour)
+  if not cache or not cache.materialStocks then return nil end
+  
+  local totalCurrent = 0
+  local totalMax = 0
+  for _, stock in pairs(cache.materialStocks) do
+    totalCurrent = totalCurrent + stock.current
+    totalMax = totalMax + stock.max
+  end
   
   return {
-    current = cache.stock.current,
-    max = cache.stock.max,
-    regenRate = cache.stock.regenRate,
-    spawnedProps = cache.spawnedPropCount or 0,
-    materialType = group.materialType or "rocks"
+    current = totalCurrent,
+    max = totalMax,
+    materialStocks = cache.materialStocks,
+    spawnedProps = cache.spawnedPropCounts or {},
+    materials = group.materials or (group.materialType and {group.materialType} or {})
   }
 end
 
@@ -131,8 +176,12 @@ local function discoverGroups(sites)
   local groups = {}
   if not sites or not sites.sortedTags then return groups end
 
+  local Config = extensions.gameplay_loading_config
   local primary = { spawn = true, destination = true, loading = true }
-  local materialTags = { marble = true, rocks = true }
+  local materialTags = {}
+  if Config.materials then
+    for k, _ in pairs(Config.materials) do materialTags[k] = true end
+  end
 
   for _, secondaryTag in ipairs(sites.sortedTags) do
     if not primary[secondaryTag] and not materialTags[secondaryTag] then
@@ -159,26 +208,59 @@ local function discoverGroups(sites)
       end
 
       if sCount == 1 and dCount == 1 and zCount == 1 then
+        local materials = {}
         local materialType = nil
-        if loadingZone.customFields and loadingZone.customFields.tags then
-          for tag, _ in pairs(loadingZone.customFields.tags) do
-            if materialTags[tag] then
-              materialType = tag
+        
+        local facilities = Config.facilities
+        if facilities then
+          for _, facility in pairs(facilities) do
+            if facility.sites and facility.sites[secondaryTag] then
+              local siteConfig = facility.sites[secondaryTag]
+              local siteMaterials = siteConfig.materials or {}
+              for matKey, _ in pairs(siteMaterials) do
+                if Config.materials[matKey] then
+                  table.insert(materials, matKey)
+                  if not materialType then
+                    materialType = matKey
+                  end
+                end
+              end
               break
             end
           end
         end
         
-        table.insert(groups, {
-          secondaryTag = secondaryTag,
-          spawn = spawnLoc,
-          destination = destLoc,
-          loading = loadingZone,
-          materialType = materialType or "rocks"
-        })
+        if #materials == 0 and loadingZone.customFields and loadingZone.customFields.tags then
+          for tag, _ in pairs(loadingZone.customFields.tags) do
+            if materialTags[tag] then
+              table.insert(materials, tag)
+              if not materialType then
+                materialType = tag
+              end
+            end
+          end
+        end
         
-        print(string.format("[Loading] Discovered zone '%s' with material type: %s", 
-          secondaryTag, materialType or "rocks (default)"))
+        if #materials == 0 then
+          print(string.format("[Loading] Zone '%s' has no material configuration in JSON and no material tags; skipping.", secondaryTag))
+        else
+          table.insert(groups, {
+            secondaryTag = secondaryTag,
+            spawn = spawnLoc,
+            destination = destLoc,
+            loading = loadingZone,
+            materials = materials,
+            materialType = materialType
+          })
+          
+          local materialNames = {}
+          for _, matKey in ipairs(materials) do
+            local matConfig = Config.materials[matKey]
+            local matName = matConfig and matConfig.name or matKey
+            table.insert(materialNames, matName)
+          end
+          print(string.format("[Loading] Discovered zone '%s' with materials: %s", secondaryTag, table.concat(materialNames, ", ")))
+        end
       end
     end
   end
@@ -187,7 +269,71 @@ local function discoverGroups(sites)
   return groups
 end
 
-function M.loadQuarrySites(getCurrentGameHour)
+local function buildMaterialZoneMap()
+  M.materialZoneMap = {}
+  for _, g in ipairs(M.availableGroups) do
+    if g.materials then
+      for _, matKey in ipairs(g.materials) do
+        if not M.materialZoneMap[matKey] then
+          M.materialZoneMap[matKey] = {}
+        end
+        table.insert(M.materialZoneMap[matKey], g)
+      end
+    elseif g.materialType then
+      if not M.materialZoneMap[g.materialType] then
+        M.materialZoneMap[g.materialType] = {}
+      end
+      table.insert(M.materialZoneMap[g.materialType], g)
+    end
+  end
+end
+
+local function getZonesByMaterial(materialType)
+  if M.materialZoneMap[materialType] then
+    return M.materialZoneMap[materialType]
+  end
+  local zones = {}
+  for _, g in ipairs(M.availableGroups) do
+    if g.materials then
+      for _, matKey in ipairs(g.materials) do
+        if matKey == materialType then
+          table.insert(zones, g)
+          break
+        end
+      end
+    elseif g.materialType == materialType then
+      table.insert(zones, g)
+    end
+  end
+  M.materialZoneMap[materialType] = zones
+  return zones
+end
+
+local function getZonesByTypeName(typeName)
+  local zones = {}
+  local Config = extensions.gameplay_loading_config
+  if not Config or not Config.materials then return zones end
+  
+  for _, g in ipairs(M.availableGroups) do
+    if g.materials then
+      for _, matKey in ipairs(g.materials) do
+        local matConfig = Config.materials[matKey]
+        if matConfig and matConfig.typeName == typeName then
+          table.insert(zones, g)
+          break
+        end
+      end
+    elseif g.materialType then
+      local matConfig = Config.materials[g.materialType]
+      if matConfig and matConfig.typeName == typeName then
+        table.insert(zones, g)
+      end
+    end
+  end
+  return zones
+end
+
+local function loadQuarrySites(getCurrentGameHour)
   local lvl = getCurrentLevelIdentifier()
   if not lvl then return end
 
@@ -213,6 +359,8 @@ function M.loadQuarrySites(getCurrentGameHour)
   M.sitesFilePath = fp
   M.availableGroups = discoverGroups(M.sitesData)
   
+  buildMaterialZoneMap()
+  
   print("[Loading] Sites loaded. Checking loading zones:")
   if M.sitesData.tagsToZones and M.sitesData.tagsToZones.loading then
     for i, zone in ipairs(M.sitesData.tagsToZones.loading) do
@@ -232,14 +380,14 @@ function M.loadQuarrySites(getCurrentGameHour)
     M.groupCachePrecomputeQueued = true
     core_jobsystem.create(function(job)
       for _, g in ipairs(M.availableGroups) do
-        M.ensureGroupOffRoadCentroid(g, getCurrentGameHour)
+        ensureGroupOffRoadCentroid(g, getCurrentGameHour)
         job.sleep(0.01)
       end
     end)
   end
 end
 
-function M.isPlayerInAnyLoadingZone(playerPos)
+local function isPlayerInAnyLoadingZone(playerPos)
   for _, g in ipairs(M.availableGroups) do
     if g.loading and g.loading.containsPoint2D and g.loading:containsPoint2D(playerPos) then
       return true
@@ -248,7 +396,7 @@ function M.isPlayerInAnyLoadingZone(playerPos)
   return false
 end
 
-function M.getPlayerCurrentZone(playerPos)
+local function getPlayerCurrentZone(playerPos)
   for _, g in ipairs(M.availableGroups) do
     if g.loading and g.loading.containsPoint2D and g.loading:containsPoint2D(playerPos) then
       return g
@@ -257,77 +405,47 @@ function M.getPlayerCurrentZone(playerPos)
   return nil
 end
 
-function M.isStarterZone(group)
-  if not group or not group.secondaryTag then return false end
-  return string.lower(tostring(group.secondaryTag)) == "starter"
-end
-
-function M.getStarterZone()
-  for _, g in ipairs(M.availableGroups) do
-    if M.isStarterZone(g) then
-      return g
-    end
-  end
-  return nil
-end
-
-function M.getStarterZoneFromSites()
-  if not M.sitesData or not M.sitesData.tagsToZones or not M.sitesData.tagsToZones.loading then
-    return nil
-  end
-  for _, zone in ipairs(M.sitesData.tagsToZones.loading) do
-    local hasStarter = zone.customFields and zone.customFields.tags and zone.customFields.tags["starter"]
-    if hasStarter then
-      return zone
-    end
-  end
-  return nil
-end
-
-function M.getZonesByMaterial(materialType)
-  local zones = {}
-  for _, g in ipairs(M.availableGroups) do
-    if not M.isStarterZone(g) and g.materialType == materialType then
-      table.insert(zones, g)
-    end
-  end
-  return zones
-end
-
-local starterZoneDebugTimer = 0
-function M.isPlayerInStarterZone(playerPos)
-  local currentZone = M.getPlayerCurrentZone(playerPos)
-  if currentZone and M.isStarterZone(currentZone) then
-    return true
-  end
-  
-  if M.sitesData and M.sitesData.tagsToZones and M.sitesData.tagsToZones.loading then
-    local loadingZones = M.sitesData.tagsToZones.loading
-    for _, zone in ipairs(loadingZones) do
-      local hasStarter = zone.customFields and zone.customFields.tags and zone.customFields.tags["starter"]
-      if hasStarter then
-        if zone.containsPoint2D then
-          local isInZone = zone:containsPoint2D(playerPos)
-          if isInZone then
-            return true
-          end
-        end
+local function getAllZonesStockInfo(getCurrentGameHour)
+  local Config = extensions.gameplay_loading_config
+  local zonesStock = {}
+  for _, group in ipairs(M.availableGroups) do
+    local cache = ensureGroupCache(group, getCurrentGameHour)
+    if cache and cache.materialStocks then
+      local zoneStock = {
+        zoneName = group.secondaryTag or "Unknown",
+        materials = {}
+      }
+      for matKey, stock in pairs(cache.materialStocks) do
+        local matConfig = Config and Config.materials and Config.materials[matKey]
+        table.insert(zoneStock.materials, {
+          materialKey = matKey,
+          materialName = matConfig and matConfig.name or matKey,
+          typeName = matConfig and matConfig.typeName or nil,
+          current = stock.current,
+          max = stock.max,
+          regenRate = stock.regenRate
+        })
       end
-    end
-  else
-    starterZoneDebugTimer = starterZoneDebugTimer + 0.016
-    if starterZoneDebugTimer > 5 then
-      starterZoneDebugTimer = 0
-      print(string.format("[Loading] isPlayerInStarterZone debug: sitesData=%s, tagsToZones=%s, loading=%s",
-        tostring(M.sitesData ~= nil),
-        tostring(M.sitesData and M.sitesData.tagsToZones ~= nil),
-        tostring(M.sitesData and M.sitesData.tagsToZones and M.sitesData.tagsToZones.loading ~= nil)))
+      table.insert(zonesStock, zoneStock)
     end
   end
-  
-  return false
+  return zonesStock
 end
 
 M.findOffRoadCentroid = findOffRoadCentroid
+M.ensureGroupCache = ensureGroupCache
+M.ensureGroupOffRoadCentroid = ensureGroupOffRoadCentroid
+M.updateZoneStocks = updateZoneStocks
+M.getZoneStockInfo = getZoneStockInfo
+M.getAllZonesStockInfo = getAllZonesStockInfo
+M.loadQuarrySites = loadQuarrySites
+M.isPlayerInAnyLoadingZone = isPlayerInAnyLoadingZone
+M.getPlayerCurrentZone = getPlayerCurrentZone
+M.getZonesByMaterial = getZonesByMaterial
+M.getZonesByTypeName = getZonesByTypeName
 
 return M
+
+
+
+

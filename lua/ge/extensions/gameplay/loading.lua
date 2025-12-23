@@ -5,12 +5,12 @@ local Config, Contracts, Zones, Manager, UI
 
 local currentState
 local compatibleZones = {}
-local anyZoneCheckTimer = 0
-local cachedInAnyLoadingZone = false
 local uiUpdateTimer = 0
-local UI_UPDATE_INTERVAL = 0.5
-local CONTRACT_UPDATE_INTERVAL = 5
 local contractUpdateTimer = 0
+
+local cachedPlayerVeh = nil
+local cachedPlayerPos = nil
+local playerCacheTimer = 0
 
 local loadedExtensions = {}
 
@@ -51,7 +51,7 @@ end
 -- Coordination callbacks for modules
 local uiCallbacks = {
   onAcceptContract = function(index)
-    local contract, zones = Contracts.acceptContract(index, Zones.getZonesByMaterial)
+    local contract, zones = Contracts.acceptContract(index, Zones.getZonesByTypeName)
     if contract then
       currentState = Config.STATE_CHOOSING_ZONE
       compatibleZones = zones
@@ -63,6 +63,32 @@ local uiCallbacks = {
     UI.requestQuarryState(currentState, nil, Contracts, Manager, Zones)
   end,
   getCompatibleZones = function() return compatibleZones end,
+  onSelectZone = function(zoneIndex)
+    if zoneIndex and zoneIndex > 0 and zoneIndex <= #compatibleZones then
+      local selectedZone = compatibleZones[zoneIndex]
+      local contract = Contracts.ContractSystem.activeContract
+      if contract and selectedZone then
+        contract.group = selectedZone
+        contract.loadingZoneTag = selectedZone.secondaryTag
+        Manager.jobObjects.activeGroup = selectedZone
+        Manager.jobObjects.materialType = selectedZone.materialType or contract.material or "rocks"
+        if #Manager.propQueue == 0 then Manager.spawnJobMaterials(Contracts, Zones) end
+        local targetPos = vec3(selectedZone.loading.center)
+        Manager.jobObjects.loadingZoneTargetPos = targetPos
+        local truckId = Manager.spawnTruckForGroup(selectedZone, Manager.jobObjects.materialType, targetPos)
+        if truckId then
+          Manager.jobObjects.truckID = truckId
+          Manager.driveTruckToPoint(truckId, targetPos)
+          currentState = Config.STATE_TRUCK_ARRIVING
+          Manager.markerCleared = false
+          Manager.truckStoppedInLoading = false
+          compatibleZones = {}
+          Engine.Audio.playOnce('AudioGui', 'event:>UI>Countdown>3_seconds')
+          ui_message(string.format("Loading from %s. Truck arriving...", selectedZone.secondaryTag), 5, "success")
+        end
+      end
+    end
+  end,
   onAbandonContract = function()
     Contracts.abandonContract(function(deleteTruck) 
       Manager.cleanupJob(deleteTruck, Config.STATE_IDLE) 
@@ -73,9 +99,11 @@ local uiCallbacks = {
   onSendTruck = function()
     local destPos = Manager.jobObjects.deliveryDestination and vec3(Manager.jobObjects.deliveryDestination.pos) or (Manager.jobObjects.activeGroup and Manager.jobObjects.activeGroup.destination and vec3(Manager.jobObjects.activeGroup.destination.pos))
     if Manager.jobObjects.truckID and destPos then
-      if Manager.jobObjects.materialType == "marble" then
-        Manager.jobObjects.lastDeliveredMass = Manager.calculateUndamagedTruckPayload()
-        Manager.jobObjects.deliveryBlocksStatus = Manager.getMarbleBlocksStatus()
+      local materialType = Manager.jobObjects.materialType
+      local matConfig = materialType and Config.materials and Config.materials[materialType]
+      if matConfig and matConfig.unitType == "item" then
+        Manager.jobObjects.lastDeliveredMass = 0
+        Manager.jobObjects.deliveryBlocksStatus = Manager.getItemBlocksStatus()
       else
         Manager.jobObjects.lastDeliveredMass = Manager.jobObjects.currentLoadMass or 0
       end
@@ -98,12 +126,29 @@ local uiCallbacks = {
   end
 }
 
+local function updatePlayerCache(dt)
+  playerCacheTimer = playerCacheTimer + dt
+  local checkInterval = Config.settings.zones and Config.settings.zones.checkInterval or 0.1
+  if playerCacheTimer >= checkInterval then
+    cachedPlayerVeh = be:getPlayerVehicle(0)
+    if cachedPlayerVeh then
+      cachedPlayerPos = cachedPlayerVeh:getPosition()
+    else
+      cachedPlayerPos = nil
+    end
+    playerCacheTimer = 0
+  end
+end
+
 local function onUpdate(dt)
   if not Config or not Contracts or not Zones or not Manager or not UI then return end
 
+  updatePlayerCache(dt)
+
   if not Zones.sitesData then
     Zones.sitesLoadTimer = Zones.sitesLoadTimer + dt
-    if Zones.sitesLoadTimer >= 1.0 then
+    local retryInterval = Config.settings.zones and Config.settings.zones.sitesLoadRetryInterval or 1.0
+    if Zones.sitesLoadTimer >= retryInterval then
       Zones.loadQuarrySites(Contracts.getCurrentGameHour)
       Zones.sitesLoadTimer = 0
     end
@@ -115,26 +160,26 @@ local function onUpdate(dt)
   
   if currentState == Config.STATE_LOADING then
     Manager.payloadUpdateTimer = Manager.payloadUpdateTimer + dt
-    if Manager.payloadUpdateTimer >= 0.25 then
+    local payloadInterval = Config.settings.payload and Config.settings.payload.updateInterval or 0.25
+    if Manager.payloadUpdateTimer >= payloadInterval then
       Manager.jobObjects.currentLoadMass = Manager.calculateTruckPayload()
-      Manager.calculateMarbleDamage()
+      Manager.calculateItemDamage()
       Manager.payloadUpdateTimer = 0
     end
-    if Config.ENABLE_DEBUG then Manager.drawDebugVisualization() end
   end
 
   UI.drawUI(dt, currentState, Config, nil, Contracts, Manager, Zones, uiCallbacks)
 
-  local playerVeh = be:getPlayerVehicle(0)
-  if not playerVeh then return end
-  local playerPos = playerVeh:getPosition()
+  if not cachedPlayerVeh or not cachedPlayerPos then return end
+  local playerVeh = cachedPlayerVeh
+  local playerPos = cachedPlayerPos
 
   if currentState == Config.STATE_IDLE then
     if Manager.jobOfferSuppressed and not Zones.isPlayerInAnyLoadingZone(playerPos) then
       Manager.jobOfferSuppressed = false
     end
     if not Manager.jobOfferSuppressed and playerVeh:getJBeamFilename() == "wl40" then
-      if Zones.isPlayerInStarterZone(playerPos) then
+      if Zones.isPlayerInAnyLoadingZone(playerPos) then
         if Contracts.shouldRefreshContracts() or not Contracts.ContractSystem.initialContractsGenerated then
           Contracts.generateInitialContracts(Zones.availableGroups)
         end
@@ -145,7 +190,8 @@ local function onUpdate(dt)
 
   elseif currentState == Config.STATE_CONTRACT_SELECT then
     contractUpdateTimer = contractUpdateTimer + dt
-    if contractUpdateTimer >= CONTRACT_UPDATE_INTERVAL then
+    local interval = Config.settings.contractUpdateInterval or 5
+    if contractUpdateTimer >= interval then
       contractUpdateTimer = 0
       Contracts.checkContractExpiration()
       Contracts.trySpawnNewContract(Zones.availableGroups)
@@ -153,41 +199,12 @@ local function onUpdate(dt)
     if #Contracts.ContractSystem.availableContracts == 0 and #Zones.availableGroups > 0 then
       Contracts.generateInitialContracts(Zones.availableGroups)
     end
-    if not Zones.isPlayerInStarterZone(playerPos) then
+    if not Zones.isPlayerInAnyLoadingZone(playerPos) then
       currentState = Config.STATE_IDLE
     end
 
   elseif currentState == Config.STATE_CHOOSING_ZONE then
-    local enteredZone = nil
-    for _, zone in ipairs(compatibleZones) do
-      if zone.loading and zone.loading.containsPoint2D and zone.loading:containsPoint2D(playerPos) then
-        enteredZone = zone
-        break
-      end
-    end
-    if enteredZone then
-      local contract = Contracts.ContractSystem.activeContract
-      if contract then
-        contract.group = enteredZone
-        contract.loadingZoneTag = enteredZone.secondaryTag
-        Manager.jobObjects.activeGroup = enteredZone
-        Manager.jobObjects.materialType = enteredZone.materialType or contract.material or "rocks"
-        if #Manager.rockPileQueue == 0 then Manager.spawnJobMaterials(Contracts, Zones) end
-        local targetPos = vec3(enteredZone.loading.center)
-        Manager.jobObjects.loadingZoneTargetPos = targetPos
-        local truckId = Manager.spawnTruckForGroup(enteredZone, Manager.jobObjects.materialType, targetPos)
-        if truckId then
-          Manager.jobObjects.truckID = truckId
-          Manager.driveTruckToPoint(truckId, targetPos)
-          currentState = Config.STATE_TRUCK_ARRIVING
-          Manager.markerCleared = false
-          Manager.truckStoppedInLoading = false
-          compatibleZones = {}
-          Engine.Audio.playOnce('AudioGui', 'event:>UI>Countdown>3_seconds')
-          ui_message(string.format("Loading from %s. Truck arriving...", enteredZone.secondaryTag), 5, "success")
-        end
-      end
-    end
+    -- Zone selection is now handled via UI buttons, no automatic selection on zone entry
 
   elseif currentState == Config.STATE_DRIVING_TO_SITE then
     local group = Manager.jobObjects.activeGroup
@@ -213,11 +230,12 @@ local function onUpdate(dt)
     if Manager.jobObjects.truckID and not Manager.truckStoppedInLoading then
       local truck = be:getObjectByID(Manager.jobObjects.truckID)
       if not truck then
-        Contracts.failContract(Config.Config.Contracts.CrashPenalty, "Truck lost! Contract failed.", "error", Manager.cleanupJob)
+        Contracts.failContract(Config.contracts.crashPenalty, "Truck lost! Contract failed.", "error", Manager.cleanupJob)
         currentState = Config.STATE_IDLE
         return
       end
-      if group.loading:containsPoint2D(truck:getPosition()) and truck:getVelocity():length() < 2.0 then
+      local arrivalSpeed = Config.settings.truck and Config.settings.truck.arrivalSpeedThreshold or 2.0
+      if group.loading:containsPoint2D(truck:getPosition()) and truck:getVelocity():length() < arrivalSpeed then
         Manager.stopTruck(Manager.jobObjects.truckID)
         Manager.truckStoppedInLoading = true
         ui_message("Truck arrived at loading zone.", 5, "success")
@@ -239,20 +257,32 @@ local function onUpdate(dt)
       Contracts.ContractSystem.contractProgress.deliveredTons = (Contracts.ContractSystem.contractProgress.deliveredTons or 0) + tons
       Contracts.ContractSystem.contractProgress.deliveryCount = (Contracts.ContractSystem.contractProgress.deliveryCount or 0) + 1
       
-      if contract.material == "marble" and Manager.jobObjects.deliveredPropIds then
+      local contractTypeName = contract.materialTypeName
+      if contractTypeName and contract.unitType == "item" and Manager.jobObjects.deliveredPropIds then
         local deliveredSet = {}
         for _, id in ipairs(Manager.jobObjects.deliveredPropIds) do deliveredSet[id] = true end
-        for _, entry in ipairs(Manager.rockPileQueue) do
-          if entry.id and deliveredSet[entry.id] and entry.materialType == "marble" then
-            if entry.blockType == "big_rails" then Contracts.ContractSystem.contractProgress.deliveredBlocks.big = Contracts.ContractSystem.contractProgress.deliveredBlocks.big + 1
-            elseif entry.blockType == "rails" then Contracts.ContractSystem.contractProgress.deliveredBlocks.small = Contracts.ContractSystem.contractProgress.deliveredBlocks.small + 1 end
+        
+        if not Contracts.ContractSystem.contractProgress.deliveredItemsByMaterial then
+          Contracts.ContractSystem.contractProgress.deliveredItemsByMaterial = {}
+        end
+        
+        for _, entry in ipairs(Manager.propQueue) do
+          if entry.id and deliveredSet[entry.id] and entry.materialType then
+            local entryMatConfig = Config.materials and Config.materials[entry.materialType]
+            if entryMatConfig and entryMatConfig.typeName == contractTypeName then
+              Contracts.ContractSystem.contractProgress.deliveredItems = (Contracts.ContractSystem.contractProgress.deliveredItems or 0) + 1
+              Contracts.ContractSystem.contractProgress.deliveredItemsByMaterial[entry.materialType] = (Contracts.ContractSystem.contractProgress.deliveredItemsByMaterial[entry.materialType] or 0) + 1
+            end
           end
         end
-        Contracts.ContractSystem.contractProgress.deliveredBlocks.total = Contracts.ContractSystem.contractProgress.deliveredBlocks.big + Contracts.ContractSystem.contractProgress.deliveredBlocks.small
       end
 
       Manager.despawnPropIds(Manager.jobObjects.deliveredPropIds, Zones, Contracts)
       Manager.jobObjects.deliveredPropIds, Manager.jobObjects.currentLoadMass, Manager.jobObjects.lastDeliveredMass = nil, 0, 0
+      
+      if Manager.jobObjects.activeGroup and contract.unitType == "item" then
+        Manager.spawnJobMaterials(Contracts, Zones)
+      end
       
       if Contracts.checkContractCompletion() then
         if Manager.jobObjects.truckID then
@@ -260,20 +290,18 @@ local function onUpdate(dt)
           if obj then obj:delete() end
         end
         Manager.jobObjects.truckID, Manager.truckStoppedInLoading, Manager.markerCleared = nil, false, true
-        if Zones.isPlayerInStarterZone(playerPos) then
+        if Zones.isPlayerInAnyLoadingZone(playerPos) then
           currentState = Config.STATE_AT_QUARRY_DECIDE
           Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
           ui_message("Contract complete! Ready to finalize.", 6, "success")
         else
           currentState = Config.STATE_RETURN_TO_QUARRY
-          local starterZone = Zones.getStarterZoneFromSites()
-          if starterZone and starterZone.center then core_groundMarkers.setPath(vec3(starterZone.center)) end
           Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-          ui_message("Contract complete! Return to the starter zone to finalize and get paid.", 6, "success")
+          ui_message("Contract complete! Return to any loading zone to finalize and get paid.", 6, "success")
         end
       else
         Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-        if #Manager.rockPileQueue == 0 then Manager.spawnJobMaterials(Contracts, Zones) end
+        if #Manager.propQueue == 0 then Manager.spawnJobMaterials(Contracts, Zones) end
         local group = Manager.jobObjects.activeGroup
         local truck = be:getObjectByID(Manager.jobObjects.truckID)
         if truck then
@@ -289,25 +317,23 @@ local function onUpdate(dt)
     end
 
   elseif currentState == Config.STATE_RETURN_TO_QUARRY then
-    if Zones.isPlayerInStarterZone(playerPos) then
+    if Zones.isPlayerInAnyLoadingZone(playerPos) then
       currentState = Config.STATE_AT_QUARRY_DECIDE
       core_groundMarkers.setPath(nil)
       Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_Unlock_01')
-      ui_message("At starter zone! Finalize your contract.", 5, "info")
+      ui_message("At loading zone! Finalize your contract.", 5, "info")
     end
 
   elseif currentState == Config.STATE_AT_QUARRY_DECIDE then
-    if not Zones.isPlayerInStarterZone(playerPos) then
+    if not Zones.isPlayerInAnyLoadingZone(playerPos) then
       currentState = Config.STATE_RETURN_TO_QUARRY
-      local starterZone = Zones.getStarterZoneFromSites()
-      if starterZone and starterZone.center then core_groundMarkers.setPath(vec3(starterZone.center)) end
     end
   end
 
-  -- Phone UI updates
+  local uiUpdateInterval = Config.settings.ui and Config.settings.ui.updateInterval or 0.5
   if currentState ~= Config.STATE_IDLE then
     uiUpdateTimer = uiUpdateTimer + dt
-    if uiUpdateTimer >= UI_UPDATE_INTERVAL then
+    if uiUpdateTimer >= uiUpdateInterval then
       uiUpdateTimer = 0
       UI.requestQuarryState(currentState, nil, Contracts, Manager, Zones)
     end
@@ -330,6 +356,9 @@ local function onClientStartMission()
   Contracts.ContractSystem.initialContractsGenerated = false
   currentState = Config.STATE_IDLE
   compatibleZones = {}
+  cachedPlayerVeh = nil
+  cachedPlayerPos = nil
+  playerCacheTimer = 0
 end
 
 local function onClientEndMission()
@@ -340,9 +369,9 @@ local function onClientEndMission()
   currentState = Config.STATE_IDLE
 end
 
-local function onMarbleDamageCallback(objId, isDamaged)
+local function onItemDamageCallback(objId, isDamaged)
   if Manager then
-    Manager.marbleDamageState[objId] = { isDamaged = isDamaged, lastUpdate = os.clock() }
+    Manager.itemDamageState[objId] = { isDamaged = isDamaged, lastUpdate = os.clock() }
   end
 end
 
@@ -352,7 +381,7 @@ M.onExtensionLoaded = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded
 M.onClientStartMission = onClientStartMission
 M.onClientEndMission = onClientEndMission
-M.onMarbleDamageCallback = onMarbleDamageCallback
+M.onItemDamageCallback = onItemDamageCallback
 
 M.requestQuarryState = function() if UI then UI.requestQuarryState(currentState, nil, Contracts, Manager, Zones) end end
 M.acceptContractFromUI = function(index) uiCallbacks.onAcceptContract(index) end
@@ -364,3 +393,4 @@ M.loadMoreFromUI = function() uiCallbacks.onLoadMore() end
 M.resumeTruck = function() if Manager then Manager.resumeTruck() end end
 
 return M
+
