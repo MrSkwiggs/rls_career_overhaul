@@ -50,3 +50,8 @@
 {"name":"port","class":"SimGroup","persistentId":"71defa49-7edf-4b14-a3ad-18d1a3467cb8","__parent":"MissionGroup"}
 {"name":"dirt_decalroads","class":"SimGroup","persistentId":"7e994dc8-9f15-4a28-8820-c93649f2b790","__parent":"MissionGroup"}
 {"name":"quarry","class":"SimGroup","persistentId":"73e07564-bcdc-4d9f-87ce-a4bcba3fb33c","__parent":"MissionGroup"}
+{"name":"drift Loop Remaster","class":"SimGroup","__parent":"MissionGroup"}
+{"name":"driftLoopPitlaneWall","class":"SimGroup","__parent":"MissionGroup"}
+{"class":"TSStatic","__parent":"MissionGroup","position":[497.37738,-50.9091225,146.19458],"isRenderEnabled":false,"scale":[0.783984423,0.812408447,1],"shapeName":"/levels/west_coast_usa/art/shapes/objects/sandbarrel.dae","useInstanceRenderData":true}
+{"class":"TSStatic","__parent":"MissionGroup","position":[513.453308,-80.2240219,146.507034],"isRenderEnabled":false,"shapeName":"/art/shapes/garage_and_dealership/Clutter/italy_traf_sign_noentry.dae","useInstanceRenderData":true}
+{"class":"TSStatic","__parent":"MissionGroup","position":[512.860107,-81.2949982,146.365479],"isRenderEnabled":false,"scale":[0.783984423,0.812408447,1],"shapeName":"/levels/west_coast_usa/art/shapes/objects/sandbarrel.dae","useInstanceRenderData":true}
