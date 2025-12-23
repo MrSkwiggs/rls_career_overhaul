@@ -1,6 +1,3 @@
--- ================================
--- Bus Work 
--- ================================
 local M = {}
 M.dependencies = {'gameplay_sites_sitesManager', 'freeroam_facilities'}
 
@@ -23,35 +20,27 @@ local routeInitialized        = false
 local totalStopsCompleted     = 0
 local routeCooldown           = 0
 local currentVehiclePartsTree = nil
-
--- Stop-settle state
 local stopMonitorActive       = false
 local stopSettleTimer         = 0
 local stopSettleDelay         = 2.5
-
--- Trigger state (for radius check replacement)
 local currentTriggerName      = nil
--- Rough ride / tips
 local roughRide               = 0
 local lastVelocity            = nil
 local tipTotal                = 0
-
--- Boarding / deboarding tallies (per stop)
 local trueBoarding            = 0
 local trueDeboarding          = 0
-
--- Coroutine for realistic animation
 local boardingCoroutine       = nil
-
--- Final stop name for current route
 local currentFinalStopName    = nil
+local stopIndexWhereBoardingStarted = nil  -- Track which stop boarding was initiated at
 
 -- Current route info (to prevent route changes mid-route)
 local currentRouteName        = nil
-local currentRouteKey         = nil
 
 -- Store display names by trigger name for reliable access
 local stopDisplayNames        = {}
+
+-- Waypoint tracking (waypoints are navigation points, not stops)
+local routeItems             = {}  -- Combined array: {type="stop"/"waypoint", trigger=trigger/waypointName=name, position=vec3, stopIndex=stopIndex}
 
 -- Bus stop perimeter markers
 local stopMarkerObjects       = {}
@@ -140,35 +129,29 @@ function M.returnPartsTree(partsTree)
   local seats = calculateSeatingCapacity()
   M.vehicleCapacity = math.max(1, seats)
 
-  local capOverride = nil
+  local capOverrides = {
+    ["schoolbus_interior_b"] = 24,
+    ["schoolbus_interior_c"] = 40,
+    ["prisonbus"] = 20,
+    ["citybus_seats"] = 44,
+    ["citybus"] = 44,
+    ["dm_vanbus"] = 24,
+    ["vanbus"] = 24,
+    ["van_bus"] = 24,
+    ["vanbusframe"] = 24
+  }
 
+  local capOverride = nil
   local function checkPartTreeForKeywords(tree)
     for k, v in pairs(tree) do
       if type(k) == "string" then
         local name = string.lower(k)
-        -- MD & Prison variants
-        if name:find("schoolbus_interior_b") then
-          capOverride = 24
-          print("[bus] MD60 short bus detected via partsTree → capacity 24")
-          return
-        elseif name:find("schoolbus_interior_c") then
-          capOverride = 40
-          print("[bus] MD70 long bus detected via partsTree → capacity 40")
-          return
-        elseif name:find("prisonbus") then
-          capOverride = 20
-          print("[bus] Prison bus variant detected via partsTree → capacity 20")
-          return
-        -- City bus
-        elseif name:find("citybus_seats") or name:find("citybus") then
-          capOverride = 44
-          print("[bus] City bus detected via partsTree → capacity 44")
-          return
-        -- VanBus variants 
-        elseif name:find("dm_vanbus") or name:find("vanbus") or name:find("van_bus") or name:find("vanbusframe") then
-          capOverride = 24
-          print("[bus] VanBus detected via partsTree → capacity 24")
-          return
+        for pattern, capacity in pairs(capOverrides) do
+          if name:find(pattern) then
+            capOverride = capacity
+            print(string.format("[bus] %s detected via partsTree → capacity %d", pattern, capacity))
+            return
+          end
         end
       end
       if type(v) == "table" then checkPartTreeForKeywords(v) end
@@ -218,69 +201,40 @@ local function createCornerMarker(markerName)
   return marker
 end
 
+-- Helper to safely delete an object
+local function safeDelete(obj, objName)
+  if not obj then return end
+  local success, err = pcall(function()
+    local name = obj:getName()
+    if name then
+      local found = scenetree.findObject(name)
+      if found then
+        if editor and editor.onRemoveSceneTreeObjects then
+          editor.onRemoveSceneTreeObjects({found:getId()})
+        end
+        found:delete()
+      end
+    end
+    if obj:isValid() then
+      if editor and editor.onRemoveSceneTreeObjects then
+        editor.onRemoveSceneTreeObjects({obj:getId()})
+      end
+      obj:delete()
+    end
+  end)
+  if not success and objName then
+    print(string.format("[bus] Error deleting %s: %s", objName, tostring(err)))
+  end
+end
+
 -- Clear all stop markers
 local function clearStopMarkers()
-  -- Delete all marker objects by name (more reliable than object references)
-  for i, obj in ipairs(stopMarkerObjects) do
-    if obj then
-      local success, err = pcall(function()
-        local objName = obj:getName()
-        if objName then
-          -- Always try to find by name and delete, regardless of isValid()
-          local foundObj = scenetree.findObject(objName)
-          if foundObj then
-            if editor and editor.onRemoveSceneTreeObjects then
-              editor.onRemoveSceneTreeObjects({foundObj:getId()})
-            end
-            foundObj:delete()
-            print(string.format("[bus] Deleted marker: %s", objName))
-          end
-        end
-        -- Also try direct deletion if object reference is still valid
-        if obj:isValid() then
-          if editor and editor.onRemoveSceneTreeObjects then
-            editor.onRemoveSceneTreeObjects({obj:getId()})
-          end
-          obj:delete()
-        end
-      end)
-      if not success then
-        print(string.format("[bus] Error deleting marker %d: %s", i, tostring(err)))
-      end
-    end
+  for _, obj in ipairs(stopMarkerObjects) do
+    safeDelete(obj, "marker")
   end
   table.clear(stopMarkerObjects)
-  
-  -- Delete perimeter trigger by name
-  if stopPerimeterTrigger then
-    local success, err = pcall(function()
-      local triggerName = stopPerimeterTrigger:getName()
-      if triggerName then
-        -- Always try to find by name and delete
-        local foundTrigger = scenetree.findObject(triggerName)
-        if foundTrigger then
-          if editor and editor.onRemoveSceneTreeObjects then
-            editor.onRemoveSceneTreeObjects({foundTrigger:getId()})
-          end
-          foundTrigger:delete()
-          print(string.format("[bus] Deleted perimeter trigger: %s", triggerName))
-        end
-      end
-      -- Also try direct deletion if object reference is still valid
-      if stopPerimeterTrigger:isValid() then
-        if editor and editor.onRemoveSceneTreeObjects then
-          editor.onRemoveSceneTreeObjects({stopPerimeterTrigger:getId()})
-        end
-        stopPerimeterTrigger:delete()
-      end
-    end)
-    if not success then
-      print(string.format("[bus] Error deleting perimeter trigger: %s", tostring(err)))
-    end
-    stopPerimeterTrigger = nil
-  end
-  
-  print("[bus] Cleared all stop markers")
+  safeDelete(stopPerimeterTrigger, "perimeter trigger")
+  stopPerimeterTrigger = nil
 end
 
 -- Create perimeter markers and box trigger for a stop
@@ -363,16 +317,17 @@ local function createStopPerimeter(trigger)
     trigger:getName() or "unknown", stopLength, stopWidth, stopHeight))
 end
 
--- Show markers for current stop
-local function showCurrentStopMarkers()
-  if not currentStopIndex or not stopTriggers or not stopTriggers[currentStopIndex] then 
+-- Show markers for current stop (or specified stop index)
+local function showCurrentStopMarkers(stopIndex)
+  local targetStopIndex = stopIndex or currentStopIndex
+  if not targetStopIndex or not stopTriggers or not stopTriggers[targetStopIndex] then 
     print("[bus] showCurrentStopMarkers: Invalid stop index or triggers")
     return 
   end
   
-  local currentTrigger = stopTriggers[currentStopIndex]
+  local currentTrigger = stopTriggers[targetStopIndex]
   local triggerName = currentTrigger:getName() or "unknown"
-  print(string.format("[bus] Showing markers for stop %d: %s", currentStopIndex, triggerName))
+  print(string.format("[bus] Showing markers for stop %d: %s", targetStopIndex, triggerName))
   createStopPerimeter(currentTrigger)
 end
 
@@ -393,31 +348,170 @@ local function getNextTrigger()
   return stopTriggers[currentStopIndex]
 end
 
-local function showNextStopMarker()
-  local trigger = getNextTrigger()
-  if not trigger then return end
-  core_groundMarkers.resetAll()
+-- Helper to get position from route item
+local function getItemPosition(item)
+  return item.position or (item.trigger and item.trigger:getPosition())
+end
+
+-- Build path through waypoints to target stop
+local function buildPathToStop(targetStopIndex, startPos, fromStopIndex)
+  local pathPoints = {startPos}
+  if not routeItems or #routeItems == 0 then
+    return pathPoints
+  end
   
-  -- Use route planner with setupPathMulti for better routing (like base game bus)
+  -- Find the stop we're currently at (not the target)
+  -- Use fromStopIndex if provided, otherwise use currentStopIndex
+  local currentStopIdx = fromStopIndex or currentStopIndex or 1
+  local nextStopIndex = targetStopIndex
+  if nextStopIndex > #stopTriggers then
+    nextStopIndex = 1
+  end
+  
+  -- Find current stop's position in routeItems
+  local currentItemIndex = nil
+  print(string.format("[bus] DEBUG: Searching for current stop with stopIndex=%d in routeItems (total items: %d)", currentStopIdx, #routeItems))
+  for i, item in ipairs(routeItems) do
+    local itemName = item.waypointName or (item.trigger and item.trigger:getName()) or "unknown"
+    print(string.format("[bus] DEBUG: routeItems[%d]: type=%s, stopIndex=%s, name=%s", i, item.type, tostring(item.stopIndex), itemName))
+    if item.type == "stop" and item.stopIndex == currentStopIdx then
+      currentItemIndex = i
+      print(string.format("[bus] DEBUG: Found current stop at routeItems index %d", i))
+      break
+    end
+  end
+  
+  -- If we couldn't find current stop, try to find target stop directly
+  if not currentItemIndex then
+    for i, item in ipairs(routeItems) do
+      if item.type == "stop" and item.stopIndex == nextStopIndex then
+        -- Found target stop, add it and return
+        local pos = getItemPosition(item)
+        if pos then table.insert(pathPoints, pos) end
+        return pathPoints
+      end
+    end
+    return pathPoints -- No stops found
+  end
+  
+  -- Add waypoints and target stop (iterate forward from current stop)
+  local waypointCount = 0
+  if currentItemIndex then
+    print(string.format("[bus] DEBUG: Starting search from routeItems index %d, looking for waypoints before stop %d", currentItemIndex + 1, nextStopIndex))
+    for i = currentItemIndex + 1, #routeItems do
+      local item = routeItems[i]
+      local itemName = item.waypointName or (item.trigger and item.trigger:getName()) or "unknown"
+      print(string.format("[bus] DEBUG: Checking routeItems[%d]: type=%s, stopIndex=%s, name=%s", i, item.type, tostring(item.stopIndex), itemName))
+      if item.type == "waypoint" then
+        local pos = getItemPosition(item)
+        if pos then 
+          table.insert(pathPoints, pos)
+          waypointCount = waypointCount + 1
+          print(string.format("[bus] Added waypoint '%s' to path", item.waypointName or "unknown"))
+        else
+          print(string.format("[bus] DEBUG: Waypoint '%s' has no position!", item.waypointName or "unknown"))
+        end
+      elseif item.type == "stop" then
+        print(string.format("[bus] DEBUG: Found stop with stopIndex=%d, looking for stopIndex=%d", item.stopIndex, nextStopIndex))
+        if item.stopIndex == nextStopIndex then
+          local pos = getItemPosition(item)
+          if pos then table.insert(pathPoints, pos) end
+          print(string.format("[bus] Path built: %d waypoints between stop %d and stop %d", waypointCount, currentStopIdx, nextStopIndex))
+          break
+        elseif item.stopIndex > nextStopIndex then
+          print(string.format("[bus] DEBUG: Stop index %d > target %d, breaking search", item.stopIndex, nextStopIndex))
+          break
+        end
+      end
+    end
+  else
+    print(string.format("[bus] DEBUG: Could not find current stop (stopIndex=%d) in routeItems!", currentStopIdx))
+  end
+  
+  if waypointCount == 0 then
+    print(string.format("[bus] No waypoints found between stop %d and stop %d", currentStopIdx, nextStopIndex))
+  end
+  
+  return pathPoints
+end
+
+local function showNextStopMarker(targetStopIndex)
+  -- If targetStopIndex is provided, use it; otherwise calculate from currentStopIndex
+  local nextStopIndex = targetStopIndex
+  if not nextStopIndex then
+    nextStopIndex = (currentStopIndex or 1) + 1
+    if nextStopIndex > #stopTriggers then
+      nextStopIndex = 1
+    end
+  end
+  
+  local trigger = stopTriggers[nextStopIndex]
+  if not trigger then return end
+  
+  core_groundMarkers.resetAll()
   local vehicle = be:getPlayerVehicle(0)
+  local targetPos = trigger:getPosition()
+  
   if vehicle then
-    local routePlanner = require('gameplay/route/route')()
-    local currentPos = vehicle:getPosition()
-    local targetPos = trigger:getPosition()
-    routePlanner:setupPathMulti({currentPos, targetPos})
-    -- Apply the route to ground markers
-    if routePlanner.path and #routePlanner.path > 0 then
-      core_groundMarkers.setPath(targetPos)
+    -- Use the route planner that core_groundMarkers uses (shared instance)
+    local routePlanner = core_groundMarkers.routePlanner or require('gameplay/route/route')()
+    if not core_groundMarkers.routePlanner then
+      core_groundMarkers.routePlanner = routePlanner
+    end
+    
+    -- Calculate the stop we're coming FROM (target - 1, or wrap around)
+    local fromStopIndex = nextStopIndex - 1
+    if fromStopIndex < 1 then
+      fromStopIndex = #stopTriggers
+    end
+    
+    local pathPoints = buildPathToStop(nextStopIndex, vehicle:getPosition(), fromStopIndex)
+    
+    if #pathPoints == 1 then
+      pathPoints[2] = targetPos
+    end
+    
+    -- Set up multi-waypoint path on the shared route planner
+    routePlanner:setupPathMulti(pathPoints)
+    print(string.format("[bus] Route planner set up with %d path points (including waypoints)", #pathPoints))
+    
+    -- If we have waypoints, we need to activate ground markers but preserve the route planner's path
+    if #pathPoints > 2 then
+      print(string.format("[bus] Multi-waypoint path detected (%d waypoints)", #pathPoints - 2))
+      -- Wait for route planner to calculate, then manually activate ground markers WITHOUT setPath
+      if core_jobsystem and core_jobsystem.create then
+        core_jobsystem.create(function(job)
+          job.sleep(0.2)
+          if routePlanner.path and #routePlanner.path > 0 then
+            print(string.format("[bus] Route planner calculated path with %d segments", #routePlanner.path))
+            -- Manually initialize ground markers without calling setPath
+            if not core_groundMarkers.endWP then
+              core_groundMarkers.endWP = {}
+            end
+            -- Set the target position to the final destination
+            core_groundMarkers.endWP[1] = targetPos
+            -- DON'T call setPath - it calculates a direct path that conflicts with waypoints
+            -- The route planner's path should be used automatically by ground markers
+            -- Ensure route planner is properly set up
+            routePlanner:setupPathMulti(pathPoints)
+          else
+            print("[bus] Warning: Route planner path not ready, falling back to direct path")
+            core_groundMarkers.setPath(targetPos)
+          end
+        end)
+      end
     else
-      -- Fallback to direct path if route planner fails
+      -- No waypoints, use direct path
+      print("[bus] No waypoints found, using direct path")
       core_groundMarkers.setPath(targetPos)
     end
   else
-    core_groundMarkers.setPath(trigger:getPosition())
+    -- No vehicle, fallback to direct path
+    core_groundMarkers.setPath(targetPos)
   end
   
-  -- Show perimeter markers for next stop
-  showCurrentStopMarkers()
+  -- Show markers for the NEXT stop (not current)
+  showCurrentStopMarkers(nextStopIndex)
 end
 
 -- ================================
@@ -429,7 +523,6 @@ local function endRoute(reason, payout)
   routeInitialized = false
   currentFinalStopName = nil
   currentRouteName = nil
-  currentRouteKey = nil
   core_groundMarkers.resetAll()
   -- Clear any markers
   hideStopMarkers()
@@ -504,7 +597,6 @@ local function loadRoutesFromJSON()
     return nil 
   end
 
-  -- Map-specific route file paths (with leading slash for jsonReadFile)
   local routeFiles = {
     ["west_coast_usa"] = "/levels/west_coast_usa/wcuBusRoutes.json",
     ["jungle_rock_island"] = "/levels/jungle_rock_island/jriBusRoutes.json"
@@ -543,30 +635,24 @@ local function updateBusControllerDisplay()
   -- Build route data for the bus controller 
   local routeData = {routeId = "RLS", routeID = "RLS", direction = "", tasklist = {}}
 
-  -- Get current stop's display name for the direction field
+  -- Get current stop's display name
   local currentStop = stopTriggers[currentStopIndex]
-  local currentTriggerName = currentStop:getName() or ""
-  local currentStopName = stopDisplayNames[currentTriggerName] or currentTriggerName or string.format("Stop %02d", currentStopIndex)
-  routeData.direction = currentStopName
+  local triggerName = currentStop:getName() or ""
+  routeData.direction = stopDisplayNames[triggerName] or triggerName or string.format("Stop %02d", currentStopIndex)
 
-  -- Build tasklist starting from the current stop (include it so controller shows correct progression)
-  for i = currentStopIndex, #stopTriggers do
+  -- Build tasklist (only stops, waypoints excluded)
+  local function addStopToList(i)
     local t = stopTriggers[i]
-    local triggerName = t:getName() or ""
-    local label
-    -- Use display name from our stored table if available, otherwise use "Stop 01", "Stop 02", etc.
-    label = stopDisplayNames[triggerName] or string.format("Stop %02d", i)
-    table.insert(routeData.tasklist, {triggerName, label})
+    local name = t:getName() or ""
+    local label = stopDisplayNames[name] or string.format("Stop %02d", i)
+    table.insert(routeData.tasklist, {name, label})
   end
-  -- If we're not at the end, add remaining stops from the beginning (for loop routes)
-  if currentStopIndex > 1 then
-    for i = 1, currentStopIndex - 1 do
-      local t = stopTriggers[i]
-      local triggerName = t:getName() or ""
-      local label
-      label = stopDisplayNames[triggerName] or string.format("Stop %02d", i)
-      table.insert(routeData.tasklist, {triggerName, label})
-    end
+  
+  for i = currentStopIndex, #stopTriggers do
+    addStopToList(i)
+  end
+  for i = 1, currentStopIndex - 1 do
+    addStopToList(i)
   end
 
   -- Send to vehicle controller (for bus_setLineInfo)
@@ -590,6 +676,7 @@ local function initRoute()
     return
   end
 
+
   -- Check if bus multiplier is 0 (if economy adjuster supports it)
   if career_economyAdjuster then
     local busMultiplier = career_economyAdjuster.getSectionMultiplier("bus") or 1.0
@@ -600,6 +687,7 @@ local function initRoute()
     end
   end
 
+
   stopTriggers = {}
   
   -- Load routes from JSON
@@ -609,28 +697,47 @@ local function initRoute()
     return
   end
 
-  -- Collect all bus stop triggers on the map
+  -- Collect all bus stop triggers and waypoints on the map
   local allTriggers = {}
-  local triggerObjects = scenetree.findClassObjects("BeamNGTrigger") or {}
-  for _, obj in ipairs(triggerObjects) do
-    local trigger = obj
-    if type(obj) == "string" then trigger = scenetree.findObject(obj) end
-    if trigger then
-      local name = trigger:getName() or ""
-      if name:match("_bs_%d+$") or name:match("_bs_%d+_b$") then
-        allTriggers[name] = trigger
-      end
+  local allWaypoints = {}
+  local function processObject(obj)
+    local objRef = type(obj) == "string" and scenetree.findObject(obj) or obj
+    if not objRef then return end
+    local name = objRef:getName() or ""
+    if name:match("_bs_%d+$") or name:match("_bs_%d+_b$") then
+      allTriggers[name] = objRef
+    elseif name:match("_wp_") or name:match("_waypoint_") then
+      allWaypoints[name] = objRef
     end
+  end
+  
+  -- Collect bus stops from triggers
+  for _, obj in ipairs(scenetree.findClassObjects("BeamNGTrigger") or {}) do
+    processObject(obj)
+  end
+  
+  -- Collect waypoints from BeamNGWaypoint objects
+  for _, obj in ipairs(scenetree.findClassObjects("BeamNGWaypoint") or {}) do
+    processObject(obj)
+  end
+  
+  -- Also check SimObject as fallback (in case waypoints are registered differently)
+  for _, obj in ipairs(scenetree.findClassObjects("SimObject") or {}) do
+    processObject(obj)
+  end
+  
+  print(string.format("[bus] DEBUG: Found %d waypoints in scenetree", table.getn(allWaypoints) or 0))
+  for name, _ in pairs(allWaypoints) do
+    print(string.format("[bus] DEBUG:   - %s", name))
   end
 
   if not next(allTriggers) then
     ui_message("No bus stops found on this map.", 5, "error", "error")
     return
   end
-
   -- Select a random route
   local routeKeys = {}
-  for k, _ in pairs(routes) do
+  for k in pairs(routes) do
     table.insert(routeKeys, k)
   end
   if #routeKeys == 0 then
@@ -641,40 +748,78 @@ local function initRoute()
   local selectedRouteKey = routeKeys[math.random(#routeKeys)]
   local selectedRoute = routes[selectedRouteKey]
   local routeName = selectedRoute.name or selectedRouteKey
-  
-  -- Store the selected route to prevent changes
   currentRouteName = routeName
-  currentRouteKey = selectedRouteKey
-  
+
   print(string.format("[bus] Selected route: %s (%s) with %d stops", routeName, selectedRouteKey, #selectedRoute.stops))
 
-  -- Build route from JSON stop names
+  -- Build route from JSON stop names and waypoints
   stopTriggers = {}
-  stopDisplayNames = {}  -- Clear and rebuild display names table
+  routeItems = {}
+  stopDisplayNames = {}
   local missingStops = {}
+  local stopIndex = 0  -- Track actual stop index (waypoints don't count)
+  
   for _, stopData in ipairs(selectedRoute.stops) do
+    local itemType = "stop"  -- Default to stop
     local stopName, displayName
+    
     if type(stopData) == "table" then
-    -- New format: ["triggerName", "Display Name"]
-    stopName = stopData[1]
-    displayName = stopData[2]
-    else
-      -- Old format: just "triggerName" (backward compatibility)
-    stopName = stopData
-    displayName = nil
+      -- Check if first element is "waypoint" marker (explicit format)
+      if stopData[1] == "wp" then
+        itemType = "waypoint"
+        stopName = stopData[2]
+        displayName = stopData[3]  -- Optional display name
+      else
+        -- Format: ["triggerName", "Display Name"]
+        stopName = stopData[1]
+        displayName = stopData[2]
+        -- Auto-detect waypoints by name pattern (consistent with bus stop detection)
+        if stopName:match("_wp_") or stopName:match("_waypoint_") then
+          itemType = "waypoint"
+        end
+      end
     end
-    local trigger = allTriggers[stopName]
-    if trigger then
-      table.insert(stopTriggers, trigger)
-      -- Store display name by trigger name for reliable access
-      if displayName then
-        stopDisplayNames[stopName] = displayName
+    if itemType == "waypoint" then
+      -- Use pre-collected waypoints instead of looking them up individually
+      local waypointObj = allWaypoints[stopName]
+      if waypointObj then
+        local waypointPos = waypointObj:getPosition()
+        table.insert(routeItems, {
+          type="waypoint", 
+          waypointName=stopName, 
+          position=waypointPos, 
+          stopIndex=stopIndex  -- Use current stopIndex (waypoint comes after this stop)
+        })
+        -- Display name stored but not used in UI (waypoints are hidden)
+        if displayName then
+          stopDisplayNames[stopName] = displayName
+        end
+        print(string.format("[bus] Found waypoint '%s' at %s", stopName, tostring(waypointPos)))
+      else
+        table.insert(missingStops, stopName)
+        print(string.format("[bus] Warning: Waypoint '%s' not found in scenetree", stopName))
       end
     else
-      table.insert(missingStops, stopName)
+      -- Bus stop: must be a trigger
+      local trigger = allTriggers[stopName]
+      if trigger then
+        stopIndex = stopIndex + 1
+        table.insert(stopTriggers, trigger)
+        table.insert(routeItems, {
+          type="stop", 
+          trigger=trigger, 
+          position=trigger:getPosition(), 
+          stopIndex=stopIndex
+        })
+        -- Store display name by trigger name for reliable access
+        if displayName then
+          stopDisplayNames[stopName] = displayName
+        end
+      else
+        table.insert(missingStops, stopName)
+      end
     end
   end
-
   if #stopTriggers == 0 then
     ui_message("No valid stops found for selected route.", 5, "error", "error")
     return
@@ -685,8 +830,7 @@ local function initRoute()
   end
 
   -- The final stop is the last stop in the route
-  local finalStopTrigger = stopTriggers[#stopTriggers]
-  currentFinalStopName = finalStopTrigger:getName() or ""
+  currentFinalStopName = stopTriggers[#stopTriggers]:getName() or ""
 
   local vehicle = be:getPlayerVehicle(0)
   if not vehicle then return end
@@ -698,23 +842,57 @@ local function initRoute()
   tipTotal, roughRide, lastVelocity = 0, 0, nil
 
   local startStopName = stopTriggers[currentStopIndex]:getName() or "Unknown"
+  local targetPos = stopTriggers[currentStopIndex]:getPosition()
   
-  -- Use route planner with setupPathMulti for better routing (like base game bus)
-  local vehicle = be:getPlayerVehicle(0)
   if vehicle then
-    local routePlanner = require('gameplay/route/route')()
-    local currentPos = vehicle:getPosition()
-    local targetPos = stopTriggers[currentStopIndex]:getPosition()
-    routePlanner:setupPathMulti({currentPos, targetPos})
-    -- Apply the route to ground markers
-    if routePlanner.path and #routePlanner.path > 0 then
-      core_groundMarkers.setPath(targetPos)
+    -- Use the route planner that core_groundMarkers uses (shared instance)
+    local routePlanner = core_groundMarkers.routePlanner or require('gameplay/route/route')()
+    if not core_groundMarkers.routePlanner then
+      core_groundMarkers.routePlanner = routePlanner
+    end
+    
+    local pathPoints = buildPathToStop(1, vehicle:getPosition())
+    if #pathPoints == 1 then
+      pathPoints[2] = targetPos
+    end
+    
+    -- Set up multi-waypoint path on the shared route planner
+    routePlanner:setupPathMulti(pathPoints)
+    print(string.format("[bus] Route planner initialized with %d path points (including waypoints)", #pathPoints))
+    
+    -- If we have waypoints, we need to activate ground markers but preserve the route planner's path
+    if #pathPoints > 2 then
+      print(string.format("[bus] Multi-waypoint path detected (%d waypoints)", #pathPoints - 2))
+      -- Wait for route planner to calculate, then manually activate ground markers WITHOUT setPath
+      if core_jobsystem and core_jobsystem.create then
+        core_jobsystem.create(function(job)
+          job.sleep(0.2)
+          if routePlanner.path and #routePlanner.path > 0 then
+            print(string.format("[bus] Route planner calculated path with %d segments", #routePlanner.path))
+            -- Manually initialize ground markers without calling setPath
+            if not core_groundMarkers.endWP then
+              core_groundMarkers.endWP = {}
+            end
+            -- Set the target position to the final destination
+            core_groundMarkers.endWP[1] = targetPos
+            -- DON'T call setPath - it calculates a direct path that conflicts with waypoints
+            -- The route planner's path should be used automatically by ground markers
+            -- Ensure route planner is properly set up
+            routePlanner:setupPathMulti(pathPoints)
+          else
+            print("[bus] Warning: Route planner path not ready, falling back to direct path")
+            core_groundMarkers.setPath(targetPos)
+          end
+        end)
+      end
     else
-      -- Fallback to direct path if route planner fails
+      -- No waypoints, use direct path
+      print("[bus] No waypoints found, using direct path")
       core_groundMarkers.setPath(targetPos)
     end
   else
-    core_groundMarkers.setPath(stopTriggers[currentStopIndex]:getPosition())
+    -- No vehicle, fallback to direct path
+    core_groundMarkers.setPath(targetPos)
   end
   
   ui_message(
@@ -739,21 +917,21 @@ local function processStop(vehicle, dtSim)
   local trigger = getNextTrigger()
   if not trigger then return end
 
-  -- Verify this is actually the correct stop by checking the trigger name matches what we expect
-  local expectedStopName = nil
-  if stopTriggers[currentStopIndex] then
-      expectedStopName = stopTriggers[currentStopIndex]:getName()
-  end
-  local actualTriggerName = trigger:getName()
-  if expectedStopName and actualTriggerName ~= expectedStopName then
-      -- Wrong trigger, don't process
+  -- Verify this is the correct stop
+  local expectedStopName = stopTriggers[currentStopIndex]:getName()
+  if expectedStopName and trigger:getName() ~= expectedStopName then
       return
   end
 
-  ------------------------------------------------------------
-  -- MUST BE IN STOP TRIGGER (replaced distance check)
-  ------------------------------------------------------------
-  if currentTriggerName == expectedStopName then
+  -- Check if player is actually inside the correct trigger
+  if currentTriggerName == trigger:getName() then
+      -- Prevent re-boarding if player left and came back to the same stop
+      -- Only allow boarding if this stop hasn't had boarding initiated yet, or if it's a different stop
+      if stopIndexWhereBoardingStarted and stopIndexWhereBoardingStarted == currentStopIndex and dwellTimer == nil then
+          -- Player already started boarding at this stop and left - don't allow re-boarding
+          return
+      end
+      
       local velocity = vehicle:getVelocity():length()
 
       -- Must be fully stopped
@@ -784,6 +962,10 @@ local function processStop(vehicle, dtSim)
         ------------------------------------------------------------
         if not dwellTimer then
             dwellTimer = 0
+            -- Track that boarding has started at this stop
+            stopIndexWhereBoardingStarted = currentStopIndex
+            -- Hide stop perimeter markers once boarding starts
+            hideStopMarkers()
             consecutiveStops = consecutiveStops + 1
             totalStopsCompleted = totalStopsCompleted + 1
 
@@ -796,7 +978,7 @@ local function processStop(vehicle, dtSim)
                 trueDeboarding = passengersOnboard
                 dwellDuration = math.max(6, trueDeboarding * 0.6)
             else
-                local capacity = M.vehicleCapacity or 20
+                local capacity = M.vehicleCapacity
                 local availableSpace = math.max(0, capacity - passengersOnboard)
                 trueBoarding = math.random(3, math.min(12, availableSpace))
                 trueDeboarding = (passengersOnboard > 0)
@@ -817,24 +999,21 @@ local function processStop(vehicle, dtSim)
                 --------------------------------------------------------
                 -- PHASE 1 — DEBOARDING 
                 --------------------------------------------------------
+                local function waitForAnimation(duration)
+                    local t = 0
+                    while t < duration do
+                        coroutine.yield()
+                        t = t + (dtSim or 0.033)
+                    end
+                end
+
                 if trueDeboarding > 0 then
                     for i = trueDeboarding, 1, -1 do
-                        ui_message(string.format(
-                            "Stop %d\nDeboarding: %d\nBoarding: 0",
-                            currentStopIndex, i
-                        ), 2, "bus", "bus_anim")
-
-                        local t = 0
-                        while t < 2 do
-                            coroutine.yield()
-                            t = t + (dtSim or 0.033)
-                        end
+                        ui_message(string.format("Stop %d\nDeboarding: %d\nBoarding: 0", currentStopIndex, i), 2, "bus", "bus_anim")
+                        waitForAnimation(2)
                     end
                 else
-                    ui_message(string.format(
-                        "Stop %d\nDeboarding: 0\nBoarding: 0",
-                        currentStopIndex
-                    ), 1, "bus", "bus_anim")
+                    ui_message(string.format("Stop %d\nDeboarding: 0\nBoarding: 0", currentStopIndex), 1, "bus", "bus_anim")
                 end
 
                 --------------------------------------------------------
@@ -842,22 +1021,11 @@ local function processStop(vehicle, dtSim)
                 --------------------------------------------------------
                 if trueBoarding > 0 then
                     for i = 1, trueBoarding do
-                        ui_message(string.format(
-                            "Stop %d\nDeboarding: 0\nBoarding: %d",
-                            currentStopIndex, i
-                        ), 2, "bus", "bus_anim")
-
-                        local t = 0
-                        while t < 2 do
-                            coroutine.yield()
-                            t = t + (dtSim or 0.033)
-                        end
+                        ui_message(string.format("Stop %d\nDeboarding: 0\nBoarding: %d", currentStopIndex, i), 2, "bus", "bus_anim")
+                        waitForAnimation(2)
                     end
                 else
-                    ui_message(string.format(
-                        "Stop %d\nDeboarding: 0\nBoarding: 0",
-                        currentStopIndex
-                    ), 1, "bus", "bus_anim")
+                    ui_message(string.format("Stop %d\nDeboarding: 0\nBoarding: 0", currentStopIndex), 1, "bus", "bus_anim")
                 end
 
 			--------------------------------------------------------
@@ -865,7 +1033,7 @@ local function processStop(vehicle, dtSim)
 			--------------------------------------------------------
 				local newCount = math.min(
 					math.max(0, passengersOnboard + trueBoarding - trueDeboarding),
-					M.vehicleCapacity or 20
+					M.vehicleCapacity
 				)
 
 				ui_message(string.format(
@@ -879,16 +1047,14 @@ local function processStop(vehicle, dtSim)
 				local base = 400
 				local bonusMultiplier = 1 + (consecutiveStops / #stopTriggers) * 3
 				local payout = math.floor(base * bonusMultiplier)
-
 				local reputationGain = math.floor(payout / 500)
 
 				ui_message(string.format(
 					"Earnings this stop:\n" ..
 					"Base pay: $%d\n" ..
-					"Tips this stop: $%d\n" ..
 					"Reputation gained: +%d\n" ..
 					"Total tips so far: $%d",
-					payout, tipsEarned or 0, reputationGain, tipTotal
+					payout, reputationGain, tipTotal
 				), 10, "info", "bus_payout")
 
             end)
@@ -908,7 +1074,7 @@ local function processStop(vehicle, dtSim)
             --------------------------------------------------------
             passengersOnboard = math.min(
                 math.max(0, passengersOnboard + trueBoarding - trueDeboarding),
-                M.vehicleCapacity or 20
+                M.vehicleCapacity
             )
 
             --------------------------------------------------------
@@ -918,7 +1084,6 @@ local function processStop(vehicle, dtSim)
             local bonusMultiplier = 1 + (consecutiveStops / #stopTriggers) * 3
             local payout = math.floor(base * bonusMultiplier)
             
-            -- Apply economy adjuster multiplier if available
             if career_economyAdjuster then
                 local multiplier = career_economyAdjuster.getSectionMultiplier("bus") or 1.0
                 payout = math.floor(payout * multiplier + 0.5)
@@ -931,18 +1096,12 @@ local function processStop(vehicle, dtSim)
             --------------------------------------------------------
             local tipsEarned = 0
             if trueDeboarding > 0 then
-                local avgRough = roughRide / math.max(1, dwellDuration)
-                if avgRough < 0 then avgRough = 0 end
-
+                local avgRough = math.max(0, roughRide / math.max(1, dwellDuration))
                 local tipPerPassenger = math.max(0, 8 - avgRough) * 2
                 tipsEarned = math.floor(tipPerPassenger * trueDeboarding * 40)
                 tipTotal = tipTotal + tipsEarned
             end
-
-            print(string.format(
-                "[bus] Tips: +%d   TotalTips=%d",
-                tipsEarned, tipTotal
-            ))
+            print(string.format("[bus] Tips: +%d   TotalTips=%d", tipsEarned, tipTotal))
 
             roughRide = 0
 
@@ -952,6 +1111,8 @@ local function processStop(vehicle, dtSim)
             dwellTimer = nil
             stopMonitorActive = false
             stopSettleTimer = 0
+            stopIndexWhereBoardingStarted = nil  -- Clear the flag when stop is completed
+            currentTriggerName = nil  -- Clear trigger name to prevent re-entry issues
 
             --------------------------------------------------------
             -- MOVE TO NEXT STOP
@@ -973,22 +1134,28 @@ local function processStop(vehicle, dtSim)
                 trueDeboarding = 0
 
                 routeCooldown = 10
+                -- Update currentStopIndex BEFORE setting navigation
                 currentStopIndex = 1
-                showNextStopMarker()
+                -- Explicitly route to stop 1 (not stop 2)
+                showNextStopMarker(1)
                 -- Update controller display after loop completion
                 updateBusControllerDisplay()
+                
+                -- Save the game after completing the loop
+                if career_saveSystem and career_saveSystem.saveCurrent then
+                    career_saveSystem.saveCurrent()
+                end
 
             else
-                currentStopIndex = currentStopIndex + 1
-                if currentStopIndex > #stopTriggers then
-                    print(string.format("[bus] ERROR: currentStopIndex %d exceeds route length %d", currentStopIndex, #stopTriggers))
-                    currentStopIndex = #stopTriggers
-                end
-                local nextStopName = stopTriggers[currentStopIndex] and stopTriggers[currentStopIndex]:getName() or "Unknown"
-                print(string.format("[bus] Moving to next stop: index %d, name %s", currentStopIndex, nextStopName))
-                showNextStopMarker()
+                -- Calculate next stop index
+                local nextStopIndex = math.min((currentStopIndex or 1) + 1, #stopTriggers)
+                local nextStopName = stopTriggers[nextStopIndex]:getName() or "Unknown"
+                print(string.format("[bus] Moving to next stop: index %d, name %s", nextStopIndex, nextStopName))
+                -- Update currentStopIndex BEFORE setting navigation to prevent race conditions
+                currentStopIndex = nextStopIndex
+                -- Show path to next stop (from current stop to next stop)
+                showNextStopMarker(nextStopIndex)
                 ui_message(string.format("Proceed to Stop %02d.", currentStopIndex), 4, "info", "bus_next")
-                -- Update controller display with new current stop
                 updateBusControllerDisplay()
             end
         end
@@ -1007,7 +1174,6 @@ end
 -- ================================
 function M.onVehicleSwitched(oldId, newId)
     local newVeh = be:getObjectByID(newId)
-    local oldVeh = be:getObjectByID(oldId)
 
     -- Leaving the active bus ends the route
     if currentRouteActive and activeBusID and oldId == activeBusID then
@@ -1021,6 +1187,9 @@ function M.onVehicleSwitched(oldId, newId)
         if not currentRouteActive or not routeInitialized then
             activeBusID = newId
             ui_message("Shift started. Welcome in! Drive careful out there.", 10, "info", "info")
+            -- Initialize capacity to a reasonable default before async callback completes
+            -- The async callback will update it to the correct value when it finishes
+            M.vehicleCapacity = M.vehicleCapacity or 44
             retrievePartsTree()
             initRoute()
         else
@@ -1095,9 +1264,8 @@ local function onBeamNGTrigger(data)
     return
   end
   if gameplay_walk.isWalking() then return end
-  if not data.triggerName:find("_bs_") then
-    return
-  end
+  
+  if not data.triggerName:find("_bs_") then return end
   
   if data.event == "enter" then
     currentTriggerName = data.triggerName
