@@ -1,10 +1,10 @@
 {
   "deliveryProviders": [
     {
-      "id": "paramedicWork",
+      "id": "wcuParamedicWork",
       "name": "Belasco City Hospital",
       "description": "Work as a paramedic to earn money. Try to return with no damage for bonus xp.",
-      "associatedOrganization": "paramedicWork",
+      "associatedOrganization": "wcuParamedicWork",
       "preview": "wcusa_hospital.png",
       "manualAccessPoints": [
         {
