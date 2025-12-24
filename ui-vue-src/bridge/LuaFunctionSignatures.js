@@ -1428,6 +1428,19 @@ export default {
     getCompatibleMaps: () => {}
   },
 
+  gameplay_loading: {
+    requestQuarryState: () => {},
+    acceptContractFromUI: index => Integer,
+    declineAllContracts: () => {},
+    abandonContractFromUI: () => {},
+    sendTruckFromUI: () => {},
+    finalizeContractFromUI: () => {},
+    loadMoreFromUI: () => {},
+    selectZoneFromUI: zoneIndex => Integer,
+    swapZoneFromUI: () => {},
+    setZoneWaypointFromUI: zoneTag => String,
+  },
+
   career_modules_playerAttributes: {
     addAttributes: (change, reason, fullprice) => [Object, Any, Boolean],
     setAttributes: (newValues, reason) => [Object, Any],
