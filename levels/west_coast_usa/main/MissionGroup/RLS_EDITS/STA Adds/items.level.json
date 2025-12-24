@@ -1,4 +1,5 @@
 {"name":"driftLoopTuningTent","class":"SimGroup","__parent":"STA Adds"}
+{"name":"dragFuelStationDecor","class":"SimGroup","__parent":"STA Adds"}
 {"name":"mudDragLane","class":"SimGroup","__parent":"STA Adds"}
 {"name":"mudDragFence","class":"SimGroup","__parent":"STA Adds"}
 {"class":"TSStatic","__parent":"STA Adds","position":[836.854187,-348.998352,160.195251],"decalType":"None","isRenderEnabled":false,"rotationMatrix":[0.374293268,-0.927310526,0,0.927310526,0.374293268,0,0,0,1],"shapeName":"/levels/west_coast_usa/art/shapes/objects/dragbillboard_sign17.dae","useInstanceRenderData":true}

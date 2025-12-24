@@ -545,6 +545,33 @@
       "iconOffsetHeight":0.15,
       "id":"mudDragTuningComputer",
       "name":"Mud Drag Tuning Tent",
+      "preview":"mudTuningTent.jpg",
+      "screens":{}
+    },
+    {
+      "activityAcceptProps":[
+        {
+          "keyLabel":"Vehicle & Parts Management"
+        }
+      ],
+      "description":"ui.career.computer.bigmapLabel.garage",
+      "doors":[
+        [
+          "Drift Loop Tuning Tent_area",
+          "Drift Loop Tuning Tent_icon"
+        ]
+      ],
+      "functions":{
+        "sleep":true,
+        "tuning":true,
+        "vehicleInventory":false
+      },
+      "garageId":"driftLoopTuningTent",
+      "icon":"poi_laptop_round",
+      "iconLift":0.2,
+      "iconOffsetHeight":0.15,
+      "id":"Drift Loop Tuning Tent",
+      "name":"driftLoopTuningTent",
       "preview":"servicestationgaragecomputer.jpg",
       "screens":{}
     }
@@ -834,6 +861,22 @@
       "tags":{},
       "zoneNames":[
         "mudDragTuningTent_1"
+      ]
+    },
+    {
+      "capacity":0,
+      "defaultPrice":0,
+      "description":"Out of tires? Let's swap them out!\n",
+      "icon":"poi_garage_2_round",
+      "id":"driftLoopTuningTent",
+      "name":"Drift Loop Tuning Tent",
+      "parkingSpotNames":[
+        "spot_driftLoopTuningTent_1",
+        "spot_driftLoopTuningTent_2"
+      ],
+      "preview":"driftTuningTent.jpg",
+      "zoneNames":[
+        "driftLoopTuningTent_1"
       ]
     }
   ],
@@ -1790,7 +1833,7 @@
       ],
       "id":"trilobite_drag",
       "name":"Alder Dragway Fuel",
-      "preview":"drag_fuel.jpg",
+      "preview":"dragFuelStation.jpg",
       "prices":{
         "diesel":{
           "priceBaseline":50.53,
