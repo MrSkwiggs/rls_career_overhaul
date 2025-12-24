@@ -519,7 +519,7 @@
       "iconOffsetHeight":0.15,
       "id":"alderDragwayStorage",
       "name":"Alder Dragway Storage",
-      "preview":"servicestationgaragecomputer.jpg",
+      "preview":"dragWayStorage.jpg",
       "screens":{}
     },
     {
@@ -545,7 +545,34 @@
       "iconOffsetHeight":0.15,
       "id":"mudDragTuningComputer",
       "name":"Mud Drag Tuning Tent",
-      "preview":"servicestationgaragecomputer.jpg",
+      "preview":"mudDragTuningTent.jpg",
+      "screens":{}
+    },
+    {
+      "activityAcceptProps":[
+        {
+          "keyLabel":"Vehicle & Parts Management"
+        }
+      ],
+      "description":"ui.career.computer.bigmapLabel.garage",
+      "doors":[
+        [
+          "Drift Loop Tuning Tent_area",
+          "Drift Loop Tuning Tent_icon"
+        ]
+      ],
+      "functions":{
+        "sleep":true,
+        "tuning":true,
+        "vehicleInventory":false
+      },
+      "garageId":"driftLoopTuningTent",
+      "icon":"poi_laptop_round",
+      "iconLift":0.2,
+      "iconOffsetHeight":0.15,
+      "id":"driftLoopTuningTent",
+      "name":"Drift Loop Tuning Tent",
+      "preview":"driftLoopTuningTent.jpg",
       "screens":{}
     }
   ],
@@ -815,7 +842,7 @@
         "spot_alderDragwayStorage_3",
         "spot_alderDragwayStorage_4"
       ],
-      "preview":"dragway_pit_garages.jpg",
+      "preview":"dragWayStorage.jpg",
       "zoneNames":[
         "alderDragwayStorage_1"
       ]
@@ -830,10 +857,26 @@
       "parkingSpotNames":[
         "spot_mudDragTuningTent_1"
       ],
-      "preview":"garage_servicestation.jpg",
+      "preview":"mudDragTuningTent.jpg",
       "tags":{},
       "zoneNames":[
         "mudDragTuningTent_1"
+      ]
+    },
+    {
+      "capacity":0,
+      "defaultPrice":0,
+      "description":"Out of tires? Let's swap them out!\n",
+      "icon":"poi_garage_2_round",
+      "id":"driftLoopTuningTent",
+      "name":"Drift Loop Tuning Tent",
+      "parkingSpotNames":[
+        "spot_driftLoopTuningTent_1",
+        "spot_driftLoopTuningTent_2"
+      ],
+      "preview":"driftLoopTuningTent.jpg",
+      "zoneNames":[
+        "driftLoopTuningTent_1"
       ]
     }
   ],

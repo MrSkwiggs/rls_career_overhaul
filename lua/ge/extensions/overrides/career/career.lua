@@ -558,7 +558,7 @@ local function formatSaveSlotForUi(saveSlot)
   if career_career.isActive() and currentSaveSlot == saveSlot then
 
     -- current save slot
-    data.tutorialActive = career_modules_linearTutorial.isLinearTutorialActive()
+    data.tutorialActive = false
     data.money = career_modules_playerAttributes.getAttribute("money")
     data.beamXP = career_modules_playerAttributes.getAttribute("beamXP")
     data.vouchers = career_modules_playerAttributes.getAttribute("vouchers")
@@ -787,9 +787,7 @@ local function getAdditionalMenuButtons()
   else
     table.insert(ret, {label = "Map", luaFun = "freeroam_bigMapMode.enterBigMap({instant=true})"})
   end
-  if not career_modules_linearTutorial.isLinearTutorialActive() and M.hasBoughtStarterVehicle() then
-    table.insert(ret, {label = "Progress", luaFun = "guihooks.trigger('ChangeState', {state = 'domainSelection'})", showIndicator = career_modules_milestones_milestones.unclaimedMilestonesCount() > 0})
-  end
+  table.insert(ret, {label = "Progress", luaFun = "guihooks.trigger('ChangeState', {state = 'domainSelection'})", showIndicator = career_modules_milestones_milestones.unclaimedMilestonesCount() > 0})
   if career_modules_vehiclePerformance.isTestInProgress() then
     table.insert(ret, {label = "Cancel Certification", luaFun = "career_modules_vehiclePerformance.cancelTest()", showIndicator = true})
   end

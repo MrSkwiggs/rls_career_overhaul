@@ -81,7 +81,6 @@ local function handleCopEvadeReward(data)
     "The suspect got away, Here is " .. pityAmount .. " for repairs",
     {"gameplay", "reward", "police"}
   )
-  
   career_saveSystem.saveCurrent()
   ui_message("The suspect got away, Here is " .. pityAmount .. " for repairs", 5, "Police")
 end
@@ -112,7 +111,6 @@ local function handleCriminalEvadeReward(vehId, data, inventoryId)
 
   ui_message("You sold your dashcam footage for $" .. rewardAmount, 5, "Criminal")
   career_modules_inventory.addEvade(inventoryId)
-  career_saveSystem.saveCurrent()
 end
 
 local function handleArrestReward(data, playerData)
