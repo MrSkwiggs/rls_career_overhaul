@@ -136,7 +136,6 @@ local function getQuarryStateForUI(currentState, playerMod, contractsMod, manage
 
   return {
     state = currentState,
-    playerLevel = contractsMod.PlayerData.level or 1,
     contractsCompleted = contractsMod.PlayerData.contractsCompleted or 0,
     availableContracts = contractsForUI,
     activeContract = activeContractForUI,
@@ -229,7 +228,7 @@ local function drawUI(dt, currentState, configStates, playerMod, contractsMod, m
 
     if currentState == configStates.STATE_CONTRACT_SELECT then
       imgui.TextColored(imgui.ImVec4(1, 1, 1, uiAnim.opacity), "Available Contracts")
-      imgui.TextColored(imgui.ImVec4(0.7, 0.7, 0.7, uiAnim.opacity), string.format("Player Level: %d | Completed: %d", contractsMod.PlayerData.level or 1, contractsMod.PlayerData.contractsCompleted or 0))
+      imgui.TextColored(imgui.ImVec4(0.7, 0.7, 0.7, uiAnim.opacity), string.format("Completed: %d", contractsMod.PlayerData.contractsCompleted or 0))
       imgui.Dummy(imgui.ImVec2(0, 10))
 
       if #contractsMod.ContractSystem.availableContracts == 0 then
@@ -536,6 +535,10 @@ local function drawUI(dt, currentState, configStates, playerMod, contractsMod, m
         imgui.TextColored(imgui.ImVec4(0.5, 1, 0.5, 1), string.format("Payout: $%d (on completion)", c.totalPayout or 0))
       end
       imgui.Dummy(imgui.ImVec2(0, 10))
+      if contractsMod.checkContractCompletion() then
+        if imgui.Button("FINALIZE CONTRACT", imgui.ImVec2(-1, 45)) then callbacks.onFinalizeContract() end
+        imgui.Dummy(imgui.ImVec2(0, 8))
+      end
       if imgui.Button("ABANDON CONTRACT", imgui.ImVec2(-1, 30)) then callbacks.onAbandonContract() end
 
     elseif currentState == configStates.STATE_AT_QUARRY_DECIDE then

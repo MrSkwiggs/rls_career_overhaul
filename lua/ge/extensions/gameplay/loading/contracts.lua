@@ -24,26 +24,60 @@ local PlayerData = {
   contractsFailed = 0
 }
 
-local function pickTier(contractsConfig)
+local function isCareerMode()
+  local career = career_career
+  return career and type(career.isActive) == "function" and career.isActive()
+end
+
+local function pickTier(contractsConfig, availableGroups)
   if not contractsConfig or not contractsConfig.tiers or #contractsConfig.tiers == 0 then
     return nil
   end
   
+  local maxTier = #contractsConfig.tiers
+  
+  if isCareerMode() and availableGroups and #availableGroups > 0 then
+    local firstGroup = availableGroups[1]
+    if firstGroup and firstGroup.associatedOrganization then
+      local orgId = firstGroup.associatedOrganization
+      local org = freeroam_organizations and freeroam_organizations.getOrganization(orgId)
+      if org and org.reputation and org.reputation.level ~= nil then
+        local repLevel = org.reputation.level
+        if repLevel == -1 or repLevel == 0 then
+          maxTier = 1
+        elseif repLevel == 1 then
+          maxTier = 2
+        elseif repLevel == 2 then
+          maxTier = 3
+        elseif repLevel == 3 then
+          maxTier = 4
+        end
+        maxTier = math.min(maxTier, #contractsConfig.tiers)
+      end
+    end
+  end
+  
   local totalWeight = 0
-  for _, tier in ipairs(contractsConfig.tiers) do
-    local weight = tier.weight or 0
-    totalWeight = totalWeight + weight
+  for i = 1, maxTier do
+    local tier = contractsConfig.tiers[i]
+    if tier then
+      local weight = tier.weight or 0
+      totalWeight = totalWeight + weight
+    end
   end
   
   if totalWeight <= 0 then return nil end
   
   local roll = math.random() * totalWeight
   local current = 0
-  for i, tier in ipairs(contractsConfig.tiers) do
-    local weight = tier.weight or 0
-    current = current + weight
-    if roll <= current then
-      return i
+  for i = 1, maxTier do
+    local tier = contractsConfig.tiers[i]
+    if tier then
+      local weight = tier.weight or 0
+      current = current + weight
+      if roll <= current then
+        return i
+      end
     end
   end
   return nil
@@ -154,7 +188,7 @@ local function generateContract(availableGroups, expirationOffset)
   end
   
   expirationOffset = expirationOffset or 0
-  local tier = pickTier(contractsConfig)
+  local tier = pickTier(contractsConfig, availableGroups)
   if not tier then
     print("[Loading] Failed to pick valid tier; cannot generate contract.")
     return nil
@@ -628,8 +662,7 @@ local function abandonContract(onCleanup)
   local contract = ContractSystem.activeContract
   
   local zoneTag = contract.loadingZoneTag or contract.groupTag
-  local facilityPayMultiplier = getFacilityPayMultiplier(zoneTag)
-  local totalPay = math.floor((contract.totalPayout or 0) * facilityPayMultiplier)
+  local totalPay = contract.totalPayout or 0
   
   local contractsConfig = getContractsConfig(zoneTag)
   local abandonPenaltyPercent = contractsConfig.abandonPenalty or 0
@@ -695,6 +728,27 @@ local function completeContract(onCleanup, onClearProps)
   local facilityPayMultiplier = getFacilityPayMultiplier(zoneTag)
   local totalPay = math.floor((contract.totalPayout or 0) * facilityPayMultiplier)
 
+  if isCareerMode() then
+    local vehId = be:getPlayerVehicleID(0)
+    if vehId then
+      local inventoryId = career_modules_inventory and career_modules_inventory.getInventoryIdFromVehicleId(vehId)
+      if inventoryId then
+        local vehicle = career_modules_inventory.getVehicle(inventoryId)
+        if vehicle and vehicle.owningOrganization then
+          local org = freeroam_organizations and freeroam_organizations.getOrganization(vehicle.owningOrganization)
+          if org and org.reputation and org.reputation.level ~= nil and org.reputationLevels then
+            local repLevel = org.reputation.level
+            local levelIndex = repLevel + 2
+            if org.reputationLevels[levelIndex] and org.reputationLevels[levelIndex].loanerCut then
+              local loanerCut = org.reputationLevels[levelIndex].loanerCut.value or 0
+              totalPay = math.floor(totalPay * (1 - loanerCut))
+            end
+          end
+        end
+      end
+    end
+  end
+
   local careerPaid = false
   local success, err = pcall(function()
     local career = career_career
@@ -708,10 +762,50 @@ local function completeContract(onCleanup, onClearProps)
         else
           xpReward = math.floor((contract.requiredTons or 0) * xpMultiplier)
         end
-        paymentModule.reward({
+        
+        local rewardData = {
           money = { amount = totalPay, canBeNegative = false },
           labor = { amount = xpReward, canBeNegative = false }
-        }, { label = string.format("Contract: %s", contract.name), tags = {"gameplay", "mission", "reward"} })
+        }
+        
+        local Zones = gameplay_loading_zones
+        if Zones and Zones.availableGroups then
+          local activeGroup = nil
+          for _, group in ipairs(Zones.availableGroups) do
+            if group.secondaryTag == zoneTag then
+              activeGroup = group
+              break
+            end
+          end
+          
+          if activeGroup and activeGroup.associatedOrganization then
+            local orgId = activeGroup.associatedOrganization
+            local totalRepGain = 0
+            local p = ContractSystem.contractProgress
+            
+            if contract.unitType == "item" and p.deliveredItemsByMaterial then
+              for matKey, count in pairs(p.deliveredItemsByMaterial) do
+                local matConfig = Config.materials and Config.materials[matKey]
+                if matConfig and matConfig.reputationGain then
+                  totalRepGain = totalRepGain + (count * matConfig.reputationGain)
+                end
+              end
+            elseif contract.unitType == "mass" and p.deliveredTons then
+              local materialType = contract.material
+              local matConfig = materialType and Config.materials and Config.materials[materialType]
+              if matConfig and matConfig.reputationGain then
+                totalRepGain = totalRepGain + (p.deliveredTons * matConfig.reputationGain)
+              end
+            end
+            
+            if totalRepGain > 0 then
+              local repKey = orgId .. "Reputation"
+              rewardData[repKey] = { amount = totalRepGain }
+            end
+          end
+        end
+        
+        paymentModule.reward(rewardData, { label = string.format("Contract: %s", contract.name), tags = {"gameplay", "mission", "reward"} })
         careerPaid = true
         Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_01')
         ui_message(string.format("CONTRACT COMPLETE! Earned $%d", totalPay), 8, "success")
@@ -758,6 +852,7 @@ M.getTypeNameFromMaterial = getTypeNameFromMaterial
 M.getFacilityPayMultiplier = getFacilityPayMultiplier
 M.getContractsConfig = getContractsConfig
 M.getContractsConfigFromGroups = getContractsConfigFromGroups
+M.isCareerMode = isCareerMode
 
 return M
 

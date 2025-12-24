@@ -10,6 +10,8 @@
             "unitType": "item",
             "payPerUnit": 1750,
             "contractChance": 0.75,
+            "reputationGain": 1,
+            "reputationLoss": 10,
             "tiers": {
                 "1": [3, 6],
                 "2": [4, 8],
@@ -38,6 +40,8 @@
             "unitType": "item",
             "payPerUnit": 5500,
             "contractChance": 0.25,
+            "reputationGain": 3,
+            "reputationLoss": 20,
             "tiers": {
                 "2": [1, 2],
                 "3": [3, 6],
@@ -67,6 +71,7 @@
             "targetLoad": 25000,
             "payPerUnit": 100,
             "contractChance": 0.5,
+            "reputationGain": 0.5,
             "deliveryVehicle": {
                 "model": "us_semi",
                 "config": "default",

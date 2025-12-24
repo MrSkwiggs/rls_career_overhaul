@@ -117,7 +117,11 @@ local uiCallbacks = {
           end
         end
         
-        Manager.clearProps()
+        if currentState ~= Config.STATE_DELIVERING then
+          Manager.clearProps()
+        else
+          Manager.jobObjects.zoneSwapClearPropsOnArrival = true
+        end
         currentState = Config.STATE_CHOOSING_ZONE
         Manager.jobObjects.zoneSwapPending = true
         Manager.jobObjects.zoneSwapTargetZone = nil
@@ -154,38 +158,9 @@ local uiCallbacks = {
           contract.loadingZoneTag = selectedZone.secondaryTag
           Manager.jobObjects.activeGroup = selectedZone
           Manager.jobObjects.materialType = selectedZone.materialType or contract.material or "rocks"
-          
-          if Manager.jobObjects.truckID then
-            local truck = be:getObjectByID(Manager.jobObjects.truckID)
-            if truck and selectedZone.spawn and selectedZone.spawn.pos and selectedZone.loading then
-              Manager.stopTruck(Manager.jobObjects.truckID)
-              local targetPos = vec3(selectedZone.loading.center)
-              local pos, rot = Manager.calculateSpawnTransformForLocation(vec3(selectedZone.spawn.pos), targetPos)
-              spawn.safeTeleport(truck, pos, rot, nil, nil, nil, true)
-              Manager.jobObjects.zoneSwapTruckAtDestination = true
-            else
-              if not truck then
-                Manager.jobObjects.truckID = nil
-              end
-              Manager.jobObjects.zoneSwapTruckAtDestination = false
-            end
-          else
-            Manager.jobObjects.zoneSwapTruckAtDestination = false
-          end
-          
-          local playerVeh = be:getPlayerVehicle(0)
-          local playerPos = playerVeh and playerVeh:getPosition() or cachedPlayerPos
-          if #Manager.propQueue == 0 then
-            Manager.spawnJobMaterials(Contracts, Zones, playerPos)
-          end
-          
-          currentState = Config.STATE_DRIVING_TO_SITE
-          Manager.markerCleared = false
-          if selectedZone.loading and selectedZone.loading.center then
-            core_groundMarkers.setPath(vec3(selectedZone.loading.center))
-          end
           compatibleZones = {}
-          ui_message(string.format("Zone swapped to %s. Drive to zone - truck will move when you arrive.", selectedZone.secondaryTag), 5, "info")
+          ui_message(string.format("Zone selected: %s. Truck will spawn when you enter the zone.", selectedZone.secondaryTag), 5, "info")
+          return
         else
           contract.group = selectedZone
           contract.loadingZoneTag = selectedZone.secondaryTag
@@ -396,6 +371,16 @@ local function onUpdate(dt)
         if not Manager.jobObjects.zoneSwapTruckAtDestination and (truckPos - destPos):length() < arrivalDist then
           Manager.jobObjects.zoneSwapTruckAtDestination = true
           Manager.stopTruck(Manager.jobObjects.truckID)
+          
+          if Manager.jobObjects.zoneSwapClearPropsOnArrival then
+            Manager.clearProps()
+            Manager.jobObjects.zoneSwapClearPropsOnArrival = false
+            if Manager.jobObjects.truckID then
+              local truckObj = be:getObjectByID(Manager.jobObjects.truckID)
+              if truckObj then truckObj:delete() end
+              Manager.jobObjects.truckID = nil
+            end
+          end
         end
       end
     end
@@ -454,7 +439,9 @@ local function onUpdate(dt)
       Contracts.trySpawnNewContract(Zones.availableGroups)
     end
     if #Contracts.ContractSystem.availableContracts == 0 and #Zones.availableGroups > 0 then
-      Contracts.generateInitialContracts(Zones.availableGroups)
+      if not Contracts.isCareerMode() then
+        Contracts.generateInitialContracts(Zones.availableGroups)
+      end
     end
     if not Zones.isPlayerInAnyLoadingZone(playerPos) then
       currentState = Config.STATE_IDLE
@@ -559,6 +546,14 @@ local function onUpdate(dt)
     end
 
   elseif currentState == Config.STATE_DELIVERING then
+    Manager.payloadUpdateTimer = Manager.payloadUpdateTimer + dt
+    local payloadInterval = settingsPayload and settingsPayload.updateInterval or 0.25
+    if Manager.payloadUpdateTimer >= payloadInterval then
+      Manager.calculateItemDamage()
+      Manager.processPendingRespawns(dt, Zones, Contracts)
+      Manager.payloadUpdateTimer = 0
+    end
+    
     local destPos = Manager.jobObjects.deliveryDestination and vec3(Manager.jobObjects.deliveryDestination.pos) or (Manager.jobObjects.activeGroup and Manager.jobObjects.activeGroup.destination and vec3(Manager.jobObjects.activeGroup.destination.pos))
     local movementResult, deliveryTime = Manager.handleTruckMovement(dt, destPos, Contracts)
     if movementResult == "damaged" then
@@ -612,15 +607,9 @@ local function onUpdate(dt)
           if obj then obj:delete() end
         end
         Manager.jobObjects.truckID, Manager.truckStoppedInLoading, Manager.markerCleared = nil, false, true
-        if Zones.isPlayerInAnyLoadingZone(playerPos) then
-          currentState = Config.STATE_AT_QUARRY_DECIDE
-          Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-          ui_message("Contract complete! Ready to finalize.", 6, "success")
-        else
-          currentState = Config.STATE_RETURN_TO_QUARRY
-          Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-          ui_message("Contract complete! Return to any loading zone to finalize and get paid.", 6, "success")
-        end
+        currentState = Config.STATE_AT_QUARRY_DECIDE
+        Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
+        ui_message("Contract complete! Ready to finalize.", 6, "success")
       else
         if #Manager.propQueue == 0 then Manager.spawnJobMaterials(Contracts, Zones, playerPos) end
         local group = Manager.jobObjects.activeGroup
@@ -686,15 +675,9 @@ local function onUpdate(dt)
           if obj then obj:delete() end
         end
         Manager.jobObjects.truckID, Manager.truckStoppedInLoading, Manager.markerCleared = nil, false, true
-        if Zones.isPlayerInAnyLoadingZone(playerPos) then
-          currentState = Config.STATE_AT_QUARRY_DECIDE
-          Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-          ui_message("Contract complete! Ready to finalize.", 6, "success")
-        else
-          currentState = Config.STATE_RETURN_TO_QUARRY
-          Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-          ui_message("Contract complete! Return to any loading zone to finalize and get paid.", 6, "success")
-        end
+        currentState = Config.STATE_AT_QUARRY_DECIDE
+        Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
+        ui_message("Contract complete! Ready to finalize.", 6, "success")
       else
         Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
         if #Manager.propQueue == 0 then Manager.spawnJobMaterials(Contracts, Zones, playerPos) end
@@ -715,19 +698,6 @@ local function onUpdate(dt)
           end
         end
       end
-    end
-
-  elseif currentState == Config.STATE_RETURN_TO_QUARRY then
-    if Zones.isPlayerInAnyLoadingZone(playerPos) then
-      currentState = Config.STATE_AT_QUARRY_DECIDE
-      core_groundMarkers.setPath(nil)
-      Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_Unlock_01')
-      ui_message("At loading zone! Finalize your contract.", 5, "info")
-    end
-
-  elseif currentState == Config.STATE_AT_QUARRY_DECIDE then
-    if not Zones.isPlayerInAnyLoadingZone(playerPos) then
-      currentState = Config.STATE_RETURN_TO_QUARRY
     end
   end
 

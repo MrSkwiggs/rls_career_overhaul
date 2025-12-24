@@ -214,6 +214,7 @@ local function discoverGroups(sites)
       if sCount == 1 and dCount == 1 and zCount == 1 then
         local materials = {}
         local materialType = nil
+        local associatedOrg = nil
         
         local facilities = Config.facilities
         if facilities then
@@ -228,6 +229,9 @@ local function discoverGroups(sites)
                     materialType = matKey
                   end
                 end
+              end
+              if facility.associatedOrganization then
+                associatedOrg = facility.associatedOrganization
               end
               break
             end
@@ -254,7 +258,8 @@ local function discoverGroups(sites)
             destination = destLoc,
             loading = loadingZone,
             materials = materials,
-            materialType = materialType
+            materialType = materialType,
+            associatedOrganization = associatedOrg
           })
           
           local materialNames = {}

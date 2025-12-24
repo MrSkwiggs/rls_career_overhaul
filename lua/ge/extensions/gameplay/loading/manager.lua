@@ -1053,6 +1053,23 @@ function M.calculateItemDamage()
           if Contracts and Zones then
             M.repairAndRespawnDamagedItem(rockEntry.id, Zones, Contracts)
           end
+          
+          if matConfig.reputationLoss and matConfig.damage then
+            local career = career_career
+            if career and type(career.isActive) == "function" and career.isActive() then
+              local activeGroup = M.jobObjects.activeGroup
+              if activeGroup and activeGroup.associatedOrganization then
+                local orgId = activeGroup.associatedOrganization
+                local paymentModule = career_modules_payment
+                if paymentModule and type(paymentModule.reward) == "function" then
+                  local repKey = orgId .. "Reputation"
+                  paymentModule.reward({
+                    [repKey] = { amount = -matConfig.reputationLoss }
+                  }, { label = string.format("Damaged %s", matConfig.name or materialType), tags = {"gameplay", "loading", "reputation"} })
+                end
+              end
+            end
+          end
         end
         
         if not M.propQueueById[rockEntry.id] then

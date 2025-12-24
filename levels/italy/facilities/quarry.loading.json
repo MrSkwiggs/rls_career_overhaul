@@ -67,9 +67,9 @@
                 }
             },
             "contracts": {
-                "maxActiveContracts": 6,
-                "initialContracts": 4,
-                "generateInterval": 3,
+                "maxActiveContracts": 15,
+                "initialContracts": 8,
+                "generateInterval": 5,
                 "tiers": [
                     {
                         "name": "Easy",
@@ -114,7 +114,7 @@
                 ],
                 "abandonPenalty": 0.1,
                 "bulkChance": 0.4,
-                "contractTTL": 0.75
+                "contractTTL": 0.25
             }
         }
     }
