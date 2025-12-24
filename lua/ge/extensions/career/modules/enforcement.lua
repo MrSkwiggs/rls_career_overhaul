@@ -81,12 +81,7 @@ local function handleCopEvadeReward(data)
     "The suspect got away, Here is " .. pityAmount .. " for repairs",
     {"gameplay", "reward", "police"}
   )
-<<<<<<< HEAD
-  
   career_saveSystem.saveCurrent()
-=======
-
->>>>>>> quarry
   ui_message("The suspect got away, Here is " .. pityAmount .. " for repairs", 5, "Police")
 end
 
