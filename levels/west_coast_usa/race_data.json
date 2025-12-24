@@ -129,13 +129,25 @@
     },
     "driftLoopRemaster":{
       "bestTime":60,
+      "checkpointIndexs":[
+        9,
+        15,
+        23,
+        32,
+        41,
+        45,
+        49,
+        56,
+        62,
+        65
+      ],
       "checkpointRoad":[
         "driftLoopRemaster"
       ],
-      "driftGoal":1,
+      "driftGoal":40000,
       "hotlap":54,
       "label":"Drift Loop Remaster",
-      "reward":1000,
+      "reward":1500,
       "timeout":10,
       "type":[
         "drift"
