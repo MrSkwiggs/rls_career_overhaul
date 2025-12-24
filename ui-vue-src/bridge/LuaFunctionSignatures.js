@@ -1438,6 +1438,7 @@ export default {
     loadMoreFromUI: () => {},
     selectZoneFromUI: zoneIndex => Integer,
     swapZoneFromUI: () => {},
+    setZoneWaypointFromUI: zoneTag => String,
   },
 
   career_modules_playerAttributes: {

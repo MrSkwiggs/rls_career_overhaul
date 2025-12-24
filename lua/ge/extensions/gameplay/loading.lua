@@ -18,14 +18,60 @@ local function getPhoneStateForUI()
   if not Config or not Contracts or not Zones or not Manager then return nil end
 
   local currentZone = nil
+  local allZonesByFacility = {}
+  
   if cachedPlayerPos then
     if Zones.getPlayerCurrentZone then
       currentZone = Zones.getPlayerCurrentZone(cachedPlayerPos)
     end
-    if not currentZone and Zones.getNearestZoneWithinDistance then
-      currentZone = Zones.getNearestZoneWithinDistance(cachedPlayerPos, 500)
+    
+    local zonesByFacility = {}
+    
+    for _, zone in ipairs(Zones.availableGroups or {}) do
+      if zone.loading and zone.loading.center then
+        local zoneCenter = vec3(zone.loading.center)
+        local dist = (cachedPlayerPos - zoneCenter):length()
+        
+        local zoneTag = zone.secondaryTag
+        local facilityId = Zones.getFacilityIdForZone and Zones.getFacilityIdForZone(zoneTag) or nil
+        local facilityCfg = facilityId and Config.facilities and Config.facilities[facilityId] or nil
+        local facilityName = facilityCfg and (facilityCfg.name or facilityId) or facilityId or "Unknown"
+        
+        if not facilityId then
+          facilityId = "unknown"
+          facilityName = "Unknown"
+        end
+        
+        if not zonesByFacility[facilityId] then
+          zonesByFacility[facilityId] = {
+            facilityId = facilityId,
+            facilityName = facilityName,
+            zones = {}
+          }
+        end
+        
+        local cache = Zones.ensureGroupCache and Zones.ensureGroupCache(zone, Contracts.getCurrentGameHour) or nil
+        table.insert(zonesByFacility[facilityId].zones, {
+          zoneTag = zoneTag,
+          displayName = cache and cache.name or zoneTag,
+          distance = dist,
+          position = zone.loading.center
+        })
+      end
     end
+    
+    for facilityId, facilityData in pairs(zonesByFacility) do
+      table.sort(facilityData.zones, function(a, b) return a.distance < b.distance end)
+      table.insert(allZonesByFacility, facilityData)
+    end
+    
+    table.sort(allZonesByFacility, function(a, b)
+      local aMinDist = a.zones[1] and a.zones[1].distance or math.huge
+      local bMinDist = b.zones[1] and b.zones[1].distance or math.huge
+      return aMinDist < bMinDist
+    end)
   end
+  
   currentZone = currentZone or Manager.jobObjects.activeGroup
 
   local currentZoneTag = currentZone and currentZone.secondaryTag or nil
@@ -197,6 +243,32 @@ local function getPhoneStateForUI()
   end
 
   local allZonesStock = (Zones.getAllZonesStockInfo and Contracts.getCurrentGameHour) and Zones.getAllZonesStockInfo(Contracts.getCurrentGameHour) or {}
+  
+  local isComplete = Contracts.checkContractCompletion and Contracts.checkContractCompletion() or false
+  
+  local enrichedZoneStock = nil
+  if currentZone and Zones.getZoneStockInfo then
+    local rawZoneStock = Zones.getZoneStockInfo(currentZone, Contracts.getCurrentGameHour)
+    if rawZoneStock and rawZoneStock.materialStocks then
+      enrichedZoneStock = {
+        current = rawZoneStock.current,
+        max = rawZoneStock.max,
+        materialStocks = {},
+        spawnedProps = rawZoneStock.spawnedProps,
+        materials = rawZoneStock.materials
+      }
+      for matKey, stock in pairs(rawZoneStock.materialStocks) do
+        local matConfig = Config.materials and Config.materials[matKey]
+        enrichedZoneStock.materialStocks[matKey] = {
+          current = stock.current,
+          max = stock.max,
+          regenRate = stock.regenRate,
+          materialName = matConfig and matConfig.name or matKey,
+          units = matConfig and matConfig.units or "items"
+        }
+      end
+    end
+  end
 
   return {
     state = currentState,
@@ -228,11 +300,13 @@ local function getPhoneStateForUI()
     deliveryBlocks = Manager.jobObjects.deliveryBlocksStatus or {},
     markerCleared = Manager.markerCleared,
     truckStopped = Manager.truckStoppedInLoading,
-    zoneStock = (currentZone and Zones.getZoneStockInfo) and Zones.getZoneStockInfo(currentZone, Contracts.getCurrentGameHour) or nil,
+    zoneStock = enrichedZoneStock,
     currentFacility = currentFacility,
     compatibleZones = compatibleZonesForUI,
     truckState = truckState,
     allZonesStock = allZonesStock,
+    allZonesByFacility = allZonesByFacility,
+    isComplete = isComplete,
   }
 end
 
@@ -291,6 +365,9 @@ local uiCallbacks = {
           end
         end
       end
+      Manager.jobObjects.zoneSwapPending = false
+      Manager.jobObjects.zoneSwapTargetZone = nil
+      Manager.jobObjects.zoneSwapTruckAtDestination = false
       currentState = Config.STATE_CHOOSING_ZONE
       compatibleZones = zones
     end
@@ -372,46 +449,75 @@ local uiCallbacks = {
         Manager.deliveryTimer = 0
         Manager.truckStoppedTimer = 0
         Manager.truckLastPosition = nil
+        
+        triggerPhoneState()
       end
     end
   end,
   onSelectZone = function(zoneIndex)
-    if zoneIndex and zoneIndex > 0 and zoneIndex <= #compatibleZones then
-      local selectedZone = compatibleZones[zoneIndex]
+    if not zoneIndex or zoneIndex <= 0 then
+      log("E", "onSelectZone: Invalid zoneIndex: " .. tostring(zoneIndex))
+      return
+    end
+    if #compatibleZones == 0 then
+      log("E", "onSelectZone: compatibleZones is empty")
       local contract = Contracts.ContractSystem.activeContract
-      if contract and selectedZone then
-        if Manager.jobObjects.zoneSwapPending then
-          Manager.jobObjects.zoneSwapTargetZone = selectedZone
-          contract.group = selectedZone
-          contract.loadingZoneTag = selectedZone.secondaryTag
-          Manager.jobObjects.activeGroup = selectedZone
-          Manager.jobObjects.materialType = selectedZone.materialType or contract.material or "rocks"
-          compatibleZones = {}
-          ui_message(string.format("Zone selected: %s. Truck will spawn when you enter the zone.", selectedZone.secondaryTag), 5, "info")
-          return
-        else
-          contract.group = selectedZone
-          contract.loadingZoneTag = selectedZone.secondaryTag
-          local oldGroup = Manager.jobObjects.activeGroup
-          Manager.jobObjects.materialType = selectedZone.materialType or contract.material or "rocks"
-          Manager.jobObjects.truckSpawnQueued = true
-          local playerVeh = be:getPlayerVehicle(0)
-          local playerPos = playerVeh and playerVeh:getPosition() or cachedPlayerPos
-          
-          Manager.clearUnloadedProps(oldGroup)
-          Manager.jobObjects.activeGroup = selectedZone
-          Manager.spawnJobMaterials(Contracts, Zones, playerPos)
-          
-          currentState = Config.STATE_DRIVING_TO_SITE
-          Manager.markerCleared = false
-          compatibleZones = {}
-          if selectedZone.loading and selectedZone.loading.center then
-            local targetPos = vec3(selectedZone.loading.center)
-            core_groundMarkers.setPath(targetPos)
-          end
-          ui_message(string.format("Zone selected: %s. Drive to zone.", selectedZone.secondaryTag), 5, "info")
-          triggerPhoneState()
+      if contract and contract.materialTypeName then
+        compatibleZones = Zones.getZonesByTypeName(contract.materialTypeName) or {}
+        log("I", "onSelectZone: Repopulated compatibleZones, count: " .. #compatibleZones)
+      end
+    end
+    if zoneIndex > #compatibleZones then
+      log("E", string.format("onSelectZone: zoneIndex %d exceeds compatibleZones count %d", zoneIndex, #compatibleZones))
+      return
+    end
+    local selectedZone = compatibleZones[zoneIndex]
+    local contract = Contracts.ContractSystem.activeContract
+    if contract and selectedZone then
+      if Manager.jobObjects.zoneSwapPending then
+        Manager.jobObjects.zoneSwapTargetZone = selectedZone
+        contract.group = selectedZone
+        contract.loadingZoneTag = selectedZone.secondaryTag
+        local oldGroup = Manager.jobObjects.activeGroup
+        Manager.jobObjects.materialType = selectedZone.materialType or contract.material or "rocks"
+        Manager.jobObjects.activeGroup = selectedZone
+        
+        Manager.clearUnloadedProps(oldGroup)
+        local playerVeh = be:getPlayerVehicle(0)
+        local playerPos = playerVeh and playerVeh:getPosition() or cachedPlayerPos
+        Manager.spawnJobMaterials(Contracts, Zones, playerPos)
+        
+        compatibleZones = {}
+        currentState = Config.STATE_DELIVERING
+        if selectedZone.loading and selectedZone.loading.center then
+          local targetPos = vec3(selectedZone.loading.center)
+          core_groundMarkers.setPath(targetPos)
         end
+        ui_message(string.format("Zone selected: %s. Truck will spawn when you enter the zone.", selectedZone.secondaryTag), 5, "info")
+        triggerPhoneState()
+        return
+      else
+        contract.group = selectedZone
+        contract.loadingZoneTag = selectedZone.secondaryTag
+        local oldGroup = Manager.jobObjects.activeGroup
+        Manager.jobObjects.materialType = selectedZone.materialType or contract.material or "rocks"
+        Manager.jobObjects.truckSpawnQueued = true
+        local playerVeh = be:getPlayerVehicle(0)
+        local playerPos = playerVeh and playerVeh:getPosition() or cachedPlayerPos
+        
+        Manager.clearUnloadedProps(oldGroup)
+        Manager.jobObjects.activeGroup = selectedZone
+        Manager.spawnJobMaterials(Contracts, Zones, playerPos)
+        
+        currentState = Config.STATE_DRIVING_TO_SITE
+        Manager.markerCleared = false
+        compatibleZones = {}
+        if selectedZone.loading and selectedZone.loading.center then
+          local targetPos = vec3(selectedZone.loading.center)
+          core_groundMarkers.setPath(targetPos)
+        end
+        ui_message(string.format("Zone selected: %s. Drive to zone.", selectedZone.secondaryTag), 5, "info")
+        triggerPhoneState()
       end
     end
   end,
@@ -468,6 +574,20 @@ local uiCallbacks = {
   onLoadMore = function()
     if Manager.beginActiveContractTrip(Contracts, Zones, UI) then
       currentState = Config.STATE_DRIVING_TO_SITE
+    end
+  end,
+  onSetZoneWaypoint = function(zoneTag)
+    if not zoneTag then return end
+    
+    for _, zone in ipairs(Zones.availableGroups or {}) do
+      if zone.secondaryTag == zoneTag and zone.loading and zone.loading.center then
+        local targetPos = vec3(zone.loading.center)
+        core_groundMarkers.setPath(targetPos)
+        local cache = Zones.ensureGroupCache and Zones.ensureGroupCache(zone, Contracts.getCurrentGameHour) or nil
+        local zoneName = cache and cache.name or zoneTag
+        ui_message(string.format("Waypoint set to %s", zoneName), 5, "info")
+        return
+      end
     end
   end
 }
@@ -642,7 +762,7 @@ local function onUpdate(dt)
                 end
               end
               
-              Manager.despawnPropIds(Manager.jobObjects.zoneSwapLoadedPropIds, Zones, Contracts)
+              Manager.despawnPropIds(Manager.jobObjects.zoneSwapLoadedPropIds, Zones, Contracts, true)
               Manager.jobObjects.zoneSwapLoadedPropIds = nil
               Manager.jobObjects.deliveredPropIds = nil
               Manager.jobObjects.deliveryBlocksStatus = nil
@@ -670,7 +790,9 @@ local function onUpdate(dt)
           end
           
           if Manager.jobObjects.zoneSwapClearPropsOnArrival then
-            Manager.clearProps()
+            if not Manager.jobObjects.zoneSwapTargetZone then
+              Manager.clearProps()
+            end
             Manager.jobObjects.zoneSwapClearPropsOnArrival = false
             if Manager.jobObjects.truckID then
               local truckObj = be:getObjectByID(Manager.jobObjects.truckID)
@@ -688,19 +810,18 @@ local function onUpdate(dt)
     if selectedZone.loading and selectedZone.loading:containsPoint2D(playerPos) then
       if Manager.jobObjects.truckID then
         local truck = be:getObjectByID(Manager.jobObjects.truckID)
-        if truck then
-          Manager.jobObjects.zoneSwapTruckAtDestination = true
-        else
+        if not truck then
           Manager.jobObjects.truckID = nil
         end
       end
-      if spawnOrMoveTruckToZone(selectedZone, true) then
+      if Manager.jobObjects.zoneSwapTruckAtDestination and spawnOrMoveTruckToZone(selectedZone, true) then
         currentState = Config.STATE_LOADING
         Manager.truckStoppedInLoading = false
         Manager.markerCleared = false
         Manager.jobObjects.zoneSwapPending = false
         Manager.jobObjects.zoneSwapTargetZone = nil
         Manager.jobObjects.zoneSwapTruckAtDestination = false
+        Manager.jobObjects.zoneSwapClearPropsOnArrival = false
         Manager.deliveryTimer = 0
         Manager.truckStoppedTimer = 0
         Manager.truckLastPosition = nil
@@ -1322,5 +1443,6 @@ M.loadMoreFromUI = function() uiCallbacks.onLoadMore() end
 M.resumeTruck = function() if Manager then Manager.resumeTruck() end end
 M.selectZoneFromUI = function(zoneIndex) uiCallbacks.onSelectZone(zoneIndex) end
 M.swapZoneFromUI = function() uiCallbacks.onSwapZone() end
+M.setZoneWaypointFromUI = function(zoneTag) uiCallbacks.onSetZoneWaypoint(zoneTag) end
 
 return M

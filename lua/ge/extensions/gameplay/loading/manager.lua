@@ -600,7 +600,22 @@ function M.spawnJobMaterials(contractsMod, zonesMod, playerPos)
   local maxGridSize = globalMaxProps + 10
   local gridPositions = M.generateGridPositions(basePos, zone, maxGridSize, gridSpacing, 6, playerPos, 10)
   local gridPosIdx = 1
-  local totalCurrentlySpawned = #M.propQueue
+  
+  local loadedPropIds = {}
+  local loadedSet = {}
+  if M.jobObjects.truckID then
+    loadedPropIds = M.getLoadedPropIdsInTruck(0.1) or {}
+    for _, id in ipairs(loadedPropIds) do
+      loadedSet[id] = true
+    end
+  end
+  
+  local totalCurrentlySpawned = 0
+  for _, entry in ipairs(M.propQueue) do
+    if not loadedSet[entry.id] then
+      totalCurrentlySpawned = totalCurrentlySpawned + 1
+    end
+  end
   local globalMaxAllowed = math.max(0, globalMaxProps - totalCurrentlySpawned)
   
   for _, materialType in ipairs(compatibleMaterials) do
@@ -609,9 +624,13 @@ function M.spawnJobMaterials(contractsMod, zonesMod, playerPos)
       local stock = cache.materialStocks[materialType]
       if stock and stock.current > 0 then
         local currentlyAlive = 0
+        local zoneLoadingArea = zone
         for _, entry in ipairs(M.propQueue) do
-          if entry.materialType == materialType then
-            currentlyAlive = currentlyAlive + 1
+          if entry.materialType == materialType and not loadedSet[entry.id] then
+            local propObj = be:getObjectByID(entry.id)
+            if propObj and zoneLoadingArea and zoneLoadingArea:containsPoint2D(propObj:getPosition()) then
+              currentlyAlive = currentlyAlive + 1
+            end
           end
         end
         
@@ -623,8 +642,15 @@ function M.spawnJobMaterials(contractsMod, zonesMod, playerPos)
           delivered = contractsMod.ContractSystem.contractProgress.deliveredItemsByMaterial[materialType] or 0
         end
         
+        local loadedCount = 0
+        for _, entry in ipairs(M.propQueue) do
+          if entry.materialType == materialType and loadedSet[entry.id] then
+            loadedCount = loadedCount + 1
+          end
+        end
+        
         local totalNeededForContract = required - delivered
-        local totalStillNeeded = math.max(0, totalNeededForContract - currentlyAlive)
+        local totalStillNeeded = math.max(0, totalNeededForContract - currentlyAlive - loadedCount)
         
         local contractNeedsMore = totalStillNeeded > 0
         

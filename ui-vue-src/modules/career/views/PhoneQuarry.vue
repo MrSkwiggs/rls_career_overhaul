@@ -2,11 +2,37 @@
   <PhoneWrapper app-name="Loading" status-font-color="#FFFFFF" status-blend-mode="normal">
     <div class="quarry-container">
       <!-- IDLE State -->
-      <div class="state-panel centered" v-if="currentState === 'idle'">
-        <div class="state-icon">🏔️</div>
-        <div class="state-title">Loading</div>
-        <div class="state-message" v-if="!currentFacility">No loading facility available.</div>
-        <div class="state-message" v-else>Enter a loading zone to see available contracts.</div>
+      <div class="state-panel idle-compact" v-if="currentState === 'idle'">
+        <div class="idle-header">
+          <div class="state-icon idle-icon">🏔️</div>
+          <div class="state-title idle-title">Loading Work</div>
+        </div>
+        <div v-if="allZonesByFacility.length > 0" class="zones-by-facility-section">
+          <div class="idle-info-message">Drive to a zone to do loading work</div>
+          <div 
+            v-for="facility in allZonesByFacility" 
+            :key="facility.facilityId"
+            class="facility-group"
+          >
+            <div class="facility-group-header">{{ facility.facilityName }}</div>
+            <div class="facility-zones-list">
+              <div 
+                v-for="zone in facility.zones" 
+                :key="zone.zoneTag"
+                class="zone-item"
+              >
+                <div class="zone-item-info">
+                  <div class="zone-item-name">{{ zone.displayName }}</div>
+                  <div class="zone-item-distance">{{ formatDistance(zone.distance) }} away</div>
+                </div>
+                <button class="zone-waypoint-button" @click="setZoneWaypoint(zone.zoneTag)">
+                  Set Waypoint
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-else class="state-message centered-message">No loading zones available.</div>
       </div>
 
       <!-- Active Contract Section (Always visible when active) -->
@@ -290,19 +316,36 @@
 
       <!-- LOADING State -->
       <div class="state-panel loading" v-if="currentState === 'loading'">
-        <div class="active-contract-info" v-if="activeContract">
-          <div class="contract-name">{{ activeContract.name }}</div>
-          <div class="contract-progress">
-            <template v-if="activeContract.unitType === 'item'">
-              {{ contractProgress.deliveredItems || 0 }} / {{ activeContract.requiredItems || 0 }} {{ activeContract.units || 'items' }}
-            </template>
-            <template v-else>
-              {{ formatNumber(contractProgress.deliveredTons || 0) }} / {{ activeContract.requiredTons || 0 }} {{ activeContract.units || 'tons' }}
-            </template>
+        <!-- Zone Stock Display -->
+        <div class="zone-stock-section" v-if="zoneStock && zoneStock.materialStocks">
+          <div class="zone-stock-header">Zone Stock</div>
+          <div class="zone-stock-materials">
+            <div 
+              v-for="(stock, matKey) in zoneStock.materialStocks" 
+              :key="matKey"
+              class="zone-stock-material-item"
+            >
+              <div class="zone-stock-material-name">{{ stock.materialName || matKey }}</div>
+              <div class="zone-stock-info">
+                <div class="zone-stock-bar-container">
+                  <div 
+                    class="zone-stock-bar" 
+                    :class="getStockLevelClass(stock.current, stock.max)"
+                    :style="{ width: ((stock.current / stock.max) * 100) + '%' }"
+                  ></div>
+                </div>
+                <div class="zone-stock-text">
+                  <span>{{ stock.current }}</span>
+                  <span>/</span>
+                  <span>{{ stock.max }}</span>
+                  <span v-if="stock.regenRate > 0" class="zone-stock-regen">(+{{ stock.regenRate }}/hr)</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div class="payload-section" v-if="activeContract && activeContract.unitType !== 'item'">
+        <div class="payload-section compact" v-if="activeContract && activeContract.unitType !== 'item'">
           <div class="payload-header">
             <span class="payload-label">Payload</span>
             <span class="payload-value">{{ formatNumber(currentLoadMass) }} / {{ formatNumber(targetLoad) }} kg</span>
@@ -350,7 +393,7 @@
         </button>
 
         <button 
-          v-if="compatibleZones.length > 1" 
+          v-if="compatibleZones.length > 1 && !isComplete" 
           class="action-button swap-zone" 
           @click="swapZone"
         >
@@ -376,12 +419,6 @@
           </div>
         </div>
 
-        <div class="status-section">
-          <div class="status-icon pulsing">🚛</div>
-          <div class="status-title">Delivering</div>
-          <div class="status-message">Truck driving to destination...</div>
-        </div>
-
         <!-- Delivering blocks info -->
         <div class="delivering-blocks" v-if="materialType === 'marble' && deliveryBlocks && deliveryBlocks.length > 0">
           <div class="delivering-header">Delivering:</div>
@@ -396,7 +433,7 @@
         </div>
 
         <button 
-          v-if="compatibleZones.length > 1" 
+          v-if="compatibleZones.length > 1 && !isComplete" 
           class="action-button swap-zone" 
           @click="swapZone"
         >
@@ -458,7 +495,7 @@
           </div>
         </div>
 
-        <div class="status-section" v-if="isContractComplete">
+        <div class="status-section" v-if="isComplete">
           <div class="status-icon">✅</div>
           <div class="status-title complete">Contract Complete!</div>
           <div class="status-message">Finalize to collect your payment.</div>
@@ -467,15 +504,19 @@
         <div class="status-section" v-else>
           <div class="status-icon">📍</div>
           <div class="status-title">At Starter Zone</div>
-          <div class="status-message">Load more materials or continue your contract.</div>
+          <div class="status-message">Continue your contract or swap zones.</div>
         </div>
 
         <div class="actions-section">
-          <button v-if="isContractComplete" class="action-button success" @click="finalizeContract">
+          <button v-if="isComplete" class="action-button success" @click="finalizeContract">
             Finalize & Get Paid
           </button>
-          <button v-else class="action-button primary" @click="loadMore">
-            Load More
+          <button 
+            v-if="compatibleZones.length > 1 && !isComplete" 
+            class="action-button swap-zone" 
+            @click="swapZone"
+          >
+            Switch Zone
           </button>
           <button class="action-button danger small" @click="abandonContract">
             Abandon Contract
@@ -562,6 +603,9 @@ const truckState = ref({ status: 'none', truckId: null, currentZone: null, zoneS
 const allZonesStock = ref([])
 const compatibleZones = ref([])
 const showZoneModal = ref(false)
+const allZonesByFacility = ref([])
+const zoneStock = ref(null)
+const isComplete = ref(false)
 
 // Computed
 const loadPercent = computed(() => {
@@ -721,8 +765,16 @@ const finalizeContract = () => {
   lua.gameplay_loading.finalizeContractFromUI()
 }
 
-const loadMore = () => {
-  lua.gameplay_loading.loadMoreFromUI()
+const formatDistance = (distance) => {
+  if (!distance) return 'Unknown'
+  if (distance < 1000) {
+    return Math.round(distance) + ' m'
+  }
+  return (distance / 1000).toFixed(1) + ' km'
+}
+
+const setZoneWaypoint = (zoneTag) => {
+  lua.gameplay_loading.setZoneWaypointFromUI(zoneTag)
 }
 
 const selectZone = (zoneIndex) => {
@@ -805,7 +857,11 @@ const handleStateUpdate = (data) => {
   truckState.value = data.truckState || { status: 'none', truckId: null, currentZone: null, zoneSwapPending: false }
   allZonesStock.value = data.allZonesStock || []
   compatibleZones.value = data.compatibleZones || []
-  if (data.state === 2) {
+  allZonesByFacility.value = data.allZonesByFacility || []
+  zoneStock.value = data.zoneStock || null
+  isComplete.value = data.isComplete || false
+  const hasCompatibleZones = compatibleZones.value && compatibleZones.value.length > 0
+  if (data.state === 2 && hasCompatibleZones) {
     showZoneModal.value = true
   } else if (data.state !== 2 && showZoneModal.value) {
     showZoneModal.value = false
@@ -832,6 +888,10 @@ onUnmounted(() => {
   overflow-y: auto;
   padding-top: 2em;
   padding-bottom: 0.75em;
+  
+  &:has(.idle-compact) {
+    padding-top: 2em;
+  }
 }
 
 .quarry-container::-webkit-scrollbar {
@@ -893,7 +953,7 @@ onUnmounted(() => {
   padding: 24px 0.75em 0.75em 0.75em;
   display: flex;
   flex-direction: column;
-  gap: 1em;
+  gap: 0.6em;
   
   &.centered {
     align-items: center;
@@ -904,8 +964,33 @@ onUnmounted(() => {
   }
   
   &.loading {
-    padding-top: 24px;
+    padding-top: 0.5em;
+    padding-bottom: 0.5em;
+    gap: 0.5em;
   }
+  
+  &.idle-compact {
+    padding-top: 0.75em;
+    padding-bottom: 0.5em;
+    gap: 0.75em;
+  }
+}
+
+.idle-header {
+  text-align: center;
+  margin-bottom: 0.25em;
+}
+
+.idle-icon {
+  font-size: 2.5em;
+  margin-bottom: 0.25em;
+}
+
+.idle-title {
+  font-size: 1.3em;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 0;
 }
 
 .state-icon {
@@ -1142,11 +1227,21 @@ onUnmounted(() => {
   border-radius: 10px;
   padding: 0.75em;
   
+  &.compact {
+    padding: 0.5em 0.75em;
+    margin-bottom: 0.5em;
+  }
+  
   .contract-name {
     font-weight: 600;
     color: #fff;
     font-size: 1em;
     margin-bottom: 0.25em;
+  }
+  
+  &.compact .contract-name {
+    font-size: 0.9em;
+    margin-bottom: 0.2em;
   }
   
   .contract-progress {
@@ -1156,6 +1251,10 @@ onUnmounted(() => {
     &.complete {
       color: #4ade80;
     }
+  }
+  
+  &.compact .contract-progress {
+    font-size: 0.85em;
   }
   
   .complete-badge {
@@ -1193,36 +1292,45 @@ onUnmounted(() => {
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
   padding: 0.75em;
+  
+  &.compact {
+    padding: 0.5em 0.75em;
+    margin-bottom: 0.4em;
+  }
 }
 
 .payload-header {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 0.5em;
+  margin-bottom: 0.4em;
+  
+  .payload-section.compact & {
+    margin-bottom: 0.3em;
+  }
   
   .payload-label {
     color: rgba(255, 255, 255, 0.7);
-    font-size: 0.9em;
+    font-size: 0.85em;
   }
   
   .payload-value {
     color: #fff;
     font-weight: 600;
-    font-size: 0.9em;
+    font-size: 0.85em;
   }
 }
 
 .payload-bar-container {
-  height: 24px;
+  height: 20px;
   background: rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+  border-radius: 10px;
   overflow: hidden;
 }
 
 .payload-bar {
   height: 100%;
   background: linear-gradient(90deg, #ff6600, #ff9933);
-  border-radius: 12px;
+  border-radius: 10px;
   transition: width 0.3s ease;
   
   &.full {
@@ -1233,9 +1341,9 @@ onUnmounted(() => {
 .payload-percent {
   text-align: center;
   font-weight: 700;
-  font-size: 1.2em;
+  font-size: 1em;
   color: #fff;
-  margin-top: 0.5em;
+  margin-top: 0.35em;
 }
 
 // Blocks Section
@@ -1243,37 +1351,38 @@ onUnmounted(() => {
   background: rgba(30, 30, 30, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
-  padding: 0.75em;
+  padding: 0.5em 0.75em;
+  margin-bottom: 0.5em;
 }
 
 .blocks-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 0.5em;
-  font-size: 0.9em;
+  margin-bottom: 0.4em;
+  font-size: 0.85em;
   color: rgba(255, 255, 255, 0.8);
   
   .damage-warning {
     color: #fbbf24;
-    font-size: 0.8em;
+    font-size: 0.75em;
   }
 }
 
 .blocks-list {
   display: flex;
   flex-direction: column;
-  gap: 0.4em;
+  gap: 0.3em;
 }
 
 .block-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.4em 0.6em;
+  padding: 0.35em 0.5em;
   background: rgba(255, 255, 255, 0.05);
   border-radius: 6px;
-  font-size: 0.85em;
+  font-size: 0.8em;
   
   &.damaged {
     background: rgba(248, 113, 113, 0.15);
@@ -1334,16 +1443,16 @@ onUnmounted(() => {
 .actions-section {
   display: flex;
   flex-direction: column;
-  gap: 0.75em;
+  gap: 0.5em;
 }
 
 // Action Buttons
 .action-button {
   width: 100%;
-  padding: 0.9em;
+  padding: 0.7em;
   border: none;
   border-radius: 12px;
-  font-size: 1.1em;
+  font-size: 1em;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -1404,15 +1513,16 @@ onUnmounted(() => {
 
 // Active Contract Section
 .active-contract-section {
-  margin: 2em 0.75em 0.5em 0.75em;
+  margin: 0.5em 0.75em 0.4em 0.75em;
 }
 
 .section-header {
-  font-size: 0.75em;
+  font-size: 0.7em;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.55);
-  margin-bottom: 0.5em;
+  margin-bottom: 0.35em;
+  margin-top: 2em;
 }
 
 .active-contract-card {
@@ -1420,13 +1530,15 @@ onUnmounted(() => {
   border: 1px solid rgba(255, 102, 0, 0.3);
   border-radius: 10px;
   padding: 0.6em 0.75em;
+  text-align: center;
 }
 
 .contract-name-row {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
-  margin-bottom: 0.5em;
+  gap: 0.5em;
+  margin-bottom: 0.4em;
 }
 
 .contract-payout-badge {
@@ -1441,29 +1553,29 @@ onUnmounted(() => {
 .contract-progress-row {
   display: flex;
   flex-direction: column;
-  gap: 0.4em;
+  gap: 0.3em;
 }
 
 .progress-bar-container {
-  height: 8px;
+  height: 6px;
   background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
+  border-radius: 3px;
   overflow: hidden;
 }
 
 .progress-bar {
   height: 100%;
   background: linear-gradient(90deg, #ff6600, #ff9933);
-  border-radius: 4px;
+  border-radius: 3px;
   transition: width 0.3s ease;
 }
 
 .progress-text {
-  font-size: 0.85em;
+  font-size: 0.8em;
   color: rgba(255, 255, 255, 0.8);
   display: flex;
   align-items: center;
-  gap: 0.5em;
+  gap: 0.4em;
 }
 
 .progress-percent {
@@ -1502,21 +1614,21 @@ onUnmounted(() => {
 
 // Truck Status Section
 .truck-status-section {
-  margin: 0 0.75em 0.5em 0.75em;
+  margin: 0 0.75em 0.4em 0.75em;
 }
 
 .truck-status-card {
   background: rgba(30, 30, 30, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
-  padding: 0.6em 0.75em;
+  padding: 0.5em 0.75em;
   display: flex;
   align-items: center;
-  gap: 0.75em;
+  gap: 0.6em;
 }
 
 .truck-status-icon {
-  font-size: 2em;
+  font-size: 1.6em;
   
   &.pulsing {
     animation: pulse 2s ease-in-out infinite;
@@ -1530,12 +1642,12 @@ onUnmounted(() => {
 .truck-status-text {
   font-weight: 600;
   color: #fff;
-  font-size: 1em;
-  margin-bottom: 0.2em;
+  font-size: 0.9em;
+  margin-bottom: 0.15em;
 }
 
 .truck-status-location {
-  font-size: 0.85em;
+  font-size: 0.8em;
   color: rgba(255, 255, 255, 0.6);
 }
 
@@ -1847,6 +1959,189 @@ onUnmounted(() => {
 }
 
 .stock-regen {
+  color: #ff6600;
+  font-size: 0.9em;
+}
+
+// Zones by Facility Section
+.zones-by-facility-section {
+  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  padding-right: 0.25em;
+  padding-left: 0.25em;
+}
+
+.idle-info-message {
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: center;
+  padding: 0.25em 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.facility-group {
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid rgba(255, 102, 0, 0.3);
+  border-radius: 10px;
+  padding: 0.6em;
+}
+
+.facility-group-header {
+  font-weight: 700;
+  color: #ff6600;
+  font-size: 1em;
+  margin-bottom: 0.5em;
+  padding-bottom: 0.4em;
+  border-bottom: 1px solid rgba(255, 102, 0, 0.2);
+}
+
+.facility-zones-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+}
+
+.zone-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5em;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  transition: background 0.2s ease;
+  
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+}
+
+.zone-item-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+}
+
+.zone-item-name {
+  font-weight: 600;
+  color: #fff;
+  font-size: 0.95em;
+}
+
+.zone-item-distance {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.85em;
+}
+
+.zone-waypoint-button {
+  padding: 0.4em 0.8em;
+  background: linear-gradient(135deg, #ff6600, #ff9933);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.85em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  
+  &:hover {
+    background: linear-gradient(135deg, #ff9933, #ff6600);
+    transform: scale(1.05);
+  }
+  
+  &:active {
+    transform: scale(0.95);
+  }
+}
+
+.centered-message {
+  text-align: center;
+  margin-top: 0.5em;
+  padding: 1em;
+}
+
+// Zone Stock Section (in Loading state)
+.zone-stock-section {
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 0.5em 0.75em;
+  margin-bottom: 0.6em;
+}
+
+.zone-stock-header {
+  font-size: 0.85em;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 0.4em;
+}
+
+.zone-stock-materials {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+}
+
+.zone-stock-material-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25em;
+}
+
+.zone-stock-material-name {
+  font-size: 0.8em;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 500;
+}
+
+.zone-stock-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+}
+
+.zone-stock-bar-container {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.zone-stock-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+  
+  &.low {
+    background: #ef4444;
+  }
+  
+  &.medium {
+    background: #ff6600;
+  }
+  
+  &.high {
+    background: #22c55e;
+  }
+  
+  &.empty {
+    background: rgba(255, 255, 255, 0.2);
+  }
+}
+
+.zone-stock-text {
+  font-size: 0.8em;
+  color: rgba(255, 255, 255, 0.7);
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+}
+
+.zone-stock-regen {
   color: #ff6600;
   font-size: 0.9em;
 }
