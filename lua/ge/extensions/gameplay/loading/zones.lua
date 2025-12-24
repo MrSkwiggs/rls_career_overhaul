@@ -81,12 +81,20 @@ local function ensureGroupCache(group, getCurrentGameHour)
   end
 
   local materialStocks = {}
+  local currentHour = getCurrentGameHour()
   for matKey, matData in pairs(materials) do
+    local maxStock = matData.maxStock or 0
+    local startStock = matData.startStock or maxStock
+    local regenRate = matData.regenRate or 0
+    local nextRegenTime = nil
+    if regenRate > 0 then
+      nextRegenTime = currentHour + (1 / regenRate)
+    end
     materialStocks[matKey] = {
-      current = matData.maxStock or 0,
-      max = matData.maxStock or 0,
-      regenRate = matData.regenRate or 0,
-      lastRegenCheck = getCurrentGameHour(),
+      current = startStock,
+      max = maxStock,
+      regenRate = regenRate,
+      nextRegenTime = nextRegenTime,
     }
   end
 
@@ -117,33 +125,29 @@ local function ensureGroupOffRoadCentroid(group, getCurrentGameHour)
 end
 
 local function updateZoneStocks(dt, getCurrentGameHour)
-  local Config = extensions.gameplay_loading_config
-  M.stockRegenTimer = M.stockRegenTimer + dt
-  if M.stockRegenTimer < Config.settings.stockRegenCheckInterval then return end
-  M.stockRegenTimer = 0
-
   local currentHour = getCurrentGameHour()
 
   for _, group in ipairs(M.availableGroups) do
     local cache = M.groupCache[tostring(group.secondaryTag)]
     if cache and cache.materialStocks then
       for matKey, stock in pairs(cache.materialStocks) do
-        local hoursPassed = currentHour - stock.lastRegenCheck
-        if hoursPassed < 0 then hoursPassed = hoursPassed + 24 end
-        
-        if hoursPassed >= 1 then
-          local regenAmount = math.floor(hoursPassed * stock.regenRate)
-          if regenAmount > 0 and stock.current < stock.max then
-            local oldStock = stock.current
-            stock.current = math.min(stock.max, stock.current + regenAmount)
-            stock.lastRegenCheck = currentHour
-            
-            if stock.current > oldStock then
-              print(string.format("[Loading] Zone '%s' material '%s': Stock regenerated %d -> %d/%d", 
-                group.secondaryTag, matKey, oldStock, stock.current, stock.max))
+        if stock.nextRegenTime and stock.regenRate > 0 then
+          local hoursUntilRegen = stock.nextRegenTime - currentHour
+          if hoursUntilRegen < 0 then hoursUntilRegen = hoursUntilRegen + 24 end
+          
+          if hoursUntilRegen <= 0 then
+            if stock.current < stock.max then
+              local oldStock = stock.current
+              stock.current = math.min(stock.max, stock.current + 1)
+              stock.nextRegenTime = currentHour + (1 / stock.regenRate)
+              
+              if stock.current > oldStock then
+                print(string.format("[Loading] Zone '%s' material '%s': Stock regenerated %d -> %d/%d (next regen at %.2f hours)", 
+                  group.secondaryTag, matKey, oldStock, stock.current, stock.max, stock.nextRegenTime))
+              end
+            else
+              stock.nextRegenTime = currentHour + (1 / stock.regenRate)
             end
-          else
-            stock.lastRegenCheck = currentHour
           end
         end
       end

@@ -13,56 +13,12 @@ local function getMixedContractBreakdown(contract)
   if not contract or contract.unitType ~= "item" or not contract.materialTypeName then
     return nil
   end
-  
-  local materialsOfType = {}
-  if Config.materials then
-    for matKey, matConfig in pairs(Config.materials) do
-      if matConfig.typeName == contract.materialTypeName then
-        table.insert(materialsOfType, { key = matKey, config = matConfig })
-      end
-    end
+
+  if contract.materialRequirements and next(contract.materialRequirements) ~= nil then
+    return contract.materialRequirements
   end
-  
-  if #materialsOfType <= 1 then
-    return nil
-  end
-  
-  table.sort(materialsOfType, function(a, b)
-    local aMass = (a.config.unitType == "mass" and a.config.massPerProp) or 0
-    local bMass = (b.config.unitType == "mass" and b.config.massPerProp) or 0
-    return aMass < bMass
-  end)
-  
-  local totalRequired = contract.requiredItems or 0
-  local breakdown = {}
-  
-  if totalRequired <= 0 then
-    return nil
-  end
-  
-  if #materialsOfType == 2 and totalRequired == 2 then
-    breakdown[materialsOfType[1].key] = 1
-    breakdown[materialsOfType[2].key] = 1
-  elseif #materialsOfType == 2 then
-    local smaller = materialsOfType[1]
-    local larger = materialsOfType[2]
-    local smallerCount = math.max(1, math.floor(totalRequired / 2))
-    breakdown[smaller.key] = smallerCount
-    breakdown[larger.key] = totalRequired - smallerCount
-  else
-    local remaining = totalRequired
-    for i, mat in ipairs(materialsOfType) do
-      if i == #materialsOfType then
-        breakdown[mat.key] = remaining
-      else
-        local count = math.max(1, math.floor(totalRequired / #materialsOfType))
-        breakdown[mat.key] = count
-        remaining = remaining - count
-      end
-    end
-  end
-  
-  return breakdown
+
+  return nil
 end
 
 local function drawWorkSiteMarker(dt, currentState, stateDrivingToSite, markerCleared, activeGroup)
@@ -191,7 +147,16 @@ local function getQuarryStateForUI(currentState, playerMod, contractsMod, manage
       deliveryCount = contractsMod.ContractSystem.contractProgress and contractsMod.ContractSystem.contractProgress.deliveryCount or 0
     },
     currentLoadMass = managerMod.jobObjects.currentLoadMass or 0,
-    targetLoad = Config.settings.targetLoad or 25000,
+    targetLoad = (function()
+      local matType = managerMod.jobObjects.materialType
+      if matType and Config.materials and Config.materials[matType] then
+        local matConfig = Config.materials[matType]
+        if matConfig.unitType == "mass" then
+          return matConfig.targetLoad or 25000
+        end
+      end
+      return nil
+    end)(),
     materialType = managerMod.jobObjects.materialType or nil,
     itemBlocks = (managerMod.jobObjects.materialType ~= "rocks") and managerMod.getItemBlocksStatus() or {},
     anyItemDamaged = managerMod.jobObjects.anyItemDamaged or false,
@@ -313,9 +278,15 @@ local function drawUI(dt, currentState, configStates, playerMod, contractsMod, m
           imgui.Text(string.format("* Payment: %s", (c.paymentType == "progressive") and "Progressive" or "On completion"))
           
           local hoursLeft = contractsMod.getContractHoursRemaining(c)
-          if hoursLeft <= 1 then imgui.TextColored(imgui.ImVec4(1, 0.3, 0.3, 1), string.format("* EXPIRES SOON: %d min", math.floor(hoursLeft * 60)))
-          elseif hoursLeft <= 2 then imgui.TextColored(imgui.ImVec4(1, 0.7, 0.3, 1), string.format("* Expires in: %.1f hrs", hoursLeft))
-          else imgui.TextColored(imgui.ImVec4(0.6, 0.6, 0.6, 1), string.format("* Expires in: %.0f hrs", hoursLeft)) end
+          if c.expirationHours then
+            local expiresSoonThreshold = c.expirationHours * 0.2
+            if hoursLeft <= expiresSoonThreshold then imgui.TextColored(imgui.ImVec4(1, 0.3, 0.3, 1), string.format("* EXPIRES SOON: %d min", math.floor(hoursLeft * 60)))
+            elseif hoursLeft <= 2 then imgui.TextColored(imgui.ImVec4(1, 0.7, 0.3, 1), string.format("* Expires in: %.1f hrs", hoursLeft))
+            else imgui.TextColored(imgui.ImVec4(0.6, 0.6, 0.6, 1), string.format("* Expires in: %.0f hrs", hoursLeft)) end
+          else
+            if hoursLeft <= 2 then imgui.TextColored(imgui.ImVec4(1, 0.7, 0.3, 1), string.format("* Expires in: %.1f hrs", hoursLeft))
+            else imgui.TextColored(imgui.ImVec4(0.6, 0.6, 0.6, 1), string.format("* Expires in: %.0f hrs", hoursLeft)) end
+          end
           imgui.Unindent(20); imgui.Dummy(imgui.ImVec2(0, 8))
           if i < #contractsMod.ContractSystem.availableContracts then imgui.Separator(); imgui.Dummy(imgui.ImVec2(0, 5)) end
         end
@@ -411,11 +382,6 @@ local function drawUI(dt, currentState, configStates, playerMod, contractsMod, m
       imgui.Dummy(imgui.ImVec2(0, 10))
       if imgui.Button("ABANDON CONTRACT", imgui.ImVec2(-1, 30)) then callbacks.onAbandonContract() end
 
-    elseif currentState == configStates.STATE_TRUCK_ARRIVING then
-      imgui.TextColored(imgui.ImVec4(0, 1, 1, pulseAlpha * uiAnim.opacity), ">> TRUCK ARRIVING <<")
-      imgui.Text("Waiting for truck to arrive..."); imgui.Dummy(imgui.ImVec2(0, 10))
-      if imgui.Button("ABANDON CONTRACT", imgui.ImVec2(-1, 30)) then callbacks.onAbandonContract() end
-
     elseif currentState == configStates.STATE_LOADING then
       imgui.TextColored(imgui.ImVec4(0, 1, 0, pulseAlpha * uiAnim.opacity), ">> LOADING <<")
       if contractsMod.ContractSystem.activeContract then
@@ -444,11 +410,28 @@ local function drawUI(dt, currentState, configStates, playerMod, contractsMod, m
         end
         imgui.Separator()
       end
+      
+      if managerMod.jobObjects.activeGroup and zonesMod then
+        local stockInfo = zonesMod.getZoneStockInfo and zonesMod.getZoneStockInfo(managerMod.jobObjects.activeGroup, contractsMod.getCurrentGameHour)
+        if stockInfo and stockInfo.materialStocks then
+          imgui.Text("Zone Stock:")
+          for matKey, stock in pairs(stockInfo.materialStocks) do
+            local matConfig = Config.materials and Config.materials[matKey]
+            local matName = matConfig and matConfig.name or matKey
+            local stockPercent = stock.max > 0 and (stock.current / stock.max) or 0
+            local stockColor = stockPercent < 0.2 and imgui.ImVec4(1, 0.3, 0.3, uiAnim.opacity) or (stockPercent < 0.5 and imgui.ImVec4(1, 0.7, 0.3, uiAnim.opacity) or imgui.ImVec4(0.3, 1, 0.3, uiAnim.opacity))
+            imgui.TextColored(stockColor, string.format("  %s: %d/%d", matName, stock.current, stock.max))
+          end
+          imgui.Separator()
+        end
+      end
+      
       local materialType = managerMod.jobObjects.materialType
       local matConfig = materialType and Config.materials and Config.materials[materialType]
       if not matConfig or matConfig.unitType ~= "item" then
-        local percent = math.min(1.0, managerMod.jobObjects.currentLoadMass / Config.settings.targetLoad)
-        imgui.Text(string.format("Payload: %.0f / %.0f kg", managerMod.jobObjects.currentLoadMass, Config.settings.targetLoad))
+        local targetLoad = matConfig and matConfig.targetLoad or 25000
+        local percent = math.min(1.0, managerMod.jobObjects.currentLoadMass / targetLoad)
+        imgui.Text(string.format("Payload: %.0f / %.0f kg", managerMod.jobObjects.currentLoadMass, targetLoad))
         imgui.PushStyleColor2(imgui.Col_PlotHistogram, percent > 0.8 and imgui.ImVec4(0, 1, 0, 1) or imgui.ImVec4(1, 1, 0, 1))
         imgui.ProgressBar(percent, imgui.ImVec2(-1, 30), string.format("%.0f%%", percent * 100))
         imgui.PopStyleColor(1)
@@ -469,6 +452,15 @@ local function drawUI(dt, currentState, configStates, playerMod, contractsMod, m
       imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0, 0.6, 0, uiAnim.opacity))
       if imgui.Button("SEND TRUCK", imgui.ImVec2(-1, 45)) then callbacks.onSendTruck() end
       imgui.PopStyleColor(2); imgui.Dummy(imgui.ImVec2(0, 5))
+      
+      local compatibleZones = callbacks.getCompatibleZones()
+      if compatibleZones and #compatibleZones > 1 then
+        imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.4, 0.4, 0, uiAnim.opacity))
+        imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.6, 0.6, 0, uiAnim.opacity))
+        if imgui.Button("SWAP ZONE", imgui.ImVec2(-1, 30)) then callbacks.onSwapZone() end
+        imgui.PopStyleColor(2); imgui.Dummy(imgui.ImVec2(0, 5))
+      end
+      
       if imgui.Button("ABANDON CONTRACT", imgui.ImVec2(-1, 30)) then callbacks.onAbandonContract() end
 
     elseif currentState == configStates.STATE_DELIVERING then
@@ -505,6 +497,13 @@ local function drawUI(dt, currentState, configStates, playerMod, contractsMod, m
         end
       end
       imgui.Dummy(imgui.ImVec2(0, 10))
+      local compatibleZones = callbacks.getCompatibleZones()
+      if compatibleZones and #compatibleZones > 1 then
+        imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0.4, 0.4, 0, uiAnim.opacity))
+        imgui.PushStyleColor2(imgui.Col_ButtonHovered, imgui.ImVec4(0.6, 0.6, 0, uiAnim.opacity))
+        if imgui.Button("SWAP ZONE", imgui.ImVec2(-1, 30)) then callbacks.onSwapZone() end
+        imgui.PopStyleColor(2); imgui.Dummy(imgui.ImVec2(0, 5))
+      end
       if imgui.Button("ABANDON CONTRACT", imgui.ImVec2(-1, 30)) then callbacks.onAbandonContract() end
 
     elseif currentState == configStates.STATE_RETURN_TO_QUARRY then

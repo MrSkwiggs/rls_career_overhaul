@@ -9,17 +9,17 @@ M.jobObjects = {
   deliveredPropIds = nil,
   materialType = nil,
   activeGroup = nil,
-  deferredTruckTargetPos = nil,
   loadingZoneTargetPos = nil,
   truckSpawnQueued = false,
-  truckSpawnPos = nil,
-  truckSpawnRot = nil,
   itemDamage = {},
   totalItemDamagePercent = 0,
   anyItemDamaged = false,
   lastDeliveryDamagePercent = 0,
   deliveryDestination = nil,
   deliveryBlocksStatus = nil,
+  zoneSwapPending = false,
+  zoneSwapTargetZone = nil,
+  zoneSwapTruckAtDestination = false,
 }
 
 M.propQueue = {}
@@ -38,10 +38,11 @@ M.isDispatching = false
 M.payloadUpdateTimer = 0
 M.truckStoppedTimer = 0
 M.truckLastPosition = nil
-M.truckResendCount = 0
+M.deliveryTimer = 0
 
 M.cachedBedData = {}
 M.cachedMaterialConfigs = {}
+M.cachedBoundingBoxes = {}
 M.lastPayloadMass = 0
 M.payloadStationaryCount = 0
 
@@ -52,30 +53,17 @@ function M.calculateSpawnTransformForLocation(spawnPos, targetPos)
     local targetRoadName, targetNodeIdx, targetDist = map.findClosestRoad(targetPos)
     
     if spawnRoadName and targetRoadName then
-      local path = nil
-      if spawnRoadName ~= targetRoadName then
-        path = map.getPath(spawnRoadName, targetRoadName)
-      elseif spawnNodeIdx and targetNodeIdx then
-        local mapData = map.getMap()
-        if mapData and mapData.nodes then
-          local spawnNode = mapData.nodes[spawnNodeIdx]
-          local targetNode = mapData.nodes[targetNodeIdx]
-          if spawnNode and targetNode and spawnNode.pos and targetNode.pos then
-            local spawnNodePos = vec3(spawnNode.pos)
-            local targetNodePos = vec3(targetNode.pos)
-            local directDir = targetNodePos - spawnNodePos
-            directDir.z = 0
-            if directDir:length() > 0.1 then dir = directDir:normalized() end
-          end
+      local mapData = map.getMap()
+      if mapData and mapData.nodes then
+        local path = nil
+        if spawnRoadName ~= targetRoadName then
+          path = map.getPath(spawnRoadName, targetRoadName)
         end
-      end
-      
-      if path and #path > 0 then
-        local mapData = map.getMap()
-        if mapData and mapData.nodes then
-          local nextNodeIdx = nil
-          local spawnPosVec = vec3(spawnPos)
-          
+        
+        local nextNodeIdx = nil
+        local spawnPosVec = vec3(spawnPos)
+        
+        if path and #path > 0 then
           local closestPathIdx = 1
           local closestDist = math.huge
           for i, nodeIdx in ipairs(path) do
@@ -97,14 +85,42 @@ function M.calculateSpawnTransformForLocation(spawnPos, targetPos)
           else
             nextNodeIdx = path[1]
           end
-          
-          if nextNodeIdx then
-            local nextNode = mapData.nodes[nextNodeIdx]
-            if nextNode and nextNode.pos then
-              local nextNodePos = vec3(nextNode.pos)
-              local pathDir = nextNodePos - spawnPosVec
-              pathDir.z = 0
-              if pathDir:length() > 0.1 then dir = pathDir:normalized() end
+        elseif spawnRoadName == targetRoadName and spawnNodeIdx and targetNodeIdx then
+          local roadData = mapData.roads and mapData.roads[spawnRoadName]
+          if roadData and roadData.nodes then
+            local spawnNodeInRoad = nil
+            local targetNodeInRoad = nil
+            for i, nodeIdx in ipairs(roadData.nodes) do
+              if nodeIdx == spawnNodeIdx then
+                spawnNodeInRoad = i
+              end
+              if nodeIdx == targetNodeIdx then
+                targetNodeInRoad = i
+              end
+            end
+            
+            if spawnNodeInRoad and targetNodeInRoad then
+              if targetNodeInRoad > spawnNodeInRoad and spawnNodeInRoad < #roadData.nodes then
+                nextNodeIdx = roadData.nodes[spawnNodeInRoad + 1]
+              elseif targetNodeInRoad < spawnNodeInRoad and spawnNodeInRoad > 1 then
+                nextNodeIdx = roadData.nodes[spawnNodeInRoad - 1]
+              elseif spawnNodeInRoad < #roadData.nodes then
+                nextNodeIdx = roadData.nodes[spawnNodeInRoad + 1]
+              elseif spawnNodeInRoad > 1 then
+                nextNodeIdx = roadData.nodes[spawnNodeInRoad - 1]
+              end
+            end
+          end
+        end
+        
+        if nextNodeIdx then
+          local nextNode = mapData.nodes[nextNodeIdx]
+          if nextNode and nextNode.pos then
+            local nextNodePos = vec3(nextNode.pos)
+            local pathDir = nextNodePos - spawnPosVec
+            pathDir.z = 0
+            if pathDir:length() > 0.1 then
+              dir = pathDir:normalized()
             end
           end
         end
@@ -138,6 +154,122 @@ function M.getMaterialConfig(materialType)
     M.cachedMaterialConfigs[materialType] = matConfig
   end
   return matConfig
+end
+
+function M.getMaterialBoundingBox(materialType)
+  if M.cachedBoundingBoxes[materialType] then
+    return M.cachedBoundingBoxes[materialType]
+  end
+  
+  local matConfig = M.getMaterialConfig(materialType)
+  if not matConfig then return nil end
+  
+  local tempObj = core_vehicles.spawnNewVehicle(matConfig.model, {
+    config = matConfig.config,
+    pos = vec3(0, 0, -1000),
+    rot = quatFromDir(vec3(0,1,0)),
+    autoEnterVehicle = false
+  })
+  
+  if not tempObj then return nil end
+  
+  local objId = tempObj:getID()
+  local obj = be:getObjectByID(objId)
+  if not obj then
+    tempObj:delete()
+    return nil
+  end
+  
+  local aabb = nil
+  if obj.getSpawnLocalAABB then
+    local spawnAABB = obj:getSpawnLocalAABB()
+    if spawnAABB then
+      local extents = spawnAABB:getExtents()
+      if extents then
+        aabb = {
+          xMin = -extents.x,
+          xMax = extents.x,
+          yMin = -extents.y,
+          yMax = extents.y,
+          zMin = -extents.z,
+          zMax = extents.z
+        }
+      end
+    end
+  end
+  
+  if not aabb then
+    obj:delete()
+    local defaultBbox = { width = 3, length = 3, height = 2, maxDim = 3 }
+    M.cachedBoundingBoxes[materialType] = defaultBbox
+    return defaultBbox
+  end
+  
+  local width = math.max(math.abs(aabb.xMax - aabb.xMin), math.abs(aabb.yMax - aabb.yMin))
+  local length = math.min(math.abs(aabb.xMax - aabb.xMin), math.abs(aabb.yMax - aabb.yMin))
+  local height = math.abs(aabb.zMax - aabb.zMin)
+  
+  obj:delete()
+  
+  local bbox = { width = width, length = length, height = height, maxDim = math.max(width, length) }
+  M.cachedBoundingBoxes[materialType] = bbox
+  return bbox
+end
+
+function M.generateGridPositions(basePos, zone, maxCount, gridSpacing, minRoadDist, avoidPos, minPlayerDist)
+  minRoadDist = minRoadDist or 5
+  gridSpacing = gridSpacing or 3
+  maxCount = maxCount or 50
+  minPlayerDist = minPlayerDist or 10
+  
+  if not zone or not zone.aabb or zone.aabb.invalid then return {} end
+  if not map or not map.findClosestRoad then return {} end
+  
+  local positions = {}
+  local gridSize = math.ceil(math.sqrt(maxCount))
+  local halfSize = (gridSize - 1) * gridSpacing * 0.5
+  
+  local dir = vec3(0, 1, 0)
+  if basePos and zone.loading and zone.loading.center then
+    local centerDir = vec3(zone.loading.center) - basePos
+    centerDir.z = 0
+    if centerDir:length() > 0.1 then
+      dir = centerDir:normalized()
+    end
+  end
+  
+  local right = vec3(-dir.y, dir.x, 0)
+  
+  for row = 0, gridSize - 1 do
+    for col = 0, gridSize - 1 do
+      if #positions >= maxCount then break end
+      
+      local offsetX = (col - (gridSize - 1) * 0.5) * gridSpacing
+      local offsetY = (row - (gridSize - 1) * 0.5) * gridSpacing
+      
+      local gridPos = basePos + (right * offsetX) + (dir * offsetY)
+      gridPos.z = core_terrain.getTerrainHeight(gridPos)
+      
+      if zone:containsPoint2D(gridPos) then
+        local _, _, roadDist = map.findClosestRoad(gridPos)
+        if roadDist and roadDist > minRoadDist then
+          local validPos = true
+          if avoidPos then
+            local distToPlayer = (gridPos - avoidPos):length()
+            if distToPlayer < (minPlayerDist or 10) then
+              validPos = false
+            end
+          end
+          if validPos then
+            table.insert(positions, gridPos)
+          end
+        end
+      end
+    end
+    if #positions >= maxCount then break end
+  end
+  
+  return positions
 end
 
 function M.managePropCapacity()
@@ -215,52 +347,173 @@ local function getContractMaterialRequirements(contract)
   return breakdown
 end
 
+function M.deleteDamagedItem(propId)
+  for i = #M.propQueue, 1, -1 do
+    if M.propQueue[i].id == propId then
+      M.propQueueById[propId] = nil
+      M.itemInitialState[propId] = nil
+      M.itemDamageState[propId] = nil
+      if M.jobObjects.itemDamage and M.jobObjects.itemDamage[propId] then
+        M.jobObjects.itemDamage[propId] = nil
+      end
+      local obj = be:getObjectByID(propId)
+      if obj then obj:delete() end
+      table.remove(M.propQueue, i)
+      return true
+    end
+  end
+  return false
+end
+
 function M.repairAndRespawnDamagedItem(propId, zonesMod, contractsMod)
   local entry = M.propQueueById[propId]
   if not entry then return false end
   
-  local obj = be:getObjectByID(propId)
-  if not obj then return false end
-  
-  local matConfig = M.getMaterialConfig(entry.materialType)
-  if not matConfig then return false end
-  
   local group = M.jobObjects.activeGroup
   if not group then return false end
   
-  local cache = zonesMod.ensureGroupCache(group, contractsMod.getCurrentGameHour)
-  if not cache or not cache.materialStocks then return false end
-  
-  local stock = cache.materialStocks[entry.materialType]
-  if not stock or stock.current <= 0 then return false end
-  
-  local basePos = cache.offRoadCentroid
-  if not basePos then
-    basePos = zonesMod.findOffRoadCentroid(group.loading, 5, 1000)
-    if basePos then cache.offRoadCentroid = basePos end
-  end
-  if not basePos then return false end
-  
-  obj:repair()
-  obj:setPosition(basePos + vec3(0, 0, 0.2))
-  obj:setLinearVelocity(vec3(0, 0, 0))
-  obj:setAngularVelocity(vec3(0, 0, 0))
-  
-  if M.jobObjects.itemDamage and M.jobObjects.itemDamage[propId] then
-    M.jobObjects.itemDamage[propId].isDamaged = false
-    M.jobObjects.itemDamage[propId].damage = 0
-  end
-  if M.itemDamageState[propId] then
-    M.itemDamageState[propId].isDamaged = false
+  if not M.pendingRespawns then
+    M.pendingRespawns = {}
   end
   
-  stock.current = stock.current - 1
+  local respawnId = #M.pendingRespawns + 1
+  M.pendingRespawns[respawnId] = {
+    propId = propId,
+    materialType = entry.materialType,
+    spawnTime = os.clock() + 15.0,
+    group = group
+  }
   
-  print(string.format("[Loading] Repaired and respawned damaged item %s (consumed 1 stock)", entry.materialType))
+  print(string.format("[Loading] Damaged item %s will be replaced in 15 seconds", entry.materialType))
   return true
 end
 
-function M.spawnJobMaterials(contractsMod, zonesMod)
+function M.processPendingRespawns(dt, zonesMod, contractsMod)
+  if not M.jobObjects.activeGroup then return end
+  
+  if not M.pendingRespawns then
+    M.pendingRespawns = {}
+  end
+  
+  local currentTime = os.clock()
+  local playerVeh = be:getPlayerVehicle(0)
+  local playerPos = playerVeh and playerVeh:getPosition() or nil
+  
+  for i = #M.pendingRespawns, 1, -1 do
+    local respawn = M.pendingRespawns[i]
+    if respawn.spawnTime <= currentTime then
+      local group = respawn.group
+      if not group or group ~= M.jobObjects.activeGroup then
+        table.remove(M.pendingRespawns, i)
+      else
+        local cache = zonesMod.ensureGroupCache(group, contractsMod.getCurrentGameHour)
+        if not cache or not cache.materialStocks then
+          table.remove(M.pendingRespawns, i)
+        else
+          local stock = cache.materialStocks[respawn.materialType]
+          if respawn.propId then
+            M.deleteDamagedItem(respawn.propId)
+          end
+          
+          if not stock or stock.current <= 0 then
+            print(string.format("[Loading] No stock available to respawn %s, item deleted", respawn.materialType))
+            table.remove(M.pendingRespawns, i)
+          else
+            local zone = group.loading
+            if not zone then
+              table.remove(M.pendingRespawns, i)
+            else
+              local basePos = cache.offRoadCentroid
+              if not basePos then
+                basePos = zonesMod.findOffRoadCentroid(zone, 5, 1000)
+                if basePos then cache.offRoadCentroid = basePos end
+              end
+              if not basePos then
+                table.remove(M.pendingRespawns, i)
+              else
+                basePos = basePos + vec3(0, 0, 0.2)
+                
+                local bbox = M.getMaterialBoundingBox(respawn.materialType)
+                local maxBoundingBox = bbox and bbox.maxDim or 3
+                local gridSpacing = math.max(maxBoundingBox * 0.8, 0.5)
+                
+                local gridPositions = M.generateGridPositions(basePos, zone, 50, gridSpacing, 6, playerPos, 10)
+                
+                local spawnPos = nil
+                if #gridPositions > 0 then
+                  local minDistToExisting = gridSpacing * 0.5
+                  for _, gridPos in ipairs(gridPositions) do
+                    local tooClose = false
+                    for _, existingEntry in ipairs(M.propQueue) do
+                      if existingEntry.id ~= respawn.propId then
+                        local existingObj = be:getObjectByID(existingEntry.id)
+                        if existingObj then
+                          local existingPos = existingObj:getPosition()
+                          local dist = (gridPos - existingPos):length()
+                          if dist < minDistToExisting then
+                            tooClose = true
+                            break
+                          end
+                        end
+                      end
+                    end
+                    if not tooClose then
+                      spawnPos = gridPos
+                      break
+                    end
+                  end
+                  
+                  if not spawnPos and #gridPositions > 0 then
+                    spawnPos = gridPositions[1]
+                  end
+                end
+                
+                if not spawnPos then
+                  spawnPos = basePos
+                end
+                
+                if respawn.propId then
+                  M.deleteDamagedItem(respawn.propId)
+                end
+                
+                local matConfig = M.getMaterialConfig(respawn.materialType)
+                if matConfig and matConfig.model then
+                  local newObj = core_vehicles.spawnNewVehicle(matConfig.model, {
+                    pos = spawnPos,
+                    rot = quat(0, 0, 0, 1),
+                    config = matConfig.config or "default",
+                    autoEnterVehicle = false
+                  })
+                  
+                  if newObj then
+                    local newId = newObj:getID()
+                    local actualObj = be:getObjectByID(newId)
+                    if actualObj then
+                      table.insert(M.propQueue, { id = newId, materialType = respawn.materialType })
+                      M.propQueueById[newId] = { id = newId, materialType = respawn.materialType }
+                      
+                      stock.current = stock.current - 1
+                      
+                      if cache.spawnedPropCounts and cache.spawnedPropCounts[respawn.materialType] then
+                        cache.spawnedPropCounts[respawn.materialType] = (cache.spawnedPropCounts[respawn.materialType] or 0) + 1
+                      end
+                      
+                      print(string.format("[Loading] Replaced damaged %s with new item at grid position (consumed 1 stock)", respawn.materialType))
+                    end
+                  end
+                end
+                
+                table.remove(M.pendingRespawns, i)
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
+function M.spawnJobMaterials(contractsMod, zonesMod, playerPos)
   if not M.jobObjects.activeGroup or not M.jobObjects.activeGroup.loading then return end
 
   local group = M.jobObjects.activeGroup
@@ -321,8 +574,25 @@ function M.spawnJobMaterials(contractsMod, zonesMod)
   basePos = basePos + vec3(0,0,0.2)
 
   local totalPropsSpawned = 0
-  local offsetIdx = 1
-  local offsets = { vec3(-2, 0, 0), vec3(2, 0, 0), vec3(0, 2, 0), vec3(0, -2, 0), vec3(-2, 2, 0), vec3(2, 2, 0), vec3(-2, -2, 0), vec3(2, -2, 0) }
+  local globalMaxProps = Config.settings.maxProps or 6
+  
+  local maxBoundingBox = 0
+  for _, materialType in ipairs(compatibleMaterials) do
+    local matConfig = M.getMaterialConfig(materialType)
+    if matConfig then
+      local bbox = M.getMaterialBoundingBox(materialType)
+      if bbox and bbox.maxDim > maxBoundingBox then
+        maxBoundingBox = bbox.maxDim
+      end
+    end
+  end
+  
+  local gridSpacing = math.max(maxBoundingBox * 0.8, 0.5)
+  local maxGridSize = globalMaxProps + 10
+  local gridPositions = M.generateGridPositions(basePos, zone, maxGridSize, gridSpacing, 6, playerPos, 10)
+  local gridPosIdx = 1
+  local totalCurrentlySpawned = #M.propQueue
+  local globalMaxAllowed = math.max(0, globalMaxProps - totalCurrentlySpawned)
   
   for _, materialType in ipairs(compatibleMaterials) do
     local matConfig = M.getMaterialConfig(materialType)
@@ -341,58 +611,45 @@ function M.spawnJobMaterials(contractsMod, zonesMod)
         if contractsMod.ContractSystem.contractProgress and contractsMod.ContractSystem.contractProgress.deliveredItemsByMaterial then
           delivered = contractsMod.ContractSystem.contractProgress.deliveredItemsByMaterial[materialType] or 0
         end
-        local stillNeeded = math.max(0, required - delivered - currentlySpawned)
+        local contractNeedsMore = delivered < required
         
-        if stillNeeded > 0 then
+        if contractNeedsMore then
           local stockAvailable = stock.current
-          local propsToSpawn = math.min(stillNeeded, stockAvailable)
+          local maxSpawned = matConfig.maxSpawned or math.huge
+          local materialMaxAllowed = math.max(0, maxSpawned - currentlySpawned)
+          local totalStillNeeded = math.max(0, required - delivered)
+          local propsToSpawn = math.min(totalStillNeeded, stockAvailable, materialMaxAllowed, globalMaxAllowed)
           
           if propsToSpawn > 0 then
-            if matConfig.unitType == "mass" then
-              for i = 1, propsToSpawn do
-                local offset = vec3((i - 1) * 3, 0, 0)
-                local obj = core_vehicles.spawnNewVehicle(matConfig.model, { 
-                  config = matConfig.config, 
-                  pos = basePos + offset, 
-                  rot = quatFromDir(vec3(0,1,0)), 
-                  autoEnterVehicle = false 
-                })
-                if obj then
-                  local propId = obj:getID()
-                  local entry = { id = propId, mass = matConfig.massPerProp or 41000, materialType = materialType }
-                  table.insert(M.propQueue, entry)
-                  M.propQueueById[propId] = entry
-                  totalPropsSpawned = totalPropsSpawned + 1
-                  stock.current = stock.current - 1
-                  if not cache.spawnedPropCounts[materialType] then
-                    cache.spawnedPropCounts[materialType] = 0
-                  end
-                  cache.spawnedPropCounts[materialType] = cache.spawnedPropCounts[materialType] + 1
-                  M.managePropCapacity()
-                end
+            for i = 1, propsToSpawn do
+              if gridPosIdx > #gridPositions then
+                print(string.format("[Loading] Warning: Not enough valid grid positions for all props. Spawned %d/%d", i - 1, propsToSpawn))
+                break
               end
-            elseif matConfig.unitType == "item" then
-              for i = 1, propsToSpawn do
-                local pos = basePos + (offsets[offsetIdx] or vec3(0,0,0))
-                offsetIdx = (offsetIdx % #offsets) + 1
-                
-                local obj = core_vehicles.spawnNewVehicle(matConfig.model, { 
-                  config = matConfig.config, 
-                  pos = pos, 
-                  rot = quatFromDir(vec3(0,1,0)), 
-                  autoEnterVehicle = false 
-                })
-                if obj then
-                  local propId = obj:getID()
+              
+              local spawnPos = gridPositions[gridPosIdx]
+              gridPosIdx = gridPosIdx + 1
+              
+              local obj = core_vehicles.spawnNewVehicle(matConfig.model, { 
+                config = matConfig.config, 
+                pos = spawnPos, 
+                rot = quatFromDir(vec3(0,1,0)), 
+                autoEnterVehicle = false 
+              })
+              if obj then
+                local propId = obj:getID()
+                local actualObj = be:getObjectByID(propId)
+                if actualObj then
                   local entry = { 
                     id = propId, 
-                    mass = 0, 
-                    materialType = materialType, 
-                    blockType = matConfig.config 
+                    mass = matConfig.unitType == "mass" and (matConfig.massPerProp or 41000) or 0, 
+                    materialType = materialType,
+                    blockType = matConfig.unitType == "item" and matConfig.config or nil
                   }
                   table.insert(M.propQueue, entry)
                   M.propQueueById[propId] = entry
                   totalPropsSpawned = totalPropsSpawned + 1
+                  globalMaxAllowed = globalMaxAllowed - 1
                   stock.current = stock.current - 1
                   if not cache.spawnedPropCounts[materialType] then
                     cache.spawnedPropCounts[materialType] = 0
@@ -416,9 +673,26 @@ function M.spawnJobMaterials(contractsMod, zonesMod)
 end
 
 function M.clearProps()
+  local stockReturned = {}
+  
   for i = #M.propQueue, 1, -1 do
-    local id = M.propQueue[i].id
+    local entry = M.propQueue[i]
+    local id = entry.id
     if id then
+      local isDamaged = false
+      if M.jobObjects.itemDamage and M.jobObjects.itemDamage[id] then
+        isDamaged = M.jobObjects.itemDamage[id].isDamaged or false
+      elseif M.itemDamageState[id] then
+        isDamaged = M.itemDamageState[id].isDamaged or false
+      end
+      
+      if not isDamaged and entry.materialType and M.jobObjects.activeGroup then
+        if not stockReturned[entry.materialType] then
+          stockReturned[entry.materialType] = 0
+        end
+        stockReturned[entry.materialType] = stockReturned[entry.materialType] + 1
+      end
+      
       M.propQueueById[id] = nil
       M.itemInitialState[id] = nil
       M.itemDamageState[id] = nil
@@ -426,6 +700,23 @@ function M.clearProps()
       if obj then obj:delete() end
     end
     table.remove(M.propQueue, i)
+  end
+  
+  if next(stockReturned) and M.jobObjects.activeGroup then
+    local Zones = extensions.gameplay_loading_zones
+    local Contracts = extensions.gameplay_loading_contracts
+    if Zones and Contracts and Contracts.getCurrentGameHour then
+      local stockInfo = Zones.getZoneStockInfo(M.jobObjects.activeGroup, Contracts.getCurrentGameHour)
+      if stockInfo and stockInfo.materialStocks then
+        for materialType, count in pairs(stockReturned) do
+          local stock = stockInfo.materialStocks[materialType]
+          if stock then
+            stock.current = math.min(stock.current + count, stock.max)
+            print(string.format("[Loading] Returned %d undamaged %s to zone stock (now %d/%d)", count, materialType, stock.current, stock.max))
+          end
+        end
+      end
+    end
   end
 end
 
@@ -458,22 +749,29 @@ function M.cleanupJob(deleteTruck, stateIdle)
   M.jobObjects.deferredTruckTargetPos = nil
   M.jobObjects.loadingZoneTargetPos = nil
   M.jobObjects.truckSpawnQueued = false
-  M.jobObjects.truckSpawnPos = nil
-  M.jobObjects.truckSpawnRot = nil
   M.jobObjects.itemDamage = {}
   M.jobObjects.totalItemDamagePercent = 0
   M.jobObjects.anyItemDamaged = false
   M.jobObjects.lastDeliveryDamagePercent = 0
   M.jobObjects.deliveryBlocksStatus = nil
+  M.jobObjects.zoneSwapPending = false
+  M.jobObjects.zoneSwapTargetZone = nil
+  M.jobObjects.zoneSwapTruckAtDestination = false
   M.itemDamageState = {}
+  M.pendingRespawns = {}
   
   M.truckStoppedTimer = 0
   M.truckLastPosition = nil
-  M.truckResendCount = 0
+  M.deliveryTimer = 0
   M.lastPayloadMass = 0
   M.payloadStationaryCount = 0
   
   return stateIdle
+end
+
+local function setupTruckAI(truck)
+  if not truck then return end
+  truck:queueLuaCommand("if ai and ai.setPullOver then ai.setPullOver(false) end")
 end
 
 function M.spawnTruckForGroup(group, materialType, targetPos)
@@ -491,28 +789,33 @@ function M.spawnTruckForGroup(group, materialType, targetPos)
   local pos, rot = M.calculateSpawnTransformForLocation(vec3(group.spawn.pos), targetPos)
   local truck = core_vehicles.spawnNewVehicle(truckModel, { pos = pos, rot = rot, config = truckConfig, autoEnterVehicle = false })
   if not truck then return nil end
-  M.jobObjects.truckSpawnPos = pos
-  M.jobObjects.truckSpawnRot = rot
-  return truck:getID()
+  local truckId = truck:getID()
+  local truckObj = be:getObjectByID(truckId)
+  if truckObj then
+    setupTruckAI(truckObj)
+  end
+  return truckId
 end
 
 function M.driveTruckToPoint(truckId, targetPos)
   local truck = be:getObjectByID(truckId)
   if not truck then return end
   truck:queueLuaCommand('if not driver then extensions.load("driver") end')
-  truck:queueLuaCommand("controller.mainController.setHandbrake(0)")
+  truck:queueLuaCommand("input.event('parkingbrake', 0)")
+  setupTruckAI(truck)
   core_jobsystem.create(function(job)
     job.sleep(0.5)
-    truck:queueLuaCommand('ai.setIgnoreCollision(true)')
+    truck:queueLuaCommand("if ai.setAvoidCars then ai.setAvoidCars('off') end")
     job.sleep(0.1)
-    truck:queueLuaCommand('driver.returnTargetPosition(' .. serialize(targetPos) .. ')')
+    truck:queueLuaCommand('driver.returnTargetPosition(' .. serialize(targetPos) .. ', false, nil, true)')
   end)
 end
 
 function M.stopTruck(truckId)
   local truck = be:getObjectByID(truckId)
   if not truck then return end
-  truck:queueLuaCommand("ai.setMode('stop') controller.mainController.setHandbrake(1)")
+  truck:queueLuaCommand("ai.setMode('stop')")
+  truck:queueLuaCommand("input.event('parkingbrake', 1)")
 end
 
 function M.getTruckBedData(obj)
@@ -606,7 +909,6 @@ local function calculatePayloadForProps(propEntries, bedData, materialType, incl
           nodesChecked = nodesChecked + 1
           local worldPoint = objPos - (axisX * obj:getNodePosition(i).x) - (axisY * obj:getNodePosition(i).y) + (axisZ * obj:getNodePosition(i).z)
           if M.isPointInTruckBed(worldPoint, bedData) then nodesInside = nodesInside + 1 end
-          if Config.settings.enableDebug then table.insert(M.debugDrawCache.nodePoints, {pos = worldPoint, inside = M.isPointInTruckBed(worldPoint, bedData)}) end
         end
         if nodesChecked > 0 then totalMass = totalMass + ((rockEntry.mass or defaultMass) * (nodesInside / nodesChecked)) end
       end
@@ -655,7 +957,6 @@ function M.calculateTruckPayload()
   end
   M.debugDrawCache.bedData = bedData
   
-  if Config.settings.enableDebug then M.debugDrawCache.nodePoints = {} end
   local totalMass = calculatePayloadForProps(M.propQueue, bedData, materialType, true)
   M.lastPayloadMass = totalMass
   return totalMass
@@ -705,7 +1006,6 @@ function M.calculateItemDamage()
   end
   
   local totalDamage, damagedCount, checkedCount = 0, 0, 0
-  if Config.settings.enableDebug then M.debugDrawCache.itemPieces = {} end
   
   for _, rockEntry in ipairs(M.propQueue) do
     local obj = be:getObjectByID(rockEntry.id)
@@ -747,12 +1047,13 @@ function M.calculateItemDamage()
           end
         end
         
-        if Config.settings.enableDebug then
-          table.insert(M.debugDrawCache.itemPieces, { center = obj:getPosition(), brokenCount = isDamaged and 1 or 0, totalGroups = 1, damagePercent = damagePercent * 100 })
+        if not M.propQueueById[rockEntry.id] then
+          checkedCount = checkedCount - 1
+        else
+
+          totalDamage = totalDamage + damagePercent
+          if isDamaged then damagedCount = damagedCount + 1 end
         end
-        
-        totalDamage = totalDamage + damagePercent
-        if isDamaged then damagedCount = damagedCount + 1 end
       end
     end
   end
@@ -847,7 +1148,35 @@ function M.consumeZoneStock(group, propsDelivered, zonesMod, contractsMod)
   end
 end
 
-function M.despawnPropIds(propIds, zonesMod, contractsMod)
+function M.returnPropsToStock(propIds, zonesMod, contractsMod)
+  if not propIds or #propIds == 0 then return end
+  if not M.jobObjects.activeGroup then return end
+  
+  local idSet = {}
+  for _, id in ipairs(propIds) do idSet[id] = true end
+  
+  local materialCounts = {}
+  for _, entry in ipairs(M.propQueue) do
+    if entry.id and idSet[entry.id] and entry.materialType then
+      materialCounts[entry.materialType] = (materialCounts[entry.materialType] or 0) + 1
+    end
+  end
+  
+  local cache = zonesMod.ensureGroupCache(M.jobObjects.activeGroup, contractsMod.getCurrentGameHour)
+  if cache and cache.materialStocks then
+    for matKey, count in pairs(materialCounts) do
+      local stock = cache.materialStocks[matKey]
+      if stock then
+        stock.current = math.min(stock.current + count, stock.max)
+        if cache.spawnedPropCounts and cache.spawnedPropCounts[matKey] then
+          cache.spawnedPropCounts[matKey] = math.max(0, cache.spawnedPropCounts[matKey] - count)
+        end
+      end
+    end
+  end
+end
+
+function M.despawnPropIds(propIds, zonesMod, contractsMod, skipStockConsumption)
   if not propIds or #propIds == 0 then return end
   local idSet = {}
   for _, id in ipairs(propIds) do idSet[id] = true end
@@ -863,68 +1192,42 @@ function M.despawnPropIds(propIds, zonesMod, contractsMod)
       propsRemoved = propsRemoved + 1
     end
   end
-  if propsRemoved > 0 and M.jobObjects.activeGroup then M.consumeZoneStock(M.jobObjects.activeGroup, propsRemoved, zonesMod, contractsMod) end
-end
-
-function M.queueTruckSpawn(group, materialType, targetPos, currentStateVal, stateDrivingToSiteVal, stateTruckArrivingVal, setStateCallback)
-  if M.jobObjects.truckSpawnQueued then return end
-  M.jobObjects.truckSpawnQueued = true
-  core_jobsystem.create(function(job)
-    job.sleep(0.05)
-    if currentStateVal ~= stateDrivingToSiteVal or not M.markerCleared or M.jobObjects.truckID or not group or not group.spawn then
-      M.jobObjects.truckSpawnQueued = false
-      return
-    end
-    targetPos = targetPos or (group.loading and group.loading.center and vec3(group.loading.center))
-    if not targetPos then M.jobObjects.truckSpawnQueued = false; return end
-    local truckId = M.spawnTruckForGroup(group, materialType, targetPos)
-    if truckId then
-      M.jobObjects.truckID = truckId
-      setStateCallback(stateTruckArrivingVal)
-      local truck = be:getObjectByID(truckId)
-      if truck then truck:queueLuaCommand('if not driver then extensions.load("driver") end') end
-      M.driveTruckToPoint(truckId, targetPos)
-      M.jobObjects.deferredTruckTargetPos = nil
-    else
-      M.jobObjects.truckSpawnQueued = false
-    end
-  end)
+  if propsRemoved > 0 and M.jobObjects.activeGroup and not skipStockConsumption then M.consumeZoneStock(M.jobObjects.activeGroup, propsRemoved, zonesMod, contractsMod) end
 end
 
 function M.handleTruckMovement(dt, destPos, contractsMod)
   if not M.jobObjects.truckID or not destPos then return end
   local truck = be:getObjectByID(M.jobObjects.truckID)
   if not truck then
-    contractsMod.failContract(Config.contracts.crashPenalty, "Truck destroyed! Contract failed.", "warning", M.cleanupJob)
+    local zoneTag = M.jobObjects.activeGroup and M.jobObjects.activeGroup.secondaryTag
+    local contractsConfig = zoneTag and contractsMod.getContractsConfig and contractsMod.getContractsConfig(zoneTag) or {}
+    local crashPenalty = contractsConfig.crashPenalty or 0
+    contractsMod.failContract(crashPenalty, "Truck destroyed! Contract failed.", "warning", M.cleanupJob)
     return
   end
   
   local arrivalDist = Config.settings.truck and Config.settings.truck.arrivalDistanceThreshold or 10.0
   local truckPos = truck:getPosition()
   if (truckPos - destPos):length() < arrivalDist then
-    M.truckStoppedTimer, M.truckLastPosition, M.truckResendCount = 0, nil, 0
+    M.truckStoppedTimer, M.truckLastPosition = 0, nil
     return true
   end
   
   local speedThreshold = Config.settings.truck and Config.settings.truck.stopSpeedThreshold or 1.0
-  local stoppedThreshold = Config.settings.truck and Config.settings.truck.stoppedThreshold or 2.0
-  local maxResends = Config.settings.truck and Config.settings.truck.maxResends or 15
+  local stoppedThreshold = Config.settings.truck and Config.settings.truck.stoppedThreshold or 15.0
   
   local speed = truck:getVelocity():length()
   local throttle = truck.electrics and truck.electrics.values and truck.electrics.values.throttle or 0
-  if (throttle > 0.1 and speed > speedThreshold) or speed > 3.0 then
-    M.truckStoppedTimer, M.truckLastPosition, M.truckResendCount = 0, truckPos, 0
+  
+  local isMoving = (throttle > 0.1 and speed > speedThreshold) or speed > 3.0
+  if isMoving then
+    M.deliveryTimer = M.deliveryTimer + dt
+    M.truckStoppedTimer, M.truckLastPosition = 0, truckPos
   elseif M.truckLastPosition then
     if (truckPos - M.truckLastPosition):length() < 0.5 or (throttle <= 0.1 and speed < 2.0) then
       M.truckStoppedTimer = M.truckStoppedTimer + dt
       if M.truckStoppedTimer >= stoppedThreshold then
-        if M.truckResendCount < maxResends then
-          M.truckResendCount = M.truckResendCount + 1
-          M.driveTruckToPoint(M.jobObjects.truckID, destPos)
-          M.truckStoppedTimer, M.truckLastPosition = 0, truckPos
-        else
-          contractsMod.failContract(Config.contracts.crashPenalty, "Truck stuck! Contract failed.", "warning", M.cleanupJob)
-        end
+        return "stuck", M.deliveryTimer
       end
     else
       M.truckStoppedTimer, M.truckLastPosition = 0, truckPos
@@ -962,7 +1265,6 @@ function M.beginActiveContractTrip(contractsMod, zonesMod, uiMod)
   if #M.propQueue == 0 then
     M.spawnJobMaterials(contractsMod, zonesMod)
   end
-  M.jobObjects.deferredTruckTargetPos = targetPos
   M.jobObjects.loadingZoneTargetPos = targetPos
   M.jobObjects.truckID = nil
   M.jobObjects.truckSpawnQueued = false

@@ -32,8 +32,11 @@ local function validateMaterial(materialKey, materialData)
   if materialData.unitType == "mass" and not materialData.massPerProp then
     print(string.format("[Loading] Warning: Mass material '%s' missing massPerProp", materialKey))
   end
-  if materialData.unitType == "item" and not materialData.contractRanges then
-    print(string.format("[Loading] Warning: Item material '%s' missing contractRanges", materialKey))
+  if materialData.unitType == "mass" and not materialData.targetLoad then
+    print(string.format("[Loading] Warning: Mass material '%s' missing targetLoad", materialKey))
+  end
+  if not materialData.tiers then
+    print(string.format("[Loading] Warning: Material '%s' missing tiers", materialKey))
   end
   if materialData.deliveryVehicle and not materialData.deliveryVehicle.model then
     print(string.format("[Loading] Warning: Material '%s' deliveryVehicle missing model", materialKey))
@@ -57,7 +60,6 @@ local function applyDefaults()
   if not M.settings.truck then M.settings.truck = {} end
   M.settings.truck.stoppedThreshold = M.settings.truck.stoppedThreshold or 2.0
   M.settings.truck.stopSpeedThreshold = M.settings.truck.stopSpeedThreshold or 1.0
-  M.settings.truck.maxResends = M.settings.truck.maxResends or 15
   M.settings.truck.arrivalSpeedThreshold = M.settings.truck.arrivalSpeedThreshold or 2.0
   M.settings.truck.arrivalDistanceThreshold = M.settings.truck.arrivalDistanceThreshold or 10.0
 
@@ -72,9 +74,6 @@ local function applyDefaults()
   M.settings.zones.sitesLoadRetryInterval = M.settings.zones.sitesLoadRetryInterval or 1.0
 
   M.settings.maxProps = M.settings.maxProps or 2
-  M.settings.targetLoad = M.settings.targetLoad or 25000
-  M.settings.stockRegenCheckInterval = M.settings.stockRegenCheckInterval or 30
-  M.settings.contractUpdateInterval = M.settings.contractUpdateInterval or 5
 end
 
 local function loadConfiguration()

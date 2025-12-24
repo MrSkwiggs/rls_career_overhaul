@@ -3,7 +3,7 @@
         "marbleQuarry": {
             "name": "Marble Quarry",
             "description": "Cuts and extracts large marble blocks from exposed rock for processing into building and decorative materials.",
-            "associatedOrganization": null,
+            "associatedOrganization": "montevalle",
             "preview": "facilities/loading/quarry.jpg",
             "payMultiplier": 1.0,
             "sites": {
@@ -11,12 +11,8 @@
                     "name": "Starting Zone",
                     "materials": {
                         "marbleSmall": {
-                            "maxStock": 10,
-                            "regenRate": 1
-                        },
-                        "marbleBig": {
-                            "maxStock": 5,
-                            "regenRate": 1
+                            "maxStock": 7,
+                            "regenRate": 2
                         }
                     }
                 },
@@ -25,11 +21,11 @@
                     "materials": {
                         "marbleSmall": {
                             "maxStock": 10,
-                            "regenRate": 1
+                            "regenRate": 2
                         },
                         "marbleBig": {
-                            "maxStock": 5,
-                            "regenRate": 1
+                            "maxStock": 10,
+                            "regenRate": 1.5
                         }
                     }
                 },
@@ -37,12 +33,12 @@
                     "name": "Zone C",
                     "materials": {
                         "marbleSmall": {
-                            "maxStock": 10,
-                            "regenRate": 1
+                            "maxStock": 7,
+                            "regenRate": 3
                         },
                         "marbleBig": {
-                            "maxStock": 5,
-                            "regenRate": 1
+                            "maxStock": 3,
+                            "regenRate": 6
                         }
                     }
                 },
@@ -50,17 +46,76 @@
                     "name": "Zone D",
                     "materials": {
                         "marbleSmall": {
+                            "startStock": 10,
+                            "maxStock": 25,
+                            "regenRate": 2
+                        }
+                    }
+                },
+                "Zone E": {
+                    "name": "Zone E",
+                    "materials": {
+                        "marbleSmall": {
                             "maxStock": 10,
-                            "regenRate": 1
+                            "regenRate": 2
                         },
                         "marbleBig": {
                             "maxStock": 5,
-                            "regenRate": 1
+                            "regenRate": 3
                         }
                     }
                 }
             },
-            "contracts": {}
+            "contracts": {
+                "maxActiveContracts": 6,
+                "initialContracts": 4,
+                "generateInterval": 3,
+                "tiers": [
+                    {
+                        "name": "Easy",
+                        "basePay": 300,
+                        "weight": 0.25,
+                        "payMultiplier": {
+                            "min": 0.8,
+                            "max": 1.2
+                        },
+                        "mixChance": 0
+                    },
+                    {
+                        "name": "Standard",
+                        "basePay": 600,
+                        "weight": 0.35,
+                        "payMultiplier": {
+                            "min": 0.9,
+                            "max": 1.35
+                        },
+                        "mixChance": 0.5
+                    },
+                    {
+                        "name": "Hard",
+                        "basePay": 900,
+                        "weight": 0.25,
+                        "payMultiplier": {
+                            "min": 1,
+                            "max": 1.7
+                        },
+                        "mixChance": 0.75
+                    },
+                    {
+                        "name": "Expert",
+                        "basePay": 1200,
+                        "weight": 0.15,
+                        "payMultiplier": {
+                            "min": 1.25,
+                            "max": 2.0
+                        },
+                        "mixChance": 1
+                    }
+                ],
+                "abandonPenalty": 0.1,
+                "bulkChance": 0.4,
+                "contractTTL": 0.75
+            }
         }
     }
 }
