@@ -36,7 +36,6 @@
 {"name":"concrete_batch_factory","class":"SimGroup","persistentId":"57247139-cb30-460e-ab38-78b7c40ccdf4","__parent":"MissionGroup"}
 {"name":"dragTunnel","class":"SimGroup","__parent":"MissionGroup"}
 {"name":"raceTrackParkingLotGrandStands","class":"SimGroup","__parent":"MissionGroup"}
-{"name":"RLS_EDITS","class":"SimGroup","__parent":"MissionGroup"}
 {"name":"skidpadWP2","class":"BeamNGWaypoint","__parent":"MissionGroup","position":[381.004944,-101.403893,144.770889],"rotationMatrix":[0.447065532,0.89450103,-2.98023188e-08,-0.894424021,0.447026998,-0.0131171001,-0.0117331902,0.0058643003,0.999913752]}
 {"name":"skidpadWP3","class":"BeamNGWaypoint","__parent":"MissionGroup","position":[413.540039,-122.672554,145.095764],"rotationMatrix":[-0.44736141,0.894353032,-2.98023188e-08,-0.894276083,-0.447322905,-0.0131188286,-0.0117329219,-0.00586883025,0.999913752]}
 {"name":"skidpadWP4","class":"BeamNGWaypoint","__parent":"MissionGroup","position":[441.489929,-90.0654068,145.4832],"rotationMatrix":[5.96046377e-08,0.999999821,0,-0.99984479,-5.21080312e-15,-0.0176059846,-0.017605925,5.96046341e-08,0.99984479]}
@@ -50,5 +49,4 @@
 {"name":"port","class":"SimGroup","persistentId":"71defa49-7edf-4b14-a3ad-18d1a3467cb8","__parent":"MissionGroup"}
 {"name":"dirt_decalroads","class":"SimGroup","persistentId":"7e994dc8-9f15-4a28-8820-c93649f2b790","__parent":"MissionGroup"}
 {"name":"quarry","class":"SimGroup","persistentId":"73e07564-bcdc-4d9f-87ce-a4bcba3fb33c","__parent":"MissionGroup"}
-{"name":"drift Loop Remaster","class":"SimGroup","__parent":"MissionGroup"}
-{"name":"driftLoopPitlaneWall","class":"SimGroup","__parent":"MissionGroup"}
+{"name":"RLS_EDITS","class":"SimGroup","__parent":"MissionGroup"}
