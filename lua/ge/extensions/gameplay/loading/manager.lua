@@ -768,6 +768,7 @@ function M.cleanupJob(deleteTruck, stateIdle)
   M.truckLastPosition = nil
   M.deliveryTimer = 0
   M.truckDamage = 0
+  M.truckGroundSpeed = 0
   M.damageCheckQueued = false
   M.teleportQueued = false
   M.lastPayloadMass = 0
@@ -1225,9 +1226,11 @@ function M.handleTruckMovement(dt, destPos, contractsMod)
   
   M.deliveryTimer = M.deliveryTimer + dt
   
-  local speed = truck:getVelocity():length()
-  local throttle = truck.electrics and truck.electrics.values and truck.electrics.values.throttle or 0
-  local isMoving = (throttle > 0.1 and speed > 0.15) or speed > 3.0
+  local posChange = M.truckLastPosition and (truckPos - M.truckLastPosition):length() or 0
+  local velocity = truck:getVelocity()
+  local speed = velocity and velocity:length() or 0
+  
+  local isMoving = speed > 1.0 or posChange > 1.0
   
   if isMoving then
     M.truckStoppedTimer, M.truckLastPosition = 0, truckPos
@@ -1235,7 +1238,7 @@ function M.handleTruckMovement(dt, destPos, contractsMod)
     M.damageCheckQueued = false
     M.teleportQueued = false
   elseif M.truckLastPosition then
-    if (truckPos - M.truckLastPosition):length() < 0.5 or (throttle <= 0.1 and speed < 2.0) then
+    if posChange < 1.0 and speed < 1.0 then
       M.truckStoppedTimer = M.truckStoppedTimer + dt
       if M.truckStoppedTimer >= 10.0 then
         if not M.damageCheckQueued then
@@ -1271,6 +1274,7 @@ function M.handleTruckMovement(dt, destPos, contractsMod)
     else
       M.truckStoppedTimer, M.truckLastPosition = 0, truckPos
       M.truckDamage = 0
+      M.truckGroundSpeed = 0
       M.damageCheckQueued = false
       M.teleportQueued = false
     end
