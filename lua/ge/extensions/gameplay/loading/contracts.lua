@@ -13,10 +13,11 @@ local ContractSystem = {
     deliveryCount = 0,
     deliveredItems = 0
   },
-  nextContractSpawnTime = nil,
+  nextContractSpawnSimTime = nil,
   contractsGeneratedToday = 0,
   expiredContractsTotal = 0,
   initialContractsGenerated = false,
+  simTimeAccumulator = 0,
 }
 
 local PlayerData = {
@@ -457,13 +458,13 @@ local function generateContract(availableGroups, expirationOffset)
   local name = selectedTypeName
   if isBulk then name = "Bulk " .. name end
 
-  local currentHour = getCurrentGameHour()
   if contractsConfig.contractTTL == nil then
     print("[Loading] contractTTL not specified in contracts config; cannot generate contract.")
     return nil
   end
   local contractTTL = contractsConfig.contractTTL
-  local expiresAt = currentHour + contractTTL
+  local createdAtSimTime = ContractSystem.simTimeAccumulator
+  local expiresAtSimTime = createdAtSimTime + (contractTTL * 3600)
   local expirationHours = contractTTL
 
   local facilityId = getFacilityIdForZone(group.secondaryTag)
@@ -497,9 +498,10 @@ local function generateContract(availableGroups, expirationOffset)
     group = nil,
     groupTag = group.secondaryTag,
     estimatedTrips = estimatedTrips,
-    createdAt = currentHour,
-    expiresAt = expiresAt,
+    createdAtSimTime = createdAtSimTime,
+    expiresAtSimTime = expiresAtSimTime,
     expirationHours = expirationHours,
+    createdAt = getCurrentGameHour(),
   }
 end
 
@@ -516,9 +518,8 @@ local function generateInitialContracts(availableGroups)
 
   local contractsConfig = getContractsConfigFromGroups(availableGroups)
   local initialCount = contractsConfig.initialContracts or 4
-  local currentHour = getCurrentGameHour()
   local generateInterval = contractsConfig.generateInterval or 2
-  local hoursPerContract = generateInterval > 0 and (1 / generateInterval) or 0.5
+  local secondsPerContract = generateInterval > 0 and (3600 / generateInterval) or 1800
   
   for i = 1, initialCount do
     local expirationOffset = i - 1
@@ -529,11 +530,11 @@ local function generateInitialContracts(availableGroups)
   end
 
   sortContracts()
-  ContractSystem.nextContractSpawnTime = currentHour + hoursPerContract
+  ContractSystem.nextContractSpawnSimTime = ContractSystem.simTimeAccumulator + secondsPerContract
   ContractSystem.contractsGeneratedToday = initialCount
   ContractSystem.initialContractsGenerated = true
-  print(string.format("[Loading] Generated %d initial contracts. Next contract spawn at %.2f hours", 
-    #ContractSystem.availableContracts, ContractSystem.nextContractSpawnTime))
+  print(string.format("[Loading] Generated %d initial contracts. Next contract spawn in %.2f seconds", 
+    #ContractSystem.availableContracts, secondsPerContract))
 end
 
 local function trySpawnNewContract(availableGroups)
@@ -542,76 +543,96 @@ local function trySpawnNewContract(availableGroups)
     return false
   end
   
-  local currentHour = getCurrentGameHour()
   local generateInterval = contractsConfig.generateInterval or 2
-  local hoursPerContract = generateInterval > 0 and (1 / generateInterval) or 0.5
+  local secondsPerContract = generateInterval > 0 and (3600 / generateInterval) or 1800
   
-  if not ContractSystem.nextContractSpawnTime then
-    ContractSystem.nextContractSpawnTime = currentHour + hoursPerContract
+  if not ContractSystem.nextContractSpawnSimTime then
+    ContractSystem.nextContractSpawnSimTime = ContractSystem.simTimeAccumulator + secondsPerContract
     return false
   end
   
-  local hoursUntilSpawn = ContractSystem.nextContractSpawnTime - currentHour
-  if hoursUntilSpawn < 0 then hoursUntilSpawn = hoursUntilSpawn + 24 end
+  local secondsUntilSpawn = ContractSystem.nextContractSpawnSimTime - ContractSystem.simTimeAccumulator
   
-  if hoursUntilSpawn <= 0 then
+  if secondsUntilSpawn <= 0 then
     local contract = generateContract(availableGroups)
     if contract then
       table.insert(ContractSystem.availableContracts, contract)
       sortContracts()
-      ContractSystem.nextContractSpawnTime = currentHour + hoursPerContract
+      ContractSystem.nextContractSpawnSimTime = ContractSystem.simTimeAccumulator + secondsPerContract
       ContractSystem.contractsGeneratedToday = (ContractSystem.contractsGeneratedToday or 0) + 1
       
       ui_message("New contract available: " .. contract.name, 4, "info")
       Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_Unlock_01')
       
-      print(string.format("[Loading] Spawned new contract: %s (Tier %d). Next spawn at %.2f hours", 
-        contract.name, contract.tier, ContractSystem.nextContractSpawnTime))
+      print(string.format("[Loading] Spawned new contract: %s (Tier %d). Next spawn in %.2f seconds", 
+        contract.name, contract.tier, secondsPerContract))
       return true
     end
   end
   return false
 end
 
+local function getContractHoursRemaining(contract)
+  if not contract or not contract.expiresAtSimTime then return 99 end
+  local currentSimTime = ContractSystem.simTimeAccumulator
+  local secondsRemaining = contract.expiresAtSimTime - currentSimTime
+  if secondsRemaining < 0 then return 0 end
+  return secondsRemaining / 3600
+end
+
+local function formatContractForUI(contract)
+  if not contract then return nil end
+  return {
+    id = contract.id,
+    name = contract.name,
+    tier = contract.tier,
+    material = contract.material,
+    materialTypeName = contract.materialTypeName,
+    requiredTons = contract.requiredTons,
+    requiredItems = contract.requiredItems,
+    isBulk = contract.isBulk,
+    totalPayout = contract.totalPayout,
+    paymentType = contract.paymentType,
+    groupTag = contract.groupTag,
+    estimatedTrips = contract.estimatedTrips,
+    expiresAtSimTime = contract.expiresAtSimTime,
+    hoursRemaining = getContractHoursRemaining(contract),
+    expirationHours = contract.expirationHours,
+    destinationName = contract.destination and contract.destination.name or nil,
+    originZoneTag = contract.destination and contract.destination.originZoneTag or contract.groupTag,
+  }
+end
+
 local function checkContractExpiration()
-  local currentHour = getCurrentGameHour()
   local expiredCount = 0
   local remainingContracts = {}
+  local expiredContracts = {}
+  local currentSimTime = ContractSystem.simTimeAccumulator
   
   for _, contract in ipairs(ContractSystem.availableContracts) do
-    local expiresAt = contract.expiresAt or math.huge
-    local hoursUntilExpire = expiresAt - currentHour
-    if expiresAt > 24 and currentHour < 12 then
-      hoursUntilExpire = expiresAt - 24 - currentHour
-    end
-    
-    if hoursUntilExpire > 0 then
-      table.insert(remainingContracts, contract)
-    else
+    local expiresAtSimTime = contract.expiresAtSimTime
+    if expiresAtSimTime and currentSimTime >= expiresAtSimTime then
       expiredCount = expiredCount + 1
       ContractSystem.expiredContractsTotal = (ContractSystem.expiredContractsTotal or 0) + 1
       print("[Loading] Contract expired: " .. (contract.name or "Unknown"))
+      table.insert(expiredContracts, contract.id)
+      if guihooks then
+        guihooks.trigger('contractExpired', {
+          contractId = contract.id,
+          contractData = formatContractForUI(contract)
+        })
+      end
+    else
+      table.insert(remainingContracts, contract)
     end
   end
   
   if expiredCount > 0 then
     ContractSystem.availableContracts = remainingContracts
     ui_message(expiredCount .. " contract" .. (expiredCount > 1 and "s" or "") .. " expired", 3, "warning")
+    return expiredCount
   end
-  return expiredCount
-end
-
-local function getContractHoursRemaining(contract)
-  if not contract or not contract.expiresAt then return 99 end
-  local currentHour = getCurrentGameHour()
-  local hoursLeft = contract.expiresAt - currentHour
-  
-  if contract.expiresAt > 24 and currentHour < 12 then
-    hoursLeft = contract.expiresAt - 24 - currentHour
-  end
-  if hoursLeft < 0 then hoursLeft = hoursLeft + 24 end
-  
-  return hoursLeft
+  return 0
 end
 
 local function shouldRefreshContracts(zoneTag)
@@ -871,6 +892,13 @@ M.failContract = failContract
 M.completeContract = completeContract
 M.getMaterialsByTypeName = getMaterialsByTypeName
 M.getTypeNameFromMaterial = getTypeNameFromMaterial
+M.updateSimTime = function(dt)
+  ContractSystem.simTimeAccumulator = ContractSystem.simTimeAccumulator + dt
+end
+M.getSimTime = function()
+  return ContractSystem.simTimeAccumulator
+end
+M.formatContractForUI = formatContractForUI
 local function serializeVec3(vec)
   if not vec then return nil end
   return {x = vec.x, y = vec.y, z = vec.z}

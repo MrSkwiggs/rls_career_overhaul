@@ -113,7 +113,7 @@ local function getQuarryStateForUI(currentState, playerMod, contractsMod, manage
       requiredTons = c.requiredTons, requiredItems = c.requiredItems,
       isBulk = c.isBulk, totalPayout = c.totalPayout, paymentType = c.paymentType,
       groupTag = c.groupTag, estimatedTrips = c.estimatedTrips,
-      expiresAt = c.expiresAt,
+      expiresAtSimTime = c.expiresAtSimTime,
       hoursRemaining = contractsMod.getContractHoursRemaining(c), expirationHours = c.expirationHours,
       destinationName = c.destination and c.destination.name or nil,
       originZoneTag = c.destination and c.destination.originZoneTag or c.groupTag,

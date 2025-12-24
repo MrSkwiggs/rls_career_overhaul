@@ -167,10 +167,8 @@
               </template>
               <span>• Pay on Completion</span>
             </div>
-            <div class="contract-expiration" :class="getExpirationClass(contract.hoursRemaining)">
-              <span v-if="contract.hoursRemaining <= 1">⏰ Expires in {{ Math.floor(contract.hoursRemaining * 60) }} min</span>
-              <span v-else-if="contract.hoursRemaining <= 2">⏰ {{ contract.hoursRemaining.toFixed(1) }} hrs left</span>
-              <span v-else>⏰ {{ Math.floor(contract.hoursRemaining) }} hrs left</span>
+            <div class="contract-expiration" :class="getExpirationClass(getTimeRemaining(contract))">
+              <span>⏰ Expires in {{ formatTimeRemaining(contract) }}</span>
             </div>
             <div class="contract-modifiers" v-if="contract.modifiers && contract.modifiers.length > 0">
               <span v-for="mod in contract.modifiers" :key="mod.name" class="modifier-badge">
@@ -606,6 +604,8 @@ const showZoneModal = ref(false)
 const allZonesByFacility = ref([])
 const zoneStock = ref(null)
 const isComplete = ref(false)
+const currentSimTime = ref(null)
+const updateCounter = ref(0)
 
 // Computed
 const loadPercent = computed(() => {
@@ -739,6 +739,47 @@ const getTierClass = (tier) => {
   return `tier-${tier || 1}`
 }
 
+const getTimeRemaining = (contract) => {
+  if (!contract) return 0
+  if (contract.expiresAtSimTime && currentSimTime.value !== null) {
+    const secondsRemaining = contract.expiresAtSimTime - currentSimTime.value
+    return Math.max(0, secondsRemaining / 3600)
+  }
+  if (contract.hoursRemaining !== undefined) {
+    return contract.hoursRemaining
+  }
+  return 0
+}
+
+const formatTimeRemaining = (contract) => {
+  if (!contract) return 'No expiration'
+  
+  let secondsRemaining = 0
+  if (contract.expiresAtSimTime && currentSimTime.value !== null) {
+    secondsRemaining = contract.expiresAtSimTime - currentSimTime.value
+    secondsRemaining = Math.max(0, secondsRemaining)
+  } else if (contract.hoursRemaining !== undefined) {
+    secondsRemaining = contract.hoursRemaining * 3600
+  } else {
+    return 'No expiration'
+  }
+  
+  if (secondsRemaining <= 0) return 'Expired'
+  
+  const totalSeconds = Math.floor(secondsRemaining)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`
+  } else if (minutes > 0) {
+    return `${minutes}m ${seconds}s`
+  } else {
+    return `${seconds}s`
+  }
+}
+
 const getExpirationClass = (hoursRemaining) => {
   if (hoursRemaining <= 1) return 'expiring-soon'
   if (hoursRemaining <= 2) return 'expiring-warning'
@@ -860,6 +901,9 @@ const handleStateUpdate = (data) => {
   allZonesByFacility.value = data.allZonesByFacility || []
   zoneStock.value = data.zoneStock || null
   isComplete.value = data.isComplete || false
+  if (data.currentSimTime !== undefined && data.currentSimTime !== null) {
+    currentSimTime.value = data.currentSimTime
+  }
   const hasCompatibleZones = compatibleZones.value && compatibleZones.value.length > 0
   if (data.state === 2 && hasCompatibleZones) {
     showZoneModal.value = true
@@ -868,14 +912,51 @@ const handleStateUpdate = (data) => {
   }
 }
 
+const handleContractExpired = (data) => {
+  if (data && data.contractId) {
+    const index = availableContracts.value.findIndex(c => c.id === data.contractId)
+    if (index !== -1) {
+      availableContracts.value.splice(index, 1)
+    }
+  }
+}
+
+const handleContractGenerated = (data) => {
+  if (data && data.contractData) {
+    const contract = data.contractData
+    const existingIndex = availableContracts.value.findIndex(c => c.id === contract.id)
+    if (existingIndex === -1) {
+      availableContracts.value.push(contract)
+      availableContracts.value.sort((a, b) => {
+        if (a.tier === b.tier) return a.totalPayout - b.totalPayout
+        return a.tier - b.tier
+      })
+    }
+  }
+}
+
+let expirationTimer = null
+
 onMounted(() => {
   events.on('updateQuarryState', handleStateUpdate)
+  events.on('contractExpired', handleContractExpired)
+  events.on('contractGenerated', handleContractGenerated)
   // Request initial state using bngApi
   lua.gameplay_loading.requestQuarryState()
+  
+  expirationTimer = setInterval(() => {
+    updateCounter.value = updateCounter.value + 1
+  }, 1000)
 })
 
 onUnmounted(() => {
   events.off('updateQuarryState', handleStateUpdate)
+  events.off('contractExpired', handleContractExpired)
+  events.off('contractGenerated', handleContractGenerated)
+  if (expirationTimer) {
+    clearInterval(expirationTimer)
+    expirationTimer = null
+  }
 })
 </script>
 

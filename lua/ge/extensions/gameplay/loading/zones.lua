@@ -53,7 +53,25 @@ local function ensureGroupCache(group, getCurrentGameHour)
   if not group or not group.secondaryTag then return nil end
   local key = tostring(group.secondaryTag)
   local cache = M.groupCache[key]
-  if cache then return cache end
+  if cache then
+    if cache.materialStocks then
+      local getSimTime = nil
+      if extensions.gameplay_loading_contracts and extensions.gameplay_loading_contracts.getSimTime then
+        getSimTime = extensions.gameplay_loading_contracts.getSimTime
+      end
+      local currentSimTime = getSimTime and getSimTime() or 0
+      for matKey, stock in pairs(cache.materialStocks) do
+        if stock.nextRegenTime and not stock.nextRegenSimTime then
+          local regenRate = stock.regenRate or 0
+          if regenRate > 0 then
+            stock.nextRegenSimTime = currentSimTime + (3600 / regenRate)
+            stock.nextRegenTime = nil
+          end
+        end
+      end
+    end
+    return cache
+  end
 
   -- Strict check: Find this site in the loaded facilities JSON
   local siteConfig = nil
@@ -81,20 +99,24 @@ local function ensureGroupCache(group, getCurrentGameHour)
   end
 
   local materialStocks = {}
-  local currentHour = getCurrentGameHour()
+  local getSimTime = nil
+  if extensions.gameplay_loading_contracts and extensions.gameplay_loading_contracts.getSimTime then
+    getSimTime = extensions.gameplay_loading_contracts.getSimTime
+  end
+  local currentSimTime = getSimTime and getSimTime() or 0
   for matKey, matData in pairs(materials) do
     local maxStock = matData.maxStock or 0
     local startStock = matData.startStock or maxStock
     local regenRate = matData.regenRate or 0
-    local nextRegenTime = nil
+    local nextRegenSimTime = nil
     if regenRate > 0 then
-      nextRegenTime = currentHour + (1 / regenRate)
+      nextRegenSimTime = currentSimTime + (3600 / regenRate)
     end
     materialStocks[matKey] = {
       current = startStock,
       max = maxStock,
       regenRate = regenRate,
-      nextRegenTime = nextRegenTime,
+      nextRegenSimTime = nextRegenSimTime,
     }
   end
 
@@ -124,29 +146,37 @@ local function ensureGroupOffRoadCentroid(group, getCurrentGameHour)
   return cache
 end
 
-local function updateZoneStocks(dt, getCurrentGameHour)
-  local currentHour = getCurrentGameHour()
+local function updateZoneStocks(dt, getSimTime)
+  if not getSimTime then return end
+  local currentSimTime = getSimTime()
 
   for _, group in ipairs(M.availableGroups) do
     local cache = M.groupCache[tostring(group.secondaryTag)]
     if cache and cache.materialStocks then
       for matKey, stock in pairs(cache.materialStocks) do
-        if stock.nextRegenTime and stock.regenRate > 0 then
-          local hoursUntilRegen = stock.nextRegenTime - currentHour
-          if hoursUntilRegen < 0 then hoursUntilRegen = hoursUntilRegen + 24 end
+        if stock.nextRegenTime and not stock.nextRegenSimTime then
+          local regenRate = stock.regenRate or 0
+          if regenRate > 0 then
+            stock.nextRegenSimTime = currentSimTime + (3600 / regenRate)
+            stock.nextRegenTime = nil
+          end
+        end
+        
+        if stock.nextRegenSimTime and stock.regenRate > 0 then
+          local secondsUntilRegen = stock.nextRegenSimTime - currentSimTime
           
-          if hoursUntilRegen <= 0 then
+          if secondsUntilRegen <= 0 then
             if stock.current < stock.max then
               local oldStock = stock.current
               stock.current = math.min(stock.max, stock.current + 1)
-              stock.nextRegenTime = currentHour + (1 / stock.regenRate)
+              stock.nextRegenSimTime = currentSimTime + (3600 / stock.regenRate)
               
               if stock.current > oldStock then
-                print(string.format("[Loading] Zone '%s' material '%s': Stock regenerated %d -> %d/%d (next regen at %.2f hours)", 
-                  group.secondaryTag, matKey, oldStock, stock.current, stock.max, stock.nextRegenTime))
+                print(string.format("[Loading] Zone '%s' material '%s': Stock regenerated %d -> %d/%d (next regen in %.2f seconds)", 
+                  group.secondaryTag, matKey, oldStock, stock.current, stock.max, 3600 / stock.regenRate))
               end
             else
-              stock.nextRegenTime = currentHour + (1 / stock.regenRate)
+              stock.nextRegenSimTime = currentSimTime + (3600 / stock.regenRate)
             end
           end
         end

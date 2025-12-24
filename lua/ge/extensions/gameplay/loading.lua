@@ -307,6 +307,7 @@ local function getPhoneStateForUI()
     allZonesStock = allZonesStock,
     allZonesByFacility = allZonesByFacility,
     isComplete = isComplete,
+    currentSimTime = Contracts.getSimTime and Contracts.getSimTime() or nil,
   }
 end
 
@@ -615,6 +616,10 @@ end
 local function onUpdate(dt)
   if not Config or not Contracts or not Zones or not Manager or not UI then return end
 
+  if Contracts.updateSimTime then
+    Contracts.updateSimTime(dt)
+  end
+
   local settingsZones = Config.settings and Config.settings.zones
   local settingsPayload = Config.settings and Config.settings.payload
   local settingsTruck = Config.settings and Config.settings.truck
@@ -635,7 +640,9 @@ local function onUpdate(dt)
     end
   end
 
-  Zones.updateZoneStocks(dt, Contracts.getCurrentGameHour)
+  if Contracts.getSimTime then
+    Zones.updateZoneStocks(dt, Contracts.getSimTime)
+  end
   UI.drawWorkSiteMarker(dt, currentState, Config.STATE_DRIVING_TO_SITE, Manager.markerCleared, Manager.jobObjects.activeGroup)
   UI.drawZoneChoiceMarkers(dt, currentState, Config.STATE_CHOOSING_ZONE, compatibleZones)
   
