@@ -14,6 +14,235 @@ local playerCacheTimer = 0
 
 local loadedExtensions = {}
 
+local function getPhoneStateForUI()
+  if not Config or not Contracts or not Zones or not Manager then return nil end
+
+  local currentZone = nil
+  if cachedPlayerPos then
+    if Zones.getPlayerCurrentZone then
+      currentZone = Zones.getPlayerCurrentZone(cachedPlayerPos)
+    end
+    if not currentZone and Zones.getNearestZoneWithinDistance then
+      currentZone = Zones.getNearestZoneWithinDistance(cachedPlayerPos, 500)
+    end
+  end
+  currentZone = currentZone or Manager.jobObjects.activeGroup
+
+  local currentZoneTag = currentZone and currentZone.secondaryTag or nil
+  local currentFacilityId = Zones.getFacilityIdForZone and Zones.getFacilityIdForZone(currentZoneTag) or nil
+  local currentFacilityCfg = currentFacilityId and Config.facilities and Config.facilities[currentFacilityId] or nil
+  local currentFacility = currentFacilityId and { id = currentFacilityId, name = (currentFacilityCfg and (currentFacilityCfg.name or currentFacilityId)) or currentFacilityId } or nil
+
+  local function getContractFacilityId(contract)
+    if not contract then return nil end
+    if contract.facilityId then return contract.facilityId end
+    if Contracts.getFacilityIdForZone then
+      return Contracts.getFacilityIdForZone(contract.groupTag or contract.loadingZoneTag)
+    end
+    if Zones.getFacilityIdForZone then
+      return Zones.getFacilityIdForZone(contract.groupTag or contract.loadingZoneTag)
+    end
+    return nil
+  end
+
+  local contractsForUI = {}
+  for _, c in ipairs(Contracts.ContractSystem.availableContracts or {}) do
+    local contractFacilityId = getContractFacilityId(c)
+    if not currentFacilityId or (contractFacilityId == currentFacilityId) then
+      local matConfig = c.material and Config.materials and Config.materials[c.material] or nil
+      local materialBreakdown = {}
+      if c.materialRequirements then
+        for matKey, requiredQty in pairs(c.materialRequirements) do
+          local matCfg = Config.materials and Config.materials[matKey]
+          table.insert(materialBreakdown, {
+            materialKey = matKey,
+            materialName = matCfg and matCfg.name or matKey,
+            units = matCfg and matCfg.units or "items",
+            required = requiredQty
+          })
+        end
+      end
+      table.insert(contractsForUI, {
+        id = c.id,
+        name = c.name,
+        tier = c.tier,
+        material = c.material,
+        materialName = matConfig and matConfig.name or c.material,
+        materialTypeName = c.materialTypeName,
+        requiredTons = c.requiredTons,
+        requiredItems = c.requiredItems,
+        materialBreakdown = materialBreakdown,
+        isBulk = c.isBulk,
+        totalPayout = c.totalPayout,
+        paymentType = c.paymentType,
+        groupTag = c.groupTag,
+        loadingZoneTag = c.loadingZoneTag,
+        estimatedTrips = c.estimatedTrips,
+        expiresAt = c.expiresAt,
+        hoursRemaining = Contracts.getContractHoursRemaining(c),
+        expirationHours = c.expirationHours,
+        destinationName = c.destination and c.destination.name or nil,
+        originZoneTag = c.destination and c.destination.originZoneTag or c.groupTag,
+        facilityId = contractFacilityId,
+        unitType = c.unitType,
+        units = c.units,
+      })
+    end
+  end
+
+  local activeContractForUI = nil
+  if Contracts.ContractSystem.activeContract then
+    local c = Contracts.ContractSystem.activeContract
+    local matConfig = c.material and Config.materials and Config.materials[c.material] or nil
+    local materialBreakdown = {}
+    if c.materialRequirements then
+      for matKey, requiredQty in pairs(c.materialRequirements) do
+        local matCfg = Config.materials and Config.materials[matKey]
+        table.insert(materialBreakdown, {
+          materialKey = matKey,
+          materialName = matCfg and matCfg.name or matKey,
+          units = matCfg and matCfg.units or "items",
+          required = requiredQty
+        })
+      end
+    end
+    activeContractForUI = {
+      id = c.id,
+      name = c.name,
+      tier = c.tier,
+      material = c.material,
+      materialName = matConfig and matConfig.name or c.material,
+      materialTypeName = c.materialTypeName,
+      requiredTons = c.requiredTons,
+      requiredItems = c.requiredItems,
+      materialBreakdown = materialBreakdown,
+      totalPayout = c.totalPayout,
+      paymentType = c.paymentType,
+      groupTag = c.groupTag,
+      loadingZoneTag = c.loadingZoneTag,
+      estimatedTrips = c.estimatedTrips,
+      destinationName = c.destination and c.destination.name or nil,
+      facilityId = getContractFacilityId(c),
+      unitType = c.unitType,
+      units = c.units,
+    }
+  end
+
+  local compat = compatibleZones
+  if (not compat or #compat == 0) and Contracts.ContractSystem.activeContract and Contracts.ContractSystem.activeContract.materialTypeName then
+    compat = Zones.getZonesByTypeName(Contracts.ContractSystem.activeContract.materialTypeName) or {}
+  end
+
+  local compatibleZonesForUI = {}
+  if compat and Zones.getZoneStockInfo then
+    for _, z in ipairs(compat) do
+      local cache = Zones.ensureGroupCache and Zones.ensureGroupCache(z, Contracts.getCurrentGameHour) or nil
+      local materialNames = {}
+      local materialKeys = z.materials or (z.materialType and { z.materialType } or {})
+      for _, matKey in ipairs(materialKeys) do
+        local matConfig = Config.materials and Config.materials[matKey]
+        table.insert(materialNames, matConfig and matConfig.name or matKey)
+      end
+      local stockInfo = Zones.getZoneStockInfo(z, Contracts.getCurrentGameHour)
+      if stockInfo and stockInfo.materialStocks then
+        local enrichedMaterialStocks = {}
+        for matKey, stockData in pairs(stockInfo.materialStocks) do
+          local matConfig = Config.materials and Config.materials[matKey]
+          enrichedMaterialStocks[matKey] = {
+            current = stockData.current,
+            max = stockData.max,
+            regenRate = stockData.regenRate,
+            materialName = matConfig and matConfig.name or matKey,
+            units = matConfig and matConfig.units or "items"
+          }
+        end
+        stockInfo.materialStocks = enrichedMaterialStocks
+      end
+      table.insert(compatibleZonesForUI, {
+        zoneTag = z.secondaryTag,
+        displayName = cache and cache.name or z.secondaryTag,
+        materials = materialNames,
+        materialKeys = materialKeys,
+        stock = stockInfo,
+      })
+    end
+  end
+
+  local currentZoneDisplayName = nil
+  if currentZoneTag then
+    local cache = currentZone and Zones.ensureGroupCache and Zones.ensureGroupCache(currentZone, Contracts.getCurrentGameHour) or nil
+    currentZoneDisplayName = cache and cache.name or currentZoneTag
+  end
+  
+  local truckState = {
+    status = "none",
+    truckId = Manager.jobObjects.truckID,
+    currentZone = currentZoneDisplayName or currentZoneTag,
+    zoneSwapPending = Manager.jobObjects.zoneSwapPending or false
+  }
+  if Contracts.ContractSystem.activeContract then
+    if currentState == Config.STATE_DELIVERING then
+      truckState.status = "delivering"
+    elseif currentState == Config.STATE_LOADING then
+      truckState.status = (Manager.truckStoppedInLoading and "at_zone") or "arriving"
+    elseif currentState == Config.STATE_TRUCK_ARRIVING then
+      truckState.status = "arriving"
+    elseif currentState == Config.STATE_DRIVING_TO_SITE then
+      truckState.status = (Manager.jobObjects.truckID and "arriving") or "spawning"
+    elseif currentState == Config.STATE_CHOOSING_ZONE then
+      truckState.status = "none"
+    else
+      truckState.status = (Manager.jobObjects.truckID and "arriving") or "none"
+    end
+  end
+
+  local allZonesStock = (Zones.getAllZonesStockInfo and Contracts.getCurrentGameHour) and Zones.getAllZonesStockInfo(Contracts.getCurrentGameHour) or {}
+
+  return {
+    state = currentState,
+    contractsCompleted = Contracts.PlayerData and Contracts.PlayerData.contractsCompleted or 0,
+    availableContracts = contractsForUI,
+    activeContract = activeContractForUI,
+    contractProgress = {
+      deliveredTons = Contracts.ContractSystem.contractProgress and Contracts.ContractSystem.contractProgress.deliveredTons or 0,
+      totalPaidSoFar = Contracts.ContractSystem.contractProgress and Contracts.ContractSystem.contractProgress.totalPaidSoFar or 0,
+      deliveredBlocks = Contracts.ContractSystem.contractProgress and Contracts.ContractSystem.contractProgress.deliveredBlocks or { big = 0, small = 0, total = 0 },
+      deliveryCount = Contracts.ContractSystem.contractProgress and Contracts.ContractSystem.contractProgress.deliveryCount or 0,
+      deliveredItems = Contracts.ContractSystem.contractProgress and Contracts.ContractSystem.contractProgress.deliveredItems or 0,
+      deliveredItemsByMaterial = Contracts.ContractSystem.contractProgress and Contracts.ContractSystem.contractProgress.deliveredItemsByMaterial or {}
+    },
+    currentLoadMass = Manager.jobObjects.currentLoadMass or 0,
+    targetLoad = (function()
+      local matType = Manager.jobObjects.materialType
+      if matType and Config.materials and Config.materials[matType] then
+        local matConfig = Config.materials[matType]
+        if matConfig.unitType == "mass" then
+          return matConfig.targetLoad or 25000
+        end
+      end
+      return nil
+    end)(),
+    materialType = Manager.jobObjects.materialType or nil,
+    itemBlocks = (Manager.jobObjects.materialType ~= "rocks") and Manager.getItemBlocksStatus() or {},
+    anyItemDamaged = Manager.jobObjects.anyItemDamaged or false,
+    deliveryBlocks = Manager.jobObjects.deliveryBlocksStatus or {},
+    markerCleared = Manager.markerCleared,
+    truckStopped = Manager.truckStoppedInLoading,
+    zoneStock = (currentZone and Zones.getZoneStockInfo) and Zones.getZoneStockInfo(currentZone, Contracts.getCurrentGameHour) or nil,
+    currentFacility = currentFacility,
+    compatibleZones = compatibleZonesForUI,
+    truckState = truckState,
+    allZonesStock = allZonesStock,
+  }
+end
+
+local function triggerPhoneState()
+  local payload = getPhoneStateForUI()
+  if payload then
+    guihooks.trigger('updateQuarryState', payload)
+  end
+end
+
 local function loadSubModules()
   local path = "/lua/ge/extensions/gameplay/loading/"
   local files = FS:findFiles(path, "*.lua", -1, true, false)
@@ -53,6 +282,15 @@ local uiCallbacks = {
   onAcceptContract = function(index)
     local contract, zones = Contracts.acceptContract(index, Zones.getZonesByTypeName)
     if contract then
+      if Zones and contract.materialTypeName then
+        local compatibleZonesList = Zones.getZonesByTypeName(contract.materialTypeName)
+        for _, zone in ipairs(compatibleZonesList) do
+          local cache = Zones.ensureGroupCache(zone, Contracts.getCurrentGameHour)
+          if cache then
+            cache.spawnedPropCounts = {}
+          end
+        end
+      end
       currentState = Config.STATE_CHOOSING_ZONE
       compatibleZones = zones
     end
@@ -60,7 +298,10 @@ local uiCallbacks = {
   onDeclineAll = function()
     currentState = Config.STATE_IDLE
     Manager.jobOfferSuppressed = true
-    UI.requestQuarryState(currentState, nil, Contracts, Manager, Zones)
+    triggerPhoneState()
+    if career_career and career_career.isActive() and career_saveSystem then
+      career_saveSystem.saveCurrent()
+    end
   end,
   getCompatibleZones = function()
     if #compatibleZones == 0 and Contracts.ContractSystem.activeContract and Contracts.ContractSystem.activeContract.materialTypeName then
@@ -71,6 +312,18 @@ local uiCallbacks = {
   onSwapZone = function()
     local contract = Contracts.ContractSystem.activeContract
     if contract and contract.materialTypeName then
+      if Contracts.checkContractCompletion() then
+        if Manager.jobObjects.truckID then
+          local obj = be:getObjectByID(Manager.jobObjects.truckID)
+          if obj then obj:delete() end
+        end
+        Manager.cleanupJob(true, Config.STATE_IDLE)
+        currentState = Config.STATE_AT_QUARRY_DECIDE
+        Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
+        ui_message("Contract complete! Ready to finalize.", 6, "success")
+        return
+      end
+      
       compatibleZones = Zones.getZonesByTypeName(contract.materialTypeName)
       if #compatibleZones > 1 then
         if currentState == Config.STATE_DELIVERING and Manager.jobObjects.truckID then
@@ -78,41 +331,16 @@ local uiCallbacks = {
           if truck then
             local loadedPropIds = Manager.getLoadedPropIdsInTruck(0.1)
             if loadedPropIds and #loadedPropIds > 0 then
+              Manager.jobObjects.zoneSwapLoadedPropIds = loadedPropIds
               local materialType = Manager.jobObjects.materialType
               local matConfig = materialType and Config.materials and Config.materials[materialType]
               
               if matConfig and matConfig.unitType == "item" then
                 Manager.jobObjects.deliveryBlocksStatus = Manager.getItemBlocksStatus()
+                Manager.jobObjects.zoneSwapDeliveryBlocksStatus = Manager.jobObjects.deliveryBlocksStatus
               end
               
-              local deliveredMass = Manager.jobObjects.lastDeliveredMass or Manager.jobObjects.currentLoadMass or 0
-              local tons = deliveredMass / 1000
-              Contracts.ContractSystem.contractProgress.deliveredTons = (Contracts.ContractSystem.contractProgress.deliveredTons or 0) + tons
-              Contracts.ContractSystem.contractProgress.deliveryCount = (Contracts.ContractSystem.contractProgress.deliveryCount or 0) + 1
-              
-              local contractTypeName = contract.materialTypeName
-              if contractTypeName and contract.unitType == "item" then
-                local deliveredSet = {}
-                for _, id in ipairs(loadedPropIds) do deliveredSet[id] = true end
-                
-                if not Contracts.ContractSystem.contractProgress.deliveredItemsByMaterial then
-                  Contracts.ContractSystem.contractProgress.deliveredItemsByMaterial = {}
-                end
-                
-                for _, entry in ipairs(Manager.propQueue) do
-                  if entry.id and deliveredSet[entry.id] and entry.materialType then
-                    local entryMatConfig = Config.materials and Config.materials[entry.materialType]
-                    if entryMatConfig and entryMatConfig.typeName == contractTypeName then
-                      Contracts.ContractSystem.contractProgress.deliveredItems = (Contracts.ContractSystem.contractProgress.deliveredItems or 0) + 1
-                      Contracts.ContractSystem.contractProgress.deliveredItemsByMaterial[entry.materialType] = (Contracts.ContractSystem.contractProgress.deliveredItemsByMaterial[entry.materialType] or 0) + 1
-                    end
-                  end
-                end
-              end
-              
-              Manager.despawnPropIds(loadedPropIds, Zones, Contracts)
-              Manager.jobObjects.deliveredPropIds = nil
-              Manager.jobObjects.deliveryBlocksStatus = nil
+              Manager.jobObjects.zoneSwapDeliveredMass = Manager.jobObjects.lastDeliveredMass or Manager.jobObjects.currentLoadMass or 0
             end
           end
         end
@@ -164,21 +392,25 @@ local uiCallbacks = {
         else
           contract.group = selectedZone
           contract.loadingZoneTag = selectedZone.secondaryTag
-          Manager.jobObjects.activeGroup = selectedZone
+          local oldGroup = Manager.jobObjects.activeGroup
           Manager.jobObjects.materialType = selectedZone.materialType or contract.material or "rocks"
           Manager.jobObjects.truckSpawnQueued = true
           local playerVeh = be:getPlayerVehicle(0)
           local playerPos = playerVeh and playerVeh:getPosition() or cachedPlayerPos
-          if #Manager.propQueue == 0 then
-            Manager.spawnJobMaterials(Contracts, Zones, playerPos)
-          end
+          
+          Manager.clearUnloadedProps(oldGroup)
+          Manager.jobObjects.activeGroup = selectedZone
+          Manager.spawnJobMaterials(Contracts, Zones, playerPos)
+          
           currentState = Config.STATE_DRIVING_TO_SITE
           Manager.markerCleared = false
-          if selectedZone.loading and selectedZone.loading.center then
-            core_groundMarkers.setPath(vec3(selectedZone.loading.center))
-          end
           compatibleZones = {}
-          ui_message(string.format("Loading from %s. Drive to zone - truck will arrive when you get there.", selectedZone.secondaryTag), 5, "info")
+          if selectedZone.loading and selectedZone.loading.center then
+            local targetPos = vec3(selectedZone.loading.center)
+            core_groundMarkers.setPath(targetPos)
+          end
+          ui_message(string.format("Zone selected: %s. Drive to zone.", selectedZone.secondaryTag), 5, "info")
+          triggerPhoneState()
         end
       end
     end
@@ -228,6 +460,9 @@ local uiCallbacks = {
     Contracts.completeContract(function(deleteTruck) 
       Manager.cleanupJob(deleteTruck, Config.STATE_IDLE)
       currentState = Config.STATE_IDLE
+      if career_career and career_career.isActive() and career_saveSystem then
+        career_saveSystem.saveCurrent()
+      end
     end, Manager.clearProps)
   end,
   onLoadMore = function()
@@ -371,6 +606,68 @@ local function onUpdate(dt)
         if not Manager.jobObjects.zoneSwapTruckAtDestination and (truckPos - destPos):length() < arrivalDist then
           Manager.jobObjects.zoneSwapTruckAtDestination = true
           Manager.stopTruck(Manager.jobObjects.truckID)
+          
+          if Manager.jobObjects.zoneSwapLoadedPropIds and #Manager.jobObjects.zoneSwapLoadedPropIds > 0 then
+            local contract = Contracts.ContractSystem.activeContract
+            if contract then
+              local materialType = Manager.jobObjects.materialType
+              local matConfig = materialType and Config.materials and Config.materials[materialType]
+              
+              if matConfig and matConfig.unitType == "item" then
+                Manager.jobObjects.deliveryBlocksStatus = Manager.jobObjects.zoneSwapDeliveryBlocksStatus
+              end
+              
+              local deliveredMass = Manager.jobObjects.zoneSwapDeliveredMass or 0
+              local tons = deliveredMass / 1000
+              Contracts.ContractSystem.contractProgress.deliveredTons = (Contracts.ContractSystem.contractProgress.deliveredTons or 0) + tons
+              Contracts.ContractSystem.contractProgress.deliveryCount = (Contracts.ContractSystem.contractProgress.deliveryCount or 0) + 1
+              
+              local contractTypeName = contract.materialTypeName
+              if contractTypeName and contract.unitType == "item" then
+                local deliveredSet = {}
+                for _, id in ipairs(Manager.jobObjects.zoneSwapLoadedPropIds) do deliveredSet[id] = true end
+                
+                if not Contracts.ContractSystem.contractProgress.deliveredItemsByMaterial then
+                  Contracts.ContractSystem.contractProgress.deliveredItemsByMaterial = {}
+                end
+                
+                for _, entry in ipairs(Manager.propQueue) do
+                  if entry.id and deliveredSet[entry.id] and entry.materialType then
+                    local entryMatConfig = Config.materials and Config.materials[entry.materialType]
+                    if entryMatConfig and entryMatConfig.typeName == contractTypeName then
+                      Contracts.ContractSystem.contractProgress.deliveredItems = (Contracts.ContractSystem.contractProgress.deliveredItems or 0) + 1
+                      Contracts.ContractSystem.contractProgress.deliveredItemsByMaterial[entry.materialType] = (Contracts.ContractSystem.contractProgress.deliveredItemsByMaterial[entry.materialType] or 0) + 1
+                    end
+                  end
+                end
+              end
+              
+              Manager.despawnPropIds(Manager.jobObjects.zoneSwapLoadedPropIds, Zones, Contracts)
+              Manager.jobObjects.zoneSwapLoadedPropIds = nil
+              Manager.jobObjects.deliveredPropIds = nil
+              Manager.jobObjects.deliveryBlocksStatus = nil
+              Manager.jobObjects.zoneSwapDeliveryBlocksStatus = nil
+              
+              if Contracts.checkContractCompletion() then
+                Manager.jobObjects.zoneSwapPending = false
+                Manager.jobObjects.zoneSwapTargetZone = nil
+                Manager.jobObjects.zoneSwapTruckAtDestination = false
+                Manager.jobObjects.zoneSwapClearPropsOnArrival = false
+                Manager.clearProps()
+                if Manager.jobObjects.truckID then
+                  local truckObj = be:getObjectByID(Manager.jobObjects.truckID)
+                  if truckObj then truckObj:delete() end
+                  Manager.jobObjects.truckID = nil
+                end
+                Manager.jobObjects.truckStoppedInLoading, Manager.markerCleared = false, true
+                currentState = Config.STATE_AT_QUARRY_DECIDE
+                Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
+                ui_message("Contract complete! Ready to finalize.", 6, "success")
+                core_groundMarkers.setPath(nil)
+                return
+              end
+            end
+          end
           
           if Manager.jobObjects.zoneSwapClearPropsOnArrival then
             Manager.clearProps()
@@ -706,7 +1003,7 @@ local function onUpdate(dt)
     uiUpdateTimer = uiUpdateTimer + dt
     if uiUpdateTimer >= uiUpdateInterval then
       uiUpdateTimer = 0
-      UI.requestQuarryState(currentState, nil, Contracts, Manager, Zones)
+      triggerPhoneState()
     end
   end
 end
@@ -748,6 +1045,263 @@ local function onItemDamageCallback(objId, isDamaged)
   end
 end
 
+local function saveLoadingData(currentSavePath)
+  if not career_career or not career_career.isActive() then return end
+  if not Contracts or not Zones or not Config then return end
+  
+  if not currentSavePath then
+    local slot, path = career_saveSystem.getCurrentSaveSlot()
+    currentSavePath = path
+    if not currentSavePath then return end
+  end
+
+  local dirPath = currentSavePath .. "/career/rls_career"
+  if not FS:directoryExists(dirPath) then
+    FS:directoryCreate(dirPath)
+  end
+
+  local saveData = {}
+  
+  local facilitiesByContract = {}
+  local activeContractFacilityId = nil
+  
+  for _, contract in ipairs(Contracts.ContractSystem.availableContracts or {}) do
+    local facilityId = contract.facilityId
+    if not facilityId and (contract.groupTag or contract.loadingZoneTag) then
+      facilityId = Contracts.getFacilityIdForZone(contract.groupTag or contract.loadingZoneTag)
+    end
+    
+    if facilityId then
+      if not facilitiesByContract[facilityId] then
+        facilitiesByContract[facilityId] = {}
+      end
+      table.insert(facilitiesByContract[facilityId], Contracts.serializeContract(contract))
+    end
+  end
+  
+  if Contracts.ContractSystem.activeContract then
+    local contract = Contracts.ContractSystem.activeContract
+    activeContractFacilityId = contract.facilityId
+    if not activeContractFacilityId and (contract.groupTag or contract.loadingZoneTag) then
+      activeContractFacilityId = Contracts.getFacilityIdForZone(contract.groupTag or contract.loadingZoneTag)
+    end
+  end
+  
+  for facilityId, contracts in pairs(facilitiesByContract) do
+    if not saveData[facilityId] then
+      saveData[facilityId] = {
+        contracts = {
+          availableContracts = {},
+          activeContract = nil,
+          contractProgress = {},
+          nextContractSpawnTime = nil,
+          initialContractsGenerated = false
+        },
+        zoneStocks = {}
+      }
+    end
+    saveData[facilityId].contracts.availableContracts = contracts
+  end
+  
+  if activeContractFacilityId and Contracts.ContractSystem.activeContract then
+    if not saveData[activeContractFacilityId] then
+      saveData[activeContractFacilityId] = {
+        contracts = {
+          availableContracts = {},
+          activeContract = nil,
+          contractProgress = {},
+          nextContractSpawnTime = nil,
+          initialContractsGenerated = false
+        },
+        zoneStocks = {}
+      }
+    end
+    saveData[activeContractFacilityId].contracts.activeContract = Contracts.serializeContract(Contracts.ContractSystem.activeContract)
+    saveData[activeContractFacilityId].contracts.contractProgress = Contracts.ContractSystem.contractProgress or {}
+  end
+  
+  local earliestSpawnTime = Contracts.ContractSystem.nextContractSpawnTime
+  for facilityId, facilityData in pairs(saveData) do
+    if earliestSpawnTime then
+      facilityData.contracts.nextContractSpawnTime = earliestSpawnTime
+    end
+    facilityData.contracts.initialContractsGenerated = Contracts.ContractSystem.initialContractsGenerated or false
+  end
+  
+  for zoneTag, cache in pairs(Zones.groupCache or {}) do
+    local facilityId = Zones.getFacilityIdForZone(zoneTag)
+    if facilityId and Zones.validateZoneBelongsToFacility(zoneTag, facilityId) then
+      if not saveData[facilityId] then
+        saveData[facilityId] = {
+          contracts = {
+            availableContracts = {},
+            activeContract = nil,
+            contractProgress = {},
+            nextContractSpawnTime = nil,
+            initialContractsGenerated = false
+          },
+          zoneStocks = {}
+        }
+      end
+      
+      if cache.materialStocks then
+        local zoneStockData = {
+          materialStocks = {},
+          spawnedPropCounts = cache.spawnedPropCounts or {}
+        }
+        
+        for matKey, stock in pairs(cache.materialStocks) do
+          zoneStockData.materialStocks[matKey] = {
+            current = stock.current,
+            max = stock.max,
+            regenRate = stock.regenRate,
+            nextRegenTime = stock.nextRegenTime
+          }
+        end
+        
+        saveData[facilityId].zoneStocks[zoneTag] = zoneStockData
+      end
+    end
+  end
+  
+  career_saveSystem.jsonWriteFileSafe(dirPath .. "/loading.json", saveData, true)
+end
+
+local function loadLoadingData()
+  if not career_career or not career_career.isActive() then return end
+  if not Contracts or not Zones or not Config then return end
+  
+  if not Zones.sitesData then
+    Zones.loadQuarrySites(Contracts.getCurrentGameHour)
+  end
+  
+  local slot, path = career_saveSystem.getCurrentSaveSlot()
+  if not path then return end
+  
+  local filePath = path .. "/career/rls_career/loading.json"
+  local saveData = jsonReadFile(filePath) or {}
+  
+  if not saveData or next(saveData) == nil then return end
+  
+  local allAvailableContracts = {}
+  local activeContract = nil
+  local contractProgress = {}
+  local nextContractSpawnTime = nil
+  local initialContractsGenerated = false
+  
+  for facilityId, facilityData in pairs(saveData) do
+    if not Config.facilities or not Config.facilities[facilityId] then
+      print(string.format("[Loading] Skipping save data for facility '%s' - facility no longer exists", facilityId))
+      goto continue
+    end
+    
+    if facilityData.contracts then
+      if facilityData.contracts.availableContracts then
+        for _, serializedContract in ipairs(facilityData.contracts.availableContracts) do
+          local contract = Contracts.deserializeContract(serializedContract)
+          if contract then
+            if not contract.facilityId then
+              contract.facilityId = facilityId
+            end
+            if contract.facilityId == facilityId then
+              table.insert(allAvailableContracts, contract)
+            end
+          end
+        end
+      end
+      
+      if facilityData.contracts.activeContract and not activeContract then
+        local contract = Contracts.deserializeContract(facilityData.contracts.activeContract)
+        if contract then
+          if not contract.facilityId then
+            contract.facilityId = facilityId
+          end
+          if contract.facilityId == facilityId then
+            activeContract = contract
+            contractProgress = facilityData.contracts.contractProgress or {}
+          end
+        end
+      end
+      
+      if facilityData.contracts.nextContractSpawnTime then
+        if not nextContractSpawnTime or (facilityData.contracts.nextContractSpawnTime < nextContractSpawnTime) then
+          nextContractSpawnTime = facilityData.contracts.nextContractSpawnTime
+        end
+      end
+      
+      if facilityData.contracts.initialContractsGenerated then
+        initialContractsGenerated = true
+      end
+    end
+    
+    if facilityData.zoneStocks then
+      for zoneTag, zoneStockData in pairs(facilityData.zoneStocks) do
+        if Zones.validateZoneBelongsToFacility(zoneTag, facilityId) then
+          local cache = Zones.ensureGroupCache({secondaryTag = zoneTag}, Contracts.getCurrentGameHour)
+          if cache then
+            if zoneStockData.materialStocks then
+              for matKey, stockData in pairs(zoneStockData.materialStocks) do
+                if cache.materialStocks[matKey] then
+                  cache.materialStocks[matKey].current = stockData.current or cache.materialStocks[matKey].current
+                  cache.materialStocks[matKey].max = stockData.max or cache.materialStocks[matKey].max
+                  cache.materialStocks[matKey].regenRate = stockData.regenRate or cache.materialStocks[matKey].regenRate
+                  cache.materialStocks[matKey].nextRegenTime = stockData.nextRegenTime
+                end
+              end
+            end
+            
+            if zoneStockData.spawnedPropCounts then
+              cache.spawnedPropCounts = zoneStockData.spawnedPropCounts
+            end
+          end
+        else
+          print(string.format("[Loading] Skipping zone stock for zone '%s' - does not belong to facility '%s'", zoneTag, facilityId))
+        end
+      end
+    end
+    
+    ::continue::
+  end
+  
+  Contracts.ContractSystem.availableContracts = allAvailableContracts
+  Contracts.ContractSystem.activeContract = activeContract
+  Contracts.ContractSystem.contractProgress = contractProgress
+  Contracts.ContractSystem.nextContractSpawnTime = nextContractSpawnTime
+  Contracts.ContractSystem.initialContractsGenerated = initialContractsGenerated
+  
+  if activeContract and (activeContract.groupTag or activeContract.loadingZoneTag) then
+    local zoneTag = activeContract.groupTag or activeContract.loadingZoneTag
+    for _, group in ipairs(Zones.availableGroups or {}) do
+      if group.secondaryTag == zoneTag then
+        activeContract.group = group
+        activeContract.loadingZoneTag = zoneTag
+        break
+      end
+    end
+  end
+  
+  Contracts.sortContracts()
+end
+
+local function onSaveCurrentSaveSlot(currentSavePath)
+  saveLoadingData(currentSavePath)
+end
+
+local function onCareerModulesActivated(alreadyInLevel)
+  if alreadyInLevel and Contracts and Zones and Config then
+    core_jobsystem.create(function(job)
+      job.sleep(0.5)
+      if Zones.sitesData or Zones.loadQuarrySites then
+        if not Zones.sitesData then
+          Zones.loadQuarrySites(Contracts.getCurrentGameHour)
+        end
+        job.sleep(0.1)
+        loadLoadingData()
+      end
+    end)
+  end
+end
+
 -- API Exports
 M.onUpdate = onUpdate
 M.onExtensionLoaded = onExtensionLoaded
@@ -755,8 +1309,10 @@ M.onExtensionUnloaded = onExtensionUnloaded
 M.onClientStartMission = onClientStartMission
 M.onClientEndMission = onClientEndMission
 M.onItemDamageCallback = onItemDamageCallback
+M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
+M.onCareerModulesActivated = onCareerModulesActivated
 
-M.requestQuarryState = function() if UI then UI.requestQuarryState(currentState, nil, Contracts, Manager, Zones) end end
+M.requestQuarryState = function() triggerPhoneState() end
 M.acceptContractFromUI = function(index) uiCallbacks.onAcceptContract(index) end
 M.declineAllContracts = function() uiCallbacks.onDeclineAll() end
 M.abandonContractFromUI = function() uiCallbacks.onAbandonContract() end
@@ -764,5 +1320,7 @@ M.sendTruckFromUI = function() uiCallbacks.onSendTruck() end
 M.finalizeContractFromUI = function() uiCallbacks.onFinalizeContract() end
 M.loadMoreFromUI = function() uiCallbacks.onLoadMore() end
 M.resumeTruck = function() if Manager then Manager.resumeTruck() end end
+M.selectZoneFromUI = function(zoneIndex) uiCallbacks.onSelectZone(zoneIndex) end
+M.swapZoneFromUI = function() uiCallbacks.onSwapZone() end
 
 return M

@@ -1,25 +1,100 @@
 <template>
-  <PhoneWrapper app-name="Quarry" status-font-color="#FFFFFF" status-blend-mode="normal">
+  <PhoneWrapper app-name="Loading" status-font-color="#FFFFFF" status-blend-mode="normal">
     <div class="quarry-container">
-      <!-- Header Stats -->
-      <div class="stats-bubble" v-if="currentState !== 'idle'">
-        <span class="stat">Lvl {{ playerLevel }}</span>
-        <span class="divider">|</span>
-        <span class="stat">{{ contractsCompleted }} done</span>
-      </div>
-
       <!-- IDLE State -->
       <div class="state-panel centered" v-if="currentState === 'idle'">
         <div class="state-icon">🏔️</div>
-        <div class="state-title">Quarry Jobs</div>
-        <div class="state-message">Drive a WL40 loader to a quarry loading zone to see available contracts.</div>
+        <div class="state-title">Loading</div>
+        <div class="state-message" v-if="!currentFacility">No loading facility available.</div>
+        <div class="state-message" v-else>Enter a loading zone to see available contracts.</div>
+      </div>
+
+      <!-- Active Contract Section (Always visible when active) -->
+      <div class="active-contract-section" v-if="activeContract && currentState !== 'idle' && currentState !== 'contract_select'">
+        <div class="section-header">Active Contract</div>
+        <div class="active-contract-card">
+          <div class="contract-name-row">
+            <span class="contract-name">{{ activeContract.name }}</span>
+            <span class="contract-payout-badge">${{ formatNumber(activeContract.totalPayout) }}</span>
+          </div>
+          <div class="contract-progress-row">
+            <template v-if="activeContract.materialBreakdown && activeContract.materialBreakdown.length > 0">
+              <div 
+                v-for="(mat, idx) in activeContract.materialBreakdown" 
+                :key="mat.materialKey"
+                class="material-progress-item"
+              >
+                <div class="material-progress-label">{{ mergeMaterialNameAndUnit(mat.materialName, mat.units) }}:</div>
+                <div class="progress-bar-container">
+                  <div 
+                    class="progress-bar" 
+                    :style="{ width: getMaterialProgressPercent(mat) + '%' }"
+                  ></div>
+                </div>
+                <div class="progress-text">
+                  {{ getMaterialDelivered(mat.materialKey) || 0 }} / {{ mat.required }} {{ mergeMaterialNameAndUnit(mat.materialName, mat.units) }}
+                  <span class="progress-percent">({{ getMaterialProgressPercent(mat).toFixed(0) }}%)</span>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <div class="progress-bar-container">
+                <div class="progress-bar" :style="{ width: progressPercent + '%' }"></div>
+              </div>
+              <div class="progress-text">
+                <template v-if="activeContract.unitType === 'item'">
+                  {{ contractProgress.deliveredItems || 0 }} / {{ activeContract.requiredItems || 0 }} {{ activeContract.units || 'items' }}
+                </template>
+                <template v-else>
+                  {{ formatNumber(contractProgress.deliveredTons || 0) }} / {{ activeContract.requiredTons || 0 }} {{ activeContract.units || 'tons' }}
+                </template>
+                <span class="progress-percent">({{ progressPercent.toFixed(0) }}%)</span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- Truck Status Section (Always visible when active contract) -->
+      <div class="truck-status-section" v-if="activeContract && truckState.status !== 'none'">
+        <div class="section-header">Truck Status</div>
+        <div class="truck-status-card">
+          <div class="truck-status-icon" :class="{ pulsing: truckState.status === 'arriving' || truckState.status === 'spawning' }">
+            {{ getTruckStatusIcon(truckState.status) }}
+          </div>
+          <div class="truck-status-info">
+            <div class="truck-status-text">{{ getTruckStatusText(truckState.status) }}</div>
+            <div class="truck-status-location" v-if="truckState.currentZone">
+              Zone: {{ truckState.currentZone }}
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- CONTRACT SELECT State -->
       <div class="contract-list" v-if="currentState === 'contract_select'">
+        <!-- Page Tabs -->
+        <div class="page-tabs">
+          <button 
+            class="tab-button" 
+            :class="{ active: currentPage === 'contracts' }"
+            @click="currentPage = 'contracts'"
+          >
+            Contracts
+          </button>
+          <button 
+            class="tab-button" 
+            :class="{ active: currentPage === 'stock' }"
+            @click="currentPage = 'stock'"
+          >
+            Stock
+          </button>
+        </div>
+
+        <!-- Contracts Page -->
+        <div v-if="currentPage === 'contracts'" class="contracts-page">
         <div class="contracts-header">
           <div class="header-title">Available Contracts</div>
-          <div class="header-subtitle">Level {{ playerLevel }} • {{ contractsCompleted }} completed</div>
         </div>
 
         <div class="contracts-scroll">
@@ -41,17 +116,29 @@
               <span class="tier-badge" :class="getTierClass(contract.tier)">
                 Tier {{ contract.tier }}
               </span>
-              <span class="material-badge">{{ (contract.material || 'rocks').toUpperCase() }}</span>
+              <span class="material-badge">{{ (contract.materialName || contract.material || 'rocks').toUpperCase() }}</span>
               <span v-if="contract.isUrgent" class="urgent-badge">⚡ +25%</span>
             </div>
             <div class="contract-info">
-              <!-- Show blocks for marble, tons for rocks -->
-              <span v-if="contract.material === 'marble' && contract.requiredBlocks">
-                {{ formatBlockRequirements(contract.requiredBlocks) }}
-              </span>
-              <span v-else>
-                {{ contract.requiredTons }} tons
-              </span>
+              <template v-if="contract.materialBreakdown && contract.materialBreakdown.length > 0">
+                <div class="material-breakdown">
+                  <div 
+                    v-for="mat in contract.materialBreakdown" 
+                    :key="mat.materialKey"
+                    class="material-breakdown-item"
+                  >
+                    {{ mat.required }} {{ mergeMaterialNameAndUnit(mat.materialName, mat.units) }}
+                  </div>
+                </div>
+              </template>
+              <template v-else>
+                <span v-if="contract.unitType === 'item'">
+                  {{ contract.requiredItems || 0 }} {{ contract.units || 'items' }}
+                </span>
+                <span v-else>
+                  {{ contract.requiredTons || 0 }} {{ contract.units || 'tons' }}
+                </span>
+              </template>
               <span>• Pay on Completion</span>
             </div>
             <div class="contract-expiration" :class="getExpirationClass(contract.hoursRemaining)">
@@ -70,22 +157,73 @@
           </div>
         </div>
 
-        <button class="action-button decline" @click="declineAll">
-          Decline All
-        </button>
-      </div>
+          <button class="action-button decline" @click="declineAll">
+            Decline All
+          </button>
+        </div>
+        
+        <!-- Facility Name at Bottom -->
+        <div class="facility-name-bottom" v-if="currentFacility">
+          {{ currentFacility.name }}
+        </div>
 
-      <!-- CHOOSING ZONE State - Player selecting which zone to load from -->
-      <div class="state-panel" v-if="currentState === 'choosing_zone'">
-        <div class="active-contract-info" v-if="activeContract">
-          <div class="contract-name">{{ activeContract.name }}</div>
-          <div class="contract-details">
-            <span class="material-badge">{{ (activeContract.material || 'rocks').toUpperCase() }}</span>
+        <!-- Stock Page -->
+        <div v-if="currentPage === 'stock'" class="stock-page">
+          <div class="stock-header">
+            <div class="header-title">Zone Stock</div>
+            <div class="header-subtitle">All zones and regeneration rates</div>
+          </div>
+          <div class="zones-scroll">
+            <div v-if="!allZonesStock || allZonesStock.length === 0" class="no-zones">
+              No zones available
+            </div>
+            <div 
+              v-for="zoneStock in allZonesStock" 
+              :key="zoneStock.zoneName"
+              class="zone-stock-card"
+            >
+              <div class="zone-header">
+                <span class="zone-name">{{ zoneStock.zoneName }}</span>
+              </div>
+              <div class="zone-materials">
+                <div 
+                  v-for="material in zoneStock.materials" 
+                  :key="material.materialKey"
+                  class="material-stock-item"
+                >
+                  <div class="material-name">{{ material.materialName }}</div>
+                  <div class="stock-info">
+                    <div class="stock-bar-container">
+                      <div 
+                        class="stock-bar" 
+                        :class="getStockLevelClass(material.current, material.max)"
+                        :style="{ width: ((material.current / material.max) * 100) + '%' }"
+                      ></div>
+                    </div>
+                    <div class="stock-text">
+                      <span class="stock-current">{{ material.current }}</span>
+                      <span class="stock-separator">/</span>
+                      <span class="stock-max">{{ material.max }}</span>
+                      <span class="stock-regen" v-if="material.regenRate > 0">
+                        (+{{ material.regenRate }}/hr)
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
+      </div>
+
+      <!-- CHOOSING ZONE State - Shows zone selection modal -->
+      <div class="state-panel" v-if="currentState === 'choosing_zone' && !showZoneModal">
         <div class="state-icon">📍</div>
         <div class="state-title">Choose Loading Zone</div>
-        <div class="state-message">Drive to any compatible loading zone. Markers are shown on the map.</div>
+        <div class="state-message">Select a zone from the list below.</div>
+        <button class="action-button primary" @click="showZoneModal = true">
+          Select Zone
+        </button>
         <button class="action-button decline" @click="abandonContract">
           Abandon Contract
         </button>
@@ -96,11 +234,11 @@
         <div class="active-contract-info" v-if="activeContract">
           <div class="contract-name">{{ activeContract.name }}</div>
           <div class="contract-progress">
-            <template v-if="activeContract.material === 'marble' && activeContract.requiredBlocks">
-              {{ formatBlockProgress(contractProgress.deliveredBlocks, activeContract.requiredBlocks) }}
+            <template v-if="activeContract.unitType === 'item'">
+              {{ contractProgress.deliveredItems || 0 }} / {{ activeContract.requiredItems || 0 }} {{ activeContract.units || 'items' }}
             </template>
             <template v-else>
-              {{ formatNumber(contractProgress.deliveredTons || 0) }} / {{ activeContract.requiredTons }} tons
+              {{ formatNumber(contractProgress.deliveredTons || 0) }} / {{ activeContract.requiredTons || 0 }} {{ activeContract.units || 'tons' }}
             </template>
           </div>
         </div>
@@ -130,11 +268,11 @@
         <div class="active-contract-info" v-if="activeContract">
           <div class="contract-name">{{ activeContract.name }}</div>
           <div class="contract-progress">
-            <template v-if="activeContract.material === 'marble' && activeContract.requiredBlocks">
-              {{ formatBlockProgress(contractProgress.deliveredBlocks, activeContract.requiredBlocks) }}
+            <template v-if="activeContract.unitType === 'item'">
+              {{ contractProgress.deliveredItems || 0 }} / {{ activeContract.requiredItems || 0 }} {{ activeContract.units || 'items' }}
             </template>
             <template v-else>
-              {{ formatNumber(contractProgress.deliveredTons || 0) }} / {{ activeContract.requiredTons }} tons
+              {{ formatNumber(contractProgress.deliveredTons || 0) }} / {{ activeContract.requiredTons || 0 }} {{ activeContract.units || 'tons' }}
             </template>
           </div>
         </div>
@@ -155,16 +293,16 @@
         <div class="active-contract-info" v-if="activeContract">
           <div class="contract-name">{{ activeContract.name }}</div>
           <div class="contract-progress">
-            <template v-if="activeContract.material === 'marble' && activeContract.requiredBlocks">
-              {{ formatBlockProgress(contractProgress.deliveredBlocks, activeContract.requiredBlocks) }}
+            <template v-if="activeContract.unitType === 'item'">
+              {{ contractProgress.deliveredItems || 0 }} / {{ activeContract.requiredItems || 0 }} {{ activeContract.units || 'items' }}
             </template>
             <template v-else>
-              {{ formatNumber(contractProgress.deliveredTons || 0) }} / {{ activeContract.requiredTons }} tons
+              {{ formatNumber(contractProgress.deliveredTons || 0) }} / {{ activeContract.requiredTons || 0 }} {{ activeContract.units || 'tons' }}
             </template>
           </div>
         </div>
 
-        <div class="payload-section">
+        <div class="payload-section" v-if="activeContract && activeContract.unitType !== 'item'">
           <div class="payload-header">
             <span class="payload-label">Payload</span>
             <span class="payload-value">{{ formatNumber(currentLoadMass) }} / {{ formatNumber(targetLoad) }} kg</span>
@@ -203,8 +341,20 @@
           </div>
         </div>
 
-        <button class="action-button primary" @click="sendTruck">
+        <button 
+          v-if="truckState.status !== 'arriving' && truckState.status !== 'spawning'"
+          class="action-button primary" 
+          @click="sendTruck"
+        >
           Send Truck
+        </button>
+
+        <button 
+          v-if="compatibleZones.length > 1" 
+          class="action-button swap-zone" 
+          @click="swapZone"
+        >
+          Switch Zone
         </button>
 
         <button class="action-button danger small" @click="abandonContract">
@@ -217,11 +367,11 @@
         <div class="active-contract-info" v-if="activeContract">
           <div class="contract-name">{{ activeContract.name }}</div>
           <div class="contract-progress">
-            <template v-if="activeContract.material === 'marble' && activeContract.requiredBlocks">
-              {{ formatBlockProgress(contractProgress.deliveredBlocks, activeContract.requiredBlocks) }}
+            <template v-if="activeContract.unitType === 'item'">
+              {{ contractProgress.deliveredItems || 0 }} / {{ activeContract.requiredItems || 0 }} {{ activeContract.units || 'items' }}
             </template>
             <template v-else>
-              {{ formatNumber(contractProgress.deliveredTons || 0) }} / {{ activeContract.requiredTons }} tons
+              {{ formatNumber(contractProgress.deliveredTons || 0) }} / {{ activeContract.requiredTons || 0 }} {{ activeContract.units || 'tons' }}
             </template>
           </div>
         </div>
@@ -245,6 +395,14 @@
           </div>
         </div>
 
+        <button 
+          v-if="compatibleZones.length > 1" 
+          class="action-button swap-zone" 
+          @click="swapZone"
+        >
+          Switch Zone
+        </button>
+
         <button class="action-button danger" @click="abandonContract">
           Abandon Contract
         </button>
@@ -255,11 +413,11 @@
         <div class="active-contract-info" v-if="activeContract">
           <div class="contract-name">{{ activeContract.name }}</div>
           <div class="contract-progress" :class="{ complete: isContractComplete }">
-            <template v-if="activeContract.material === 'marble' && activeContract.requiredBlocks">
-              {{ formatBlockProgress(contractProgress.deliveredBlocks, activeContract.requiredBlocks) }}
+            <template v-if="activeContract.unitType === 'item'">
+              {{ contractProgress.deliveredItems || 0 }} / {{ activeContract.requiredItems || 0 }} {{ activeContract.units || 'items' }}
             </template>
             <template v-else>
-              {{ formatNumber(contractProgress.deliveredTons || 0) }} / {{ activeContract.requiredTons }} tons
+              {{ formatNumber(contractProgress.deliveredTons || 0) }} / {{ activeContract.requiredTons || 0 }} {{ activeContract.units || 'tons' }}
             </template>
             <span v-if="isContractComplete" class="complete-badge">COMPLETE!</span>
           </div>
@@ -286,12 +444,12 @@
         <div class="active-contract-info" v-if="activeContract">
           <div class="contract-name">{{ activeContract.name }}</div>
           <div class="contract-progress" :class="{ complete: isContractComplete }">
-            <template v-if="activeContract.material === 'marble' && activeContract.requiredBlocks">
-              {{ formatBlockProgress(contractProgress.deliveredBlocks, activeContract.requiredBlocks) }}
+            <template v-if="activeContract.unitType === 'item'">
+              {{ contractProgress.deliveredItems || 0 }} / {{ activeContract.requiredItems || 0 }} {{ activeContract.units || 'items' }}
               ({{ progressPercent.toFixed(0) }}%)
             </template>
             <template v-else>
-              {{ formatNumber(contractProgress.deliveredTons || 0) }} / {{ activeContract.requiredTons }} tons
+              {{ formatNumber(contractProgress.deliveredTons || 0) }} / {{ activeContract.requiredTons || 0 }} {{ activeContract.units || 'tons' }}
               ({{ progressPercent.toFixed(0) }}%)
             </template>
           </div>
@@ -324,6 +482,42 @@
           </button>
         </div>
       </div>
+
+      <!-- Zone Selection Modal -->
+      <div class="zone-modal-overlay" v-if="showZoneModal" @click="closeZoneModal">
+        <div class="zone-modal" @click.stop>
+          <div class="modal-header">
+            <div class="modal-title">Select Loading Zone</div>
+            <button class="modal-close" @click="closeZoneModal">×</button>
+          </div>
+          <div class="modal-content">
+            <div v-if="!compatibleZones || compatibleZones.length === 0" class="no-zones-modal">
+              No compatible zones available
+            </div>
+            <div 
+              v-for="(zone, index) in compatibleZones" 
+              :key="zone.zoneTag"
+              class="zone-option-card"
+              @click="selectZone(index)"
+            >
+              <div class="zone-option-header">
+                <span class="zone-option-name">{{ zone.displayName || zone.zoneTag }}</span>
+              </div>
+              <div class="zone-option-stock" v-if="zone.stock && zone.stock.materialStocks">
+                <div 
+                  v-for="(stock, matKey) in zone.stock.materialStocks" 
+                  :key="matKey"
+                  class="zone-stock-item"
+                >
+                  <span class="stock-label">{{ getMaterialDisplayNameWithUnits(matKey, zone) }}:</span>
+                  <span class="stock-value">{{ stock.current }}/{{ stock.max }}</span>
+                  <span class="stock-regen" v-if="stock.regenRate > 0">(+{{ stock.regenRate }}/hr)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </PhoneWrapper>
 </template>
@@ -338,8 +532,9 @@ const events = useEvents()
 
 // State
 const currentState = ref('idle')
-const playerLevel = ref(1)
 const contractsCompleted = ref(0)
+const currentFacility = ref(null)
+const currentPage = ref('contracts')
 
 // Contracts
 const availableContracts = ref([])
@@ -362,6 +557,12 @@ const deliveryBlocks = ref([])
 const markerCleared = ref(false)
 const truckStopped = ref(false)
 
+// New data from Lua
+const truckState = ref({ status: 'none', truckId: null, currentZone: null, zoneSwapPending: false })
+const allZonesStock = ref([])
+const compatibleZones = ref([])
+const showZoneModal = ref(false)
+
 // Computed
 const loadPercent = computed(() => {
   if (targetLoad.value <= 0) return 0
@@ -382,19 +583,80 @@ const isContractComplete = computed(() => {
 
 const progressPercent = computed(() => {
   if (!activeContract.value) return 0
-  // For marble, calculate based on blocks
-  if (activeContract.value.material === 'marble' && activeContract.value.requiredBlocks) {
-    const delivered = contractProgress.value.deliveredBlocks || { big: 0, small: 0 }
-    const required = activeContract.value.requiredBlocks
-    const totalRequired = required.big + required.small
-    const totalDelivered = delivered.big + delivered.small
-    if (totalRequired <= 0) return 0
+  if (activeContract.value.materialBreakdown && activeContract.value.materialBreakdown.length > 0) {
+    let totalDelivered = 0
+    let totalRequired = 0
+    for (const mat of activeContract.value.materialBreakdown) {
+      totalDelivered += getMaterialDelivered(mat.materialKey) || 0
+      totalRequired += mat.required || 0
+    }
+    if (totalRequired === 0) return 0
     return (totalDelivered / totalRequired) * 100
   }
-  // For rocks, calculate based on tons
+  if (activeContract.value.unitType === 'item') {
+    if (!activeContract.value.requiredItems) return 0
+    return ((contractProgress.value.deliveredItems || 0) / activeContract.value.requiredItems) * 100
+  }
   if (!activeContract.value.requiredTons) return 0
   return ((contractProgress.value.deliveredTons || 0) / activeContract.value.requiredTons) * 100
 })
+
+const getMaterialDelivered = (materialKey) => {
+  if (!contractProgress.value.deliveredItemsByMaterial) return 0
+  return contractProgress.value.deliveredItemsByMaterial[materialKey] || 0
+}
+
+const getMaterialProgressPercent = (mat) => {
+  if (!mat || !mat.required || mat.required === 0) return 0
+  const delivered = getMaterialDelivered(mat.materialKey) || 0
+  return Math.min(100, (delivered / mat.required) * 100)
+}
+
+const mergeMaterialNameAndUnit = (materialName, units) => {
+  if (!materialName || !units) return materialName || units || ''
+  
+  const nameLower = materialName.toLowerCase()
+  const unitLower = units.toLowerCase()
+  const unitSingular = unitLower.replace(/s$/, '')
+  
+  if (nameLower.includes(unitSingular) || nameLower.includes(unitLower)) {
+    return materialName
+  }
+  
+  return `${materialName} ${units}`
+}
+
+const getMaterialDisplayName = (matKey, zone) => {
+  if (!zone || !zone.stock || !zone.stock.materialStocks) return matKey
+  
+  const stockData = zone.stock.materialStocks[matKey]
+  if (stockData && stockData.materialName) {
+    return stockData.materialName
+  }
+  
+  const matIndex = zone.materialKeys ? zone.materialKeys.indexOf(matKey) : -1
+  if (matIndex >= 0 && zone.materials && zone.materials[matIndex]) {
+    return zone.materials[matIndex]
+  }
+  
+  return matKey
+}
+
+const getMaterialDisplayNameWithUnits = (matKey, zone) => {
+  if (!zone || !zone.stock || !zone.stock.materialStocks) return matKey
+  
+  const stockData = zone.stock.materialStocks[matKey]
+  if (stockData && stockData.materialName && stockData.units) {
+    return mergeMaterialNameAndUnit(stockData.materialName, stockData.units)
+  }
+  
+  const matIndex = zone.materialKeys ? zone.materialKeys.indexOf(matKey) : -1
+  if (matIndex >= 0 && zone.materials && zone.materials[matIndex]) {
+    return zone.materials[matIndex]
+  }
+  
+  return matKey
+}
 
 // Methods
 const formatNumber = (num) => {
@@ -440,29 +702,73 @@ const getExpirationClass = (hoursRemaining) => {
 }
 
 const acceptContract = (index) => {
-  console.log('[PhoneQuarry] Accepting contract at index:', index, '-> Lua index:', index + 1)
-  console.log('[PhoneQuarry] Current state:', currentState.value)
-  bngApi.engineLua(`gameplay_loading.acceptContractFromUI(${index + 1})`)
+  lua.gameplay_loading.acceptContractFromUI(index + 1)
 }
 
 const declineAll = () => {
-  bngApi.engineLua('gameplay_loading.declineAllContracts()')
+  lua.gameplay_loading.declineAllContracts()
 }
 
 const abandonContract = () => {
-  bngApi.engineLua('gameplay_loading.abandonContractFromUI()')
+  lua.gameplay_loading.abandonContractFromUI()
 }
 
 const sendTruck = () => {
-  bngApi.engineLua('gameplay_loading.sendTruckFromUI()')
+  lua.gameplay_loading.sendTruckFromUI()
 }
 
 const finalizeContract = () => {
-  bngApi.engineLua('gameplay_loading.finalizeContractFromUI()')
+  lua.gameplay_loading.finalizeContractFromUI()
 }
 
 const loadMore = () => {
-  bngApi.engineLua('gameplay_loading.loadMoreFromUI()')
+  lua.gameplay_loading.loadMoreFromUI()
+}
+
+const selectZone = (zoneIndex) => {
+  lua.gameplay_loading.selectZoneFromUI(zoneIndex + 1)
+  showZoneModal.value = false
+}
+
+const swapZone = () => {
+  lua.gameplay_loading.swapZoneFromUI()
+  showZoneModal.value = true
+}
+
+const closeZoneModal = () => {
+  showZoneModal.value = false
+}
+
+const getTruckStatusIcon = (status) => {
+  const icons = {
+    none: '',
+    spawning: '⏳',
+    arriving: '🚚',
+    at_zone: '✅',
+    delivering: '🚛',
+    at_destination: '📍'
+  }
+  return icons[status] || ''
+}
+
+const getTruckStatusText = (status) => {
+  const texts = {
+    none: 'No truck',
+    spawning: 'Truck spawning',
+    arriving: 'Truck arriving',
+    at_zone: 'Truck at zone',
+    delivering: 'Truck delivering',
+    at_destination: 'Truck at destination'
+  }
+  return texts[status] || status
+}
+
+const getStockLevelClass = (current, max) => {
+  if (max <= 0) return 'empty'
+  const percent = current / max
+  if (percent < 0.2) return 'low'
+  if (percent < 0.5) return 'medium'
+  return 'high'
 }
 
 // State update handler
@@ -483,25 +789,33 @@ const handleStateUpdate = (data) => {
   }
   
   currentState.value = stateMap[data.state] || 'idle'
-  playerLevel.value = data.playerLevel || 1
   contractsCompleted.value = data.contractsCompleted || 0
+  currentFacility.value = data.currentFacility || null
   availableContracts.value = data.availableContracts || []
   activeContract.value = data.activeContract || null
-  contractProgress.value = data.contractProgress || { deliveredTons: 0, totalPaidSoFar: 0, deliveryCount: 0 }
+  contractProgress.value = data.contractProgress || { deliveredTons: 0, totalPaidSoFar: 0, deliveryCount: 0, deliveredBlocks: { big: 0, small: 0, total: 0 } }
   currentLoadMass.value = data.currentLoadMass || 0
   targetLoad.value = data.targetLoad || 25000
   materialType.value = data.materialType || 'rocks'
-  marbleBlocks.value = data.marbleBlocks || []
-  anyMarbleDamaged.value = data.anyMarbleDamaged || false
+  marbleBlocks.value = data.itemBlocks || []
+  anyMarbleDamaged.value = data.anyItemDamaged || false
   deliveryBlocks.value = data.deliveryBlocks || []
   markerCleared.value = data.markerCleared || false
   truckStopped.value = data.truckStopped || false
+  truckState.value = data.truckState || { status: 'none', truckId: null, currentZone: null, zoneSwapPending: false }
+  allZonesStock.value = data.allZonesStock || []
+  compatibleZones.value = data.compatibleZones || []
+  if (data.state === 2) {
+    showZoneModal.value = true
+  } else if (data.state !== 2 && showZoneModal.value) {
+    showZoneModal.value = false
+  }
 }
 
 onMounted(() => {
   events.on('updateQuarryState', handleStateUpdate)
   // Request initial state using bngApi
-  bngApi.engineLua('gameplay_loading.requestQuarryState()')
+  lua.gameplay_loading.requestQuarryState()
 })
 
 onUnmounted(() => {
@@ -514,35 +828,69 @@ onUnmounted(() => {
   position: relative;
   width: 100%;
   height: 100%;
-  background: linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  background: rgba(20, 20, 20, 0.95);
   overflow-y: auto;
-  padding-bottom: 2em;
+  padding-top: 2em;
+  padding-bottom: 0.75em;
 }
 
-.stats-bubble {
-  position: absolute;
-  top: 40px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(0, 0, 0, 0.85);
-  padding: 0.5em 1em;
-  border-radius: 20px;
-  color: white;
-  font-weight: 600;
-  font-size: 0.95em;
-  display: flex;
-  gap: 0.5em;
-  align-items: center;
-  z-index: 5;
-  
-  .divider {
-    opacity: 0.4;
-  }
+.quarry-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.quarry-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.quarry-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.quarry-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+  background-clip: padding-box;
+}
+
+.facility-banner {
+  margin: 8px 0.75em 0.5em 0.75em;
+  padding: 0.6em 0.75em;
+  border-radius: 10px;
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid rgba(255, 102, 0, 0.3);
+}
+
+.facility-label {
+  font-size: 0.75em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  margin-bottom: 0.25em;
+}
+
+.facility-name {
+  font-size: 1.1em;
+  font-weight: 700;
+  color: #fff;
+}
+
+.facility-banner.empty .facility-name {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.facility-name-bottom {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.9em;
+  margin-top: 0.5em;
+  padding-bottom: 0.5em;
 }
 
 // State Panels
 .state-panel {
-  padding: 80px 1em 1em 1em;
+  padding: 24px 0.75em 0.75em 0.75em;
   display: flex;
   flex-direction: column;
   gap: 1em;
@@ -552,11 +900,11 @@ onUnmounted(() => {
     justify-content: center;
     text-align: center;
     min-height: 100%;
-    padding-top: 40%;
+    padding-top: 24%;
   }
   
   &.loading {
-    padding-top: 70px;
+    padding-top: 24px;
   }
 }
 
@@ -592,23 +940,23 @@ onUnmounted(() => {
 
 // Contract List
 .contract-list {
-  padding: 70px 0.75em 1em 0.75em;
+  padding: 8px 0.75em 0.5em 0.75em;
   display: flex;
   flex-direction: column;
   height: 100%;
 }
 
 .contracts-header {
-  margin-bottom: 1em;
+  margin-bottom: 0.6em;
   
   .header-title {
-    font-size: 1.3em;
+    font-size: 1.2em;
     font-weight: 700;
     color: #fff;
   }
   
   .header-subtitle {
-    font-size: 0.9em;
+    font-size: 0.85em;
     color: rgba(255, 255, 255, 0.6);
   }
 }
@@ -618,8 +966,8 @@ onUnmounted(() => {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.75em;
-  margin-bottom: 1em;
+  gap: 0.5em;
+  margin-bottom: 0.5em;
   padding-right: 0.25em;
 }
 
@@ -630,16 +978,16 @@ onUnmounted(() => {
 }
 
 .contract-card {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(30, 30, 30, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 0.75em;
+  border-radius: 10px;
+  padding: 0.6em 0.75em;
   text-align: left;
   transition: all 0.2s ease;
   
-  &.tier-1 { border-left: 3px solid #4ade80; }
+  &.tier-1 { border-left: 3px solid #22c55e; }
   &.tier-2 { border-left: 3px solid #60a5fa; }
-  &.tier-3 { border-left: 3px solid #fbbf24; }
+  &.tier-3 { border-left: 3px solid #ff6600; }
   &.tier-4 { border-left: 3px solid #f87171; }
 }
 
@@ -664,8 +1012,8 @@ onUnmounted(() => {
 
 .contract-details {
   display: flex;
-  gap: 0.5em;
-  margin-bottom: 0.5em;
+  gap: 0.4em;
+  margin-bottom: 0.4em;
   flex-wrap: wrap;
 }
 
@@ -766,9 +1114,9 @@ onUnmounted(() => {
 
 .accept-button {
   width: 100%;
-  margin-top: 0.75em;
-  padding: 0.6em 1em;
-  background: linear-gradient(135deg, #22c55e, #16a34a);
+  margin-top: 0.5em;
+  padding: 0.5em 0.9em;
+  background: linear-gradient(135deg, #ff6600, #ff9933);
   border: none;
   border-radius: 8px;
   color: #fff;
@@ -778,7 +1126,7 @@ onUnmounted(() => {
   transition: all 0.2s ease;
   
   &:hover {
-    background: linear-gradient(135deg, #16a34a, #15803d);
+    background: linear-gradient(135deg, #ff9933, #ff6600);
     transform: scale(1.02);
   }
   
@@ -789,7 +1137,8 @@ onUnmounted(() => {
 
 // Active Contract Info
 .active-contract-info {
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid rgba(255, 102, 0, 0.3);
   border-radius: 10px;
   padding: 0.75em;
   
@@ -821,7 +1170,7 @@ onUnmounted(() => {
   
   .payout-info {
     font-size: 0.9em;
-    color: #4ade80;
+    color: #ff6600;
     margin-top: 0.25em;
     font-weight: 600;
     
@@ -840,7 +1189,8 @@ onUnmounted(() => {
 
 // Payload Section
 .payload-section {
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
   padding: 0.75em;
 }
@@ -871,12 +1221,12 @@ onUnmounted(() => {
 
 .payload-bar {
   height: 100%;
-  background: linear-gradient(90deg, #fbbf24, #f59e0b);
+  background: linear-gradient(90deg, #ff6600, #ff9933);
   border-radius: 12px;
   transition: width 0.3s ease;
   
   &.full {
-    background: linear-gradient(90deg, #4ade80, #22c55e);
+    background: linear-gradient(90deg, #22c55e, #16a34a);
   }
 }
 
@@ -890,7 +1240,8 @@ onUnmounted(() => {
 
 // Blocks Section
 .blocks-section {
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
   padding: 0.75em;
 }
@@ -956,7 +1307,8 @@ onUnmounted(() => {
 
 // Delivering Blocks
 .delivering-blocks {
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
   padding: 0.75em;
   
@@ -1001,8 +1353,12 @@ onUnmounted(() => {
   }
   
   &.primary {
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    background: linear-gradient(135deg, #ff6600, #ff9933);
     color: #fff;
+    
+    &:hover {
+      background: linear-gradient(135deg, #ff9933, #ff6600);
+    }
   }
   
   &.success {
@@ -1035,6 +1391,464 @@ onUnmounted(() => {
       background: rgba(239, 68, 68, 0.4);
     }
   }
+
+  &.swap-zone {
+    background: linear-gradient(135deg, #ff6600, #ff9933);
+    color: #fff;
+    
+    &:hover {
+      background: linear-gradient(135deg, #ff9933, #ff6600);
+    }
+  }
+}
+
+// Active Contract Section
+.active-contract-section {
+  margin: 2em 0.75em 0.5em 0.75em;
+}
+
+.section-header {
+  font-size: 0.75em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  margin-bottom: 0.5em;
+}
+
+.active-contract-card {
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid rgba(255, 102, 0, 0.3);
+  border-radius: 10px;
+  padding: 0.6em 0.75em;
+}
+
+.contract-name-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5em;
+}
+
+.contract-payout-badge {
+  background: rgba(255, 102, 0, 0.2);
+  color: #ff6600;
+  padding: 0.2em 0.5em;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 0.9em;
+}
+
+.contract-progress-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+}
+
+.progress-bar-container {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #ff6600, #ff9933);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.8);
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.progress-percent {
+  color: #ff6600;
+  font-weight: 600;
+}
+
+.material-progress-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  margin-bottom: 0.5em;
+  
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.material-progress-label {
+  font-size: 0.8em;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 600;
+}
+
+.material-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  margin-bottom: 0.4em;
+}
+
+.material-breakdown-item {
+  font-size: 0.9em;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+// Truck Status Section
+.truck-status-section {
+  margin: 0 0.75em 0.5em 0.75em;
+}
+
+.truck-status-card {
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 0.6em 0.75em;
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+}
+
+.truck-status-icon {
+  font-size: 2em;
+  
+  &.pulsing {
+    animation: pulse 2s ease-in-out infinite;
+  }
+}
+
+.truck-status-info {
+  flex: 1;
+}
+
+.truck-status-text {
+  font-weight: 600;
+  color: #fff;
+  font-size: 1em;
+  margin-bottom: 0.2em;
+}
+
+.truck-status-location {
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+// Page Tabs
+.page-tabs {
+  display: flex;
+  gap: 0.4em;
+  margin: 0.5em 0.75em;
+  padding-bottom: 0.4em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tab-button {
+  flex: 1;
+  padding: 0.5em 0.9em;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 600;
+  font-size: 0.9em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  
+  &.active {
+    color: #ff6600;
+    border-bottom-color: #ff6600;
+  }
+  
+  &:hover {
+    color: #fff;
+  }
+}
+
+.contracts-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+// Stock Page
+.stock-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 0 0.75em;
+}
+
+.stock-header {
+  margin-bottom: 0.6em;
+  
+  .header-title {
+    font-size: 1.2em;
+    font-weight: 700;
+    color: #fff;
+  }
+  
+  .header-subtitle {
+    font-size: 0.85em;
+    color: rgba(255, 255, 255, 0.6);
+  }
+}
+
+.zones-scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  padding-right: 0.25em;
+  padding-bottom: 2em;
+}
+
+.no-zones {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  padding: 2em;
+}
+
+.zone-stock-card {
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 0.6em 0.75em;
+}
+
+.zone-header {
+  margin-bottom: 0.5em;
+}
+
+.zone-name {
+  font-weight: 700;
+  color: #fff;
+  font-size: 1.1em;
+}
+
+.zone-materials {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+}
+
+.material-stock-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+}
+
+.material-name {
+  font-size: 0.9em;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 500;
+}
+
+.stock-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+}
+
+.stock-bar-container {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.stock-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+  
+  &.low {
+    background: #ef4444;
+  }
+  
+  &.medium {
+    background: #ff6600;
+  }
+  
+  &.high {
+    background: #22c55e;
+  }
+  
+  &.empty {
+    background: rgba(255, 255, 255, 0.2);
+  }
+}
+
+.stock-text {
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.7);
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+}
+
+.stock-current {
+  font-weight: 600;
+  color: #fff;
+}
+
+.stock-separator {
+  opacity: 0.5;
+}
+
+.stock-max {
+  opacity: 0.7;
+}
+
+.stock-regen {
+  color: #ff6600;
+  font-size: 0.9em;
+  margin-left: 0.3em;
+}
+
+// Zone Selection Modal
+.zone-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.zone-modal {
+  background: rgba(20, 20, 20, 0.98);
+  border: 2px solid rgba(255, 102, 0, 0.5);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 400px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.modal-title {
+  font-size: 1.2em;
+  font-weight: 700;
+  color: #fff;
+}
+
+.modal-close {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 1.5em;
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  
+  &:hover {
+    background: rgba(255, 102, 0, 0.2);
+    color: #ff6600;
+  }
+}
+
+.modal-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1em;
+  padding-bottom: 2em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75em;
+}
+
+.no-zones-modal {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  padding: 2em;
+}
+
+.zone-option-card {
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 0.75em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  
+  &:hover {
+    border-color: rgba(255, 102, 0, 0.5);
+    background: rgba(30, 30, 30, 1);
+  }
+}
+
+.zone-option-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5em;
+}
+
+.zone-option-name {
+  font-weight: 700;
+  color: #fff;
+  font-size: 1em;
+}
+
+.zone-option-materials {
+  font-size: 0.75em;
+  color: rgba(255, 255, 255, 0.6);
+  padding: 0.2em 0.5em;
+  background: rgba(255, 102, 0, 0.15);
+  border-radius: 4px;
+}
+
+.zone-option-stock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+}
+
+.zone-stock-item {
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.7);
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.stock-label {
+  font-weight: 500;
+}
+
+.stock-value {
+  color: #fff;
+  font-weight: 600;
+}
+
+.stock-regen {
+  color: #ff6600;
+  font-size: 0.9em;
 }
 </style>
 

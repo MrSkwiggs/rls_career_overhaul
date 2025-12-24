@@ -110,6 +110,20 @@ local function getFacilityForZone(zoneTag)
   return nil
 end
 
+local function getFacilityIdForZone(zoneTag)
+  if not zoneTag then return nil end
+  local facilities = Config.facilities
+  if not facilities then return nil end
+  
+  for facilityKey, facility in pairs(facilities) do
+    if facility.sites and facility.sites[zoneTag] then
+      return facility.id or facilityKey
+    end
+  end
+  
+  return nil
+end
+
 local function getFacilityPayMultiplier(zoneTag)
   local facility = getFacilityForZone(zoneTag)
   if not facility then
@@ -452,6 +466,11 @@ local function generateContract(availableGroups, expirationOffset)
   local expiresAt = currentHour + contractTTL
   local expirationHours = contractTTL
 
+  local facilityId = getFacilityIdForZone(group.secondaryTag)
+  if not facilityId then
+    print(string.format("[Loading] Warning: Could not find facility ID for zone '%s'; contract may not save correctly.", group.secondaryTag or "unknown"))
+  end
+
   return {
     id = os.time() + math.random(1000, 9999),
     name = name,
@@ -469,6 +488,7 @@ local function generateContract(availableGroups, expirationOffset)
     payMultiplier = payMultiplier,
     facilityPayMultiplier = facilityPayMultiplier,
     totalPayout = totalPayout,
+    facilityId = facilityId,
     destination = {
       pos = group.destination and group.destination.pos and vec3(group.destination.pos) or nil,
       name = group.destination and group.destination.name or nil,
@@ -674,8 +694,10 @@ local function abandonContract(onCleanup)
     local career = career_career
     if career and type(career.isActive) == "function" and career.isActive() then
       local paymentModule = career_modules_payment
-      if paymentModule and type(paymentModule.pay) == "function" and penaltyAmount > 0 then
-        paymentModule.pay(-penaltyAmount, {label = "Contract Abandonment"})
+      if paymentModule and type(paymentModule.reward) == "function" and penaltyAmount > 0 then
+        paymentModule.reward({
+          money = { amount = -penaltyAmount, canBeNegative = true }
+        }, { label = "Contract Abandonment", tags = {"gameplay", "mission", "penalty"} })
       end
     end
   end)
@@ -849,10 +871,59 @@ M.failContract = failContract
 M.completeContract = completeContract
 M.getMaterialsByTypeName = getMaterialsByTypeName
 M.getTypeNameFromMaterial = getTypeNameFromMaterial
+local function serializeVec3(vec)
+  if not vec then return nil end
+  return {x = vec.x, y = vec.y, z = vec.z}
+end
+
+local function deserializeVec3(tbl)
+  if not tbl or not tbl.x or not tbl.y or not tbl.z then return nil end
+  return vec3(tbl.x, tbl.y, tbl.z)
+end
+
+local function serializeContract(contract)
+  if not contract then return nil end
+  local serialized = {}
+  for k, v in pairs(contract) do
+    if k == "destination" and v and v.pos then
+      serialized[k] = {
+        pos = serializeVec3(v.pos),
+        name = v.name,
+        originZoneTag = v.originZoneTag
+      }
+    elseif k == "group" then
+      serialized[k] = nil
+    else
+      serialized[k] = v
+    end
+  end
+  return serialized
+end
+
+local function deserializeContract(serialized)
+  if not serialized then return nil end
+  local contract = {}
+  for k, v in pairs(serialized) do
+    if k == "destination" and v and v.pos then
+      contract[k] = {
+        pos = deserializeVec3(v.pos),
+        name = v.name,
+        originZoneTag = v.originZoneTag
+      }
+    else
+      contract[k] = v
+    end
+  end
+  return contract
+end
+
 M.getFacilityPayMultiplier = getFacilityPayMultiplier
 M.getContractsConfig = getContractsConfig
 M.getContractsConfigFromGroups = getContractsConfigFromGroups
+M.getFacilityIdForZone = getFacilityIdForZone
 M.isCareerMode = isCareerMode
+M.serializeContract = serializeContract
+M.deserializeContract = deserializeContract
 
 return M
 

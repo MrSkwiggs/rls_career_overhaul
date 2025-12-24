@@ -20,6 +20,9 @@ M.jobObjects = {
   zoneSwapPending = false,
   zoneSwapTargetZone = nil,
   zoneSwapTruckAtDestination = false,
+  zoneSwapLoadedPropIds = nil,
+  zoneSwapDeliveryBlocksStatus = nil,
+  zoneSwapDeliveredMass = nil,
 }
 
 M.propQueue = {}
@@ -354,12 +357,15 @@ end
 function M.deleteDamagedItem(propId)
   for i = #M.propQueue, 1, -1 do
     if M.propQueue[i].id == propId then
+      local entry = M.propQueue[i]
       M.propQueueById[propId] = nil
       M.itemInitialState[propId] = nil
       M.itemDamageState[propId] = nil
       if M.jobObjects.itemDamage and M.jobObjects.itemDamage[propId] then
         M.jobObjects.itemDamage[propId] = nil
       end
+      
+      
       local obj = be:getObjectByID(propId)
       if obj then obj:delete() end
       table.remove(M.propQueue, i)
@@ -496,13 +502,12 @@ function M.processPendingRespawns(dt, zonesMod, contractsMod)
                       table.insert(M.propQueue, { id = newId, materialType = respawn.materialType })
                       M.propQueueById[newId] = { id = newId, materialType = respawn.materialType }
                       
-                      stock.current = stock.current - 1
-                      
-                      if cache.spawnedPropCounts and cache.spawnedPropCounts[respawn.materialType] then
-                        cache.spawnedPropCounts[respawn.materialType] = (cache.spawnedPropCounts[respawn.materialType] or 0) + 1
+                      if stock.current > 0 then
+                        stock.current = stock.current - 1
+                        print(string.format("[Loading] Replaced damaged %s with new item (consumed 1 stock, now %d/%d). Note: This is a replacement, not counted in spawnedPropCounts.", respawn.materialType, stock.current, stock.max))
+                      else
+                        print(string.format("[Loading] Replaced damaged %s but no stock available - item spawned without consuming stock", respawn.materialType))
                       end
-                      
-                      print(string.format("[Loading] Replaced damaged %s with new item at grid position (consumed 1 stock)", respawn.materialType))
                     end
                   end
                 end
@@ -603,31 +608,40 @@ function M.spawnJobMaterials(contractsMod, zonesMod, playerPos)
     if matConfig then
       local stock = cache.materialStocks[materialType]
       if stock and stock.current > 0 then
-        local currentlySpawned = 0
+        local currentlyAlive = 0
         for _, entry in ipairs(M.propQueue) do
           if entry.materialType == materialType then
-            currentlySpawned = currentlySpawned + 1
+            currentlyAlive = currentlyAlive + 1
           end
         end
+        
+        local originallySpawned = (cache.spawnedPropCounts and cache.spawnedPropCounts[materialType]) or 0
         
         local required = materialRequirements[materialType] or 0
         local delivered = 0
         if contractsMod.ContractSystem.contractProgress and contractsMod.ContractSystem.contractProgress.deliveredItemsByMaterial then
           delivered = contractsMod.ContractSystem.contractProgress.deliveredItemsByMaterial[materialType] or 0
         end
-        local contractNeedsMore = delivered < required
+        
+        local totalNeededForContract = required - delivered
+        local totalStillNeeded = math.max(0, totalNeededForContract - currentlyAlive)
+        
+        local contractNeedsMore = totalStillNeeded > 0
         
         if contractNeedsMore then
           local stockAvailable = stock.current
           local maxSpawned = matConfig.maxSpawned or math.huge
-          local materialMaxAllowed = math.max(0, maxSpawned - currentlySpawned)
-          local totalStillNeeded = math.max(0, required - delivered)
+          local materialMaxAllowed = math.max(0, maxSpawned - currentlyAlive)
           local propsToSpawn = math.min(totalStillNeeded, stockAvailable, materialMaxAllowed, globalMaxAllowed)
           
           if propsToSpawn > 0 then
+            print(string.format("[Loading] Material '%s': Contract needs %d total, %d delivered, %d currently alive, %d still needed, spawning %d", 
+              materialType, required, delivered, currentlyAlive, totalStillNeeded, propsToSpawn))
+            
+            local actuallySpawned = 0
             for i = 1, propsToSpawn do
               if gridPosIdx > #gridPositions then
-                print(string.format("[Loading] Warning: Not enough valid grid positions for all props. Spawned %d/%d", i - 1, propsToSpawn))
+                print(string.format("[Loading] Warning: Not enough valid grid positions for all props. Spawned %d/%d", actuallySpawned, propsToSpawn))
                 break
               end
               
@@ -654,14 +668,21 @@ function M.spawnJobMaterials(contractsMod, zonesMod, playerPos)
                   M.propQueueById[propId] = entry
                   totalPropsSpawned = totalPropsSpawned + 1
                   globalMaxAllowed = globalMaxAllowed - 1
+                  actuallySpawned = actuallySpawned + 1
                   stock.current = stock.current - 1
                   if not cache.spawnedPropCounts[materialType] then
                     cache.spawnedPropCounts[materialType] = 0
                   end
                   cache.spawnedPropCounts[materialType] = cache.spawnedPropCounts[materialType] + 1
                   M.managePropCapacity()
+                else
+                  if obj then obj:delete() end
                 end
               end
+            end
+            
+            if actuallySpawned ~= propsToSpawn then
+              print(string.format("[Loading] Material '%s': Attempted to spawn %d but only %d succeeded", materialType, propsToSpawn, actuallySpawned))
             end
           end
         end
@@ -673,6 +694,81 @@ function M.spawnJobMaterials(contractsMod, zonesMod, playerPos)
   
   if totalPropsSpawned > 0 then
     print(string.format("[Loading] Spawned %d props for contract typeName '%s'", totalPropsSpawned, contractTypeName))
+    for matKey, count in pairs(cache.spawnedPropCounts or {}) do
+      local stock = cache.materialStocks[matKey]
+      if stock then
+        print(string.format("[Loading] Material '%s': %d spawned total, %d currently alive, %d stock remaining", matKey, count, 
+          (function()
+            local alive = 0
+            for _, entry in ipairs(M.propQueue) do
+              if entry.materialType == matKey then alive = alive + 1 end
+            end
+            return alive
+          end)(), stock.current))
+      end
+    end
+  end
+end
+
+function M.clearUnloadedProps(oldActiveGroup)
+  local loadedPropIds = {}
+  local loadedSet = {}
+  
+  if M.jobObjects.truckID then
+    local truck = be:getObjectByID(M.jobObjects.truckID)
+    if truck then
+      loadedPropIds = M.getLoadedPropIdsInTruck(0.1) or {}
+      for _, id in ipairs(loadedPropIds) do
+        loadedSet[id] = true
+      end
+    end
+  end
+  
+  local stockReturned = {}
+  oldActiveGroup = oldActiveGroup or M.jobObjects.activeGroup
+  
+  for i = #M.propQueue, 1, -1 do
+    local entry = M.propQueue[i]
+    local id = entry.id
+    if id and not loadedSet[id] then
+      local isDamaged = false
+      if M.jobObjects.itemDamage and M.jobObjects.itemDamage[id] then
+        isDamaged = M.jobObjects.itemDamage[id].isDamaged or false
+      elseif M.itemDamageState[id] then
+        isDamaged = M.itemDamageState[id].isDamaged or false
+      end
+      
+      if not isDamaged and entry.materialType and oldActiveGroup then
+        if not stockReturned[entry.materialType] then
+          stockReturned[entry.materialType] = 0
+        end
+        stockReturned[entry.materialType] = stockReturned[entry.materialType] + 1
+      end
+      
+      M.propQueueById[id] = nil
+      M.itemInitialState[id] = nil
+      M.itemDamageState[id] = nil
+      local obj = be:getObjectByID(id)
+      if obj then obj:delete() end
+      table.remove(M.propQueue, i)
+    end
+  end
+  
+  if next(stockReturned) and oldActiveGroup then
+    local Zones = extensions.gameplay_loading_zones
+    local Contracts = extensions.gameplay_loading_contracts
+    if Zones and Contracts and Contracts.getCurrentGameHour then
+      local stockInfo = Zones.getZoneStockInfo(oldActiveGroup, Contracts.getCurrentGameHour)
+      if stockInfo and stockInfo.materialStocks then
+        for materialType, count in pairs(stockReturned) do
+          local stock = stockInfo.materialStocks[materialType]
+          if stock then
+            stock.current = math.min(stock.current + count, stock.max)
+            print(string.format("[Loading] Returned %d undamaged %s to zone stock (now %d/%d)", count, materialType, stock.current, stock.max))
+          end
+        end
+      end
+    end
   end
 end
 
@@ -761,6 +857,9 @@ function M.cleanupJob(deleteTruck, stateIdle)
   M.jobObjects.zoneSwapPending = false
   M.jobObjects.zoneSwapTargetZone = nil
   M.jobObjects.zoneSwapTruckAtDestination = false
+  M.jobObjects.zoneSwapLoadedPropIds = nil
+  M.jobObjects.zoneSwapDeliveryBlocksStatus = nil
+  M.jobObjects.zoneSwapDeliveredMass = nil
   M.itemDamageState = {}
   M.pendingRespawns = {}
   

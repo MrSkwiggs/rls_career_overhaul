@@ -414,6 +414,34 @@ local function getPlayerCurrentZone(playerPos)
   return nil
 end
 
+local function getNearestZoneWithinDistance(playerPos, maxDistance)
+  if not playerPos then return nil end
+  maxDistance = maxDistance or 500
+  
+  local nearestZone = nil
+  local nearestDist = math.huge
+  
+  for _, g in ipairs(M.availableGroups) do
+    if g.loading and g.loading.aabb and not g.loading.aabb.invalid then
+      local aabb = g.loading.aabb
+      local zoneCenter = vec3(
+        (aabb.xMin + aabb.xMax) / 2,
+        (aabb.yMin + aabb.yMax) / 2,
+        0
+      )
+      zoneCenter.z = core_terrain and core_terrain.getTerrainHeight and core_terrain.getTerrainHeight(zoneCenter) or 0
+      
+      local dist = (playerPos - zoneCenter):length()
+      if dist <= maxDistance and dist < nearestDist then
+        nearestDist = dist
+        nearestZone = g
+      end
+    end
+  end
+  
+  return nearestZone
+end
+
 local function getAllZonesStockInfo(getCurrentGameHour)
   local Config = extensions.gameplay_loading_config
   local zonesStock = {}
@@ -421,7 +449,7 @@ local function getAllZonesStockInfo(getCurrentGameHour)
     local cache = ensureGroupCache(group, getCurrentGameHour)
     if cache and cache.materialStocks then
       local zoneStock = {
-        zoneName = group.secondaryTag or "Unknown",
+        zoneName = cache.name or group.secondaryTag or "Unknown",
         materials = {}
       }
       for matKey, stock in pairs(cache.materialStocks) do
@@ -441,6 +469,33 @@ local function getAllZonesStockInfo(getCurrentGameHour)
   return zonesStock
 end
 
+local function getFacilityIdForZone(zoneTag)
+  if not zoneTag then return nil end
+  local Config = extensions.gameplay_loading_config
+  local facilities = Config and Config.facilities
+  if not facilities then return nil end
+  
+  for facilityKey, facility in pairs(facilities) do
+    if facility.sites and facility.sites[zoneTag] then
+      return facility.id or facilityKey
+    end
+  end
+  
+  return nil
+end
+
+local function validateZoneBelongsToFacility(zoneTag, facilityId)
+  if not zoneTag or not facilityId then return false end
+  local Config = extensions.gameplay_loading_config
+  local facilities = Config and Config.facilities
+  if not facilities then return false end
+  
+  local facility = facilities[facilityId]
+  if not facility or not facility.sites then return false end
+  
+  return facility.sites[zoneTag] ~= nil
+end
+
 M.findOffRoadCentroid = findOffRoadCentroid
 M.ensureGroupCache = ensureGroupCache
 M.ensureGroupOffRoadCentroid = ensureGroupOffRoadCentroid
@@ -450,8 +505,11 @@ M.getAllZonesStockInfo = getAllZonesStockInfo
 M.loadQuarrySites = loadQuarrySites
 M.isPlayerInAnyLoadingZone = isPlayerInAnyLoadingZone
 M.getPlayerCurrentZone = getPlayerCurrentZone
+M.getNearestZoneWithinDistance = getNearestZoneWithinDistance
 M.getZonesByMaterial = getZonesByMaterial
 M.getZonesByTypeName = getZonesByTypeName
+M.getFacilityIdForZone = getFacilityIdForZone
+M.validateZoneBelongsToFacility = validateZoneBelongsToFacility
 
 return M
 

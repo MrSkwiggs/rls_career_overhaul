@@ -172,6 +172,9 @@ end
 
 local function drawUI(dt, currentState, configStates, playerMod, contractsMod, managerMod, zonesMod, callbacks)
   if not imgui then return end
+  
+  local devMode = Config.settings and Config.settings.devMode or false
+  if not devMode then return end
 
   if uiHidden and currentState ~= configStates.STATE_IDLE then
     imgui.SetNextWindowPos(imgui.ImVec2(10, 200), imgui.Cond_FirstUseEver)
@@ -370,7 +373,7 @@ local function drawUI(dt, currentState, configStates, playerMod, contractsMod, m
     elseif currentState == configStates.STATE_DRIVING_TO_SITE then
       if managerMod.jobObjects.activeGroup and managerMod.jobObjects.activeGroup.loading then
         if not managerMod.markerCleared then
-          imgui.TextColored(imgui.ImVec4(1, 1, 0, pulseAlpha * uiAnim.opacity), ">> TRAVEL TO MARKER <<")
+          imgui.TextColored(imgui.ImVec4(1, 1, 0, pulseAlpha * uiAnim.opacity), ">> DRIVE TO ZONE <<")
           local dist = be:getPlayerVehicle(0) and (be:getPlayerVehicle(0):getPosition() - vec3(managerMod.jobObjects.activeGroup.loading.center)):length() or 99999
           imgui.ProgressBar(1.0 - math.min(1, dist / 200), imgui.ImVec2(-1, 20), string.format("%.0fm", dist))
         else
