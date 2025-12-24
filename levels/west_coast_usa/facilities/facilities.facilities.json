@@ -519,7 +519,7 @@
       "iconOffsetHeight":0.15,
       "id":"alderDragwayStorage",
       "name":"Alder Dragway Storage",
-      "preview":"servicestationgaragecomputer.jpg",
+      "preview":"dragWayStorage.jpg",
       "screens":{}
     },
     {
@@ -545,7 +545,7 @@
       "iconOffsetHeight":0.15,
       "id":"mudDragTuningComputer",
       "name":"Mud Drag Tuning Tent",
-      "preview":"mudTuningTent.jpg",
+      "preview":"mudDragTuningTent.jpg",
       "screens":{}
     },
     {
@@ -570,9 +570,9 @@
       "icon":"poi_laptop_round",
       "iconLift":0.2,
       "iconOffsetHeight":0.15,
-      "id":"Drift Loop Tuning Tent",
-      "name":"driftLoopTuningTent",
-      "preview":"servicestationgaragecomputer.jpg",
+      "id":"driftLoopTuningTent",
+      "name":"Drift Loop Tuning Tent",
+      "preview":"driftLoopTuningTent.jpg",
       "screens":{}
     }
   ],
@@ -842,7 +842,7 @@
         "spot_alderDragwayStorage_3",
         "spot_alderDragwayStorage_4"
       ],
-      "preview":"dragway_pit_garages.jpg",
+      "preview":"dragWayStorage.jpg",
       "zoneNames":[
         "alderDragwayStorage_1"
       ]
@@ -857,7 +857,7 @@
       "parkingSpotNames":[
         "spot_mudDragTuningTent_1"
       ],
-      "preview":"garage_servicestation.jpg",
+      "preview":"mudDragTuningTent.jpg",
       "tags":{},
       "zoneNames":[
         "mudDragTuningTent_1"
@@ -874,7 +874,7 @@
         "spot_driftLoopTuningTent_1",
         "spot_driftLoopTuningTent_2"
       ],
-      "preview":"driftTuningTent.jpg",
+      "preview":"driftLoopTuningTent.jpg",
       "zoneNames":[
         "driftLoopTuningTent_1"
       ]
@@ -1833,7 +1833,7 @@
       ],
       "id":"trilobite_drag",
       "name":"Alder Dragway Fuel",
-      "preview":"dragFuelStation.jpg",
+      "preview":"drag_fuel.jpg",
       "prices":{
         "diesel":{
           "priceBaseline":50.53,

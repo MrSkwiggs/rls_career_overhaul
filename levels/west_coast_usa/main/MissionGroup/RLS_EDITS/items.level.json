@@ -17,7 +17,6 @@
 {"name":"STA Adds","class":"SimGroup","__parent":"RLS_EDITS"}
 {"name":"mud_drag","class":"SimGroup","__parent":"RLS_EDITS","hidden":true}
 {"name":"Sealbrik_Drift","class":"SimGroup","__parent":"RLS_EDITS"}
-{"name":"trackDriftLoop","class":"SimGroup","__parent":"RLS_EDITS","hidden":true}
 {"name":"Island_Touge","class":"SimGroup","__parent":"RLS_EDITS"}
 {"name":"freDirtTrack","class":"SimGroup","__parent":"RLS_EDITS"}
 {"name":"Hotrolled_Drift","class":"SimGroup","__parent":"RLS_EDITS"}
