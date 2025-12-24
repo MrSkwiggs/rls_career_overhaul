@@ -113,8 +113,6 @@
             "zoneMarkerPulseSpeed": 2.5
         },
         "truck": {
-            "stoppedThreshold": 15,
-            "stopSpeedThreshold": 1,
             "arrivalSpeedThreshold": 2.0,
             "arrivalDistanceThreshold": 10.0
         },

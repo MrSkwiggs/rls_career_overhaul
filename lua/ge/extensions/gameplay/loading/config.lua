@@ -58,8 +58,6 @@ local function applyDefaults()
   M.settings.ui.zoneMarkerPulseSpeed = M.settings.ui.zoneMarkerPulseSpeed or 2.5
 
   if not M.settings.truck then M.settings.truck = {} end
-  M.settings.truck.stoppedThreshold = M.settings.truck.stoppedThreshold or 2.0
-  M.settings.truck.stopSpeedThreshold = M.settings.truck.stopSpeedThreshold or 1.0
   M.settings.truck.arrivalSpeedThreshold = M.settings.truck.arrivalSpeedThreshold or 2.0
   M.settings.truck.arrivalDistanceThreshold = M.settings.truck.arrivalDistanceThreshold or 10.0
 

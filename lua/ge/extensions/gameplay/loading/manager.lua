@@ -39,6 +39,10 @@ M.payloadUpdateTimer = 0
 M.truckStoppedTimer = 0
 M.truckLastPosition = nil
 M.deliveryTimer = 0
+M.truckDamage = 0
+M.damageCheckQueued = false
+M.teleportQueued = false
+M.teleportQueued = false
 
 M.cachedBedData = {}
 M.cachedMaterialConfigs = {}
@@ -763,6 +767,9 @@ function M.cleanupJob(deleteTruck, stateIdle)
   M.truckStoppedTimer = 0
   M.truckLastPosition = nil
   M.deliveryTimer = 0
+  M.truckDamage = 0
+  M.damageCheckQueued = false
+  M.teleportQueued = false
   M.lastPayloadMass = 0
   M.payloadStationaryCount = 0
   
@@ -801,13 +808,13 @@ function M.driveTruckToPoint(truckId, targetPos)
   local truck = be:getObjectByID(truckId)
   if not truck then return end
   truck:queueLuaCommand('if not driver then extensions.load("driver") end')
-  truck:queueLuaCommand("input.event('parkingbrake', 0)")
+  truck:queueLuaCommand("input.toggleEvent('parkingbrake')")
   setupTruckAI(truck)
   core_jobsystem.create(function(job)
     job.sleep(0.5)
     truck:queueLuaCommand("if ai.setAvoidCars then ai.setAvoidCars('off') end")
     job.sleep(0.1)
-    truck:queueLuaCommand('driver.returnTargetPosition(' .. serialize(targetPos) .. ', false, nil, true)')
+    truck:queueLuaCommand('driver.returnTargetPosition(' .. serialize(targetPos) .. ', false, "limit", true)')
   end)
 end
 
@@ -815,7 +822,7 @@ function M.stopTruck(truckId)
   local truck = be:getObjectByID(truckId)
   if not truck then return end
   truck:queueLuaCommand("ai.setMode('stop')")
-  truck:queueLuaCommand("input.event('parkingbrake', 1)")
+  truck:queueLuaCommand("input.toggleEvent('parkingbrake')")
 end
 
 function M.getTruckBedData(obj)
@@ -1210,27 +1217,62 @@ function M.handleTruckMovement(dt, destPos, contractsMod)
   local truckPos = truck:getPosition()
   if (truckPos - destPos):length() < arrivalDist then
     M.truckStoppedTimer, M.truckLastPosition = 0, nil
+    M.truckDamage = 0
+    M.damageCheckQueued = false
+    M.teleportQueued = false
     return true
   end
   
-  local speedThreshold = Config.settings.truck and Config.settings.truck.stopSpeedThreshold or 1.0
-  local stoppedThreshold = Config.settings.truck and Config.settings.truck.stoppedThreshold or 15.0
+  M.deliveryTimer = M.deliveryTimer + dt
   
   local speed = truck:getVelocity():length()
   local throttle = truck.electrics and truck.electrics.values and truck.electrics.values.throttle or 0
+  local isMoving = (throttle > 0.1 and speed > 0.15) or speed > 3.0
   
-  local isMoving = (throttle > 0.1 and speed > speedThreshold) or speed > 3.0
   if isMoving then
-    M.deliveryTimer = M.deliveryTimer + dt
     M.truckStoppedTimer, M.truckLastPosition = 0, truckPos
+    M.truckDamage = 0
+    M.damageCheckQueued = false
+    M.teleportQueued = false
   elseif M.truckLastPosition then
     if (truckPos - M.truckLastPosition):length() < 0.5 or (throttle <= 0.1 and speed < 2.0) then
       M.truckStoppedTimer = M.truckStoppedTimer + dt
-      if M.truckStoppedTimer >= stoppedThreshold then
-        return "stuck", M.deliveryTimer
+      if M.truckStoppedTimer >= 10.0 then
+        if not M.damageCheckQueued then
+          truck:queueLuaCommand('if beamstate and beamstate.damage then obj:queueGameEngineLua("gameplay_loading_manager.onTruckDamageCallback(" .. tostring(beamstate.damage) .. ")") end')
+          M.damageCheckQueued = true
+        end
+        if M.truckDamage and M.truckDamage > 100000 then
+          return "damaged", M.deliveryTimer
+        end
+      end
+      if M.truckStoppedTimer >= 30.0 then
+        if not M.teleportQueued and (not M.truckDamage or M.truckDamage <= 100000) then
+          local map = map
+          if map and map.findClosestRoad and map.getMap then
+            local roadName, nodeIdx, roadDist = map.findClosestRoad(truckPos)
+            if roadName and nodeIdx then
+              local mapData = map.getMap()
+              if mapData and mapData.nodes and mapData.nodes[nodeIdx] then
+                local node = mapData.nodes[nodeIdx]
+                if node and node.pos then
+                  local roadNodePos = vec3(node.pos)
+                  local truckRot = truck:getRotation()
+                  spawn.safeTeleport(truck, roadNodePos, truckRot, nil, nil, nil, true)
+                  M.truckStoppedTimer = 0
+                  M.truckLastPosition = roadNodePos
+                  M.teleportQueued = true
+                end
+              end
+            end
+          end
+        end
       end
     else
       M.truckStoppedTimer, M.truckLastPosition = 0, truckPos
+      M.truckDamage = 0
+      M.damageCheckQueued = false
+      M.teleportQueued = false
     end
   else
     M.truckLastPosition = truckPos
@@ -1271,6 +1313,11 @@ function M.beginActiveContractTrip(contractsMod, zonesMod, uiMod)
 
   M.isDispatching = false
   return true
+end
+
+function M.onTruckDamageCallback(damage)
+  M.truckDamage = damage or 0
+  M.damageCheckQueued = false
 end
 
 return M

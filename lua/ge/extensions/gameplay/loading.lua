@@ -181,6 +181,9 @@ local uiCallbacks = {
           
           currentState = Config.STATE_DRIVING_TO_SITE
           Manager.markerCleared = false
+          if selectedZone.loading and selectedZone.loading.center then
+            core_groundMarkers.setPath(vec3(selectedZone.loading.center))
+          end
           compatibleZones = {}
           ui_message(string.format("Zone swapped to %s. Drive to zone - truck will move when you arrive.", selectedZone.secondaryTag), 5, "info")
         else
@@ -196,6 +199,9 @@ local uiCallbacks = {
           end
           currentState = Config.STATE_DRIVING_TO_SITE
           Manager.markerCleared = false
+          if selectedZone.loading and selectedZone.loading.center then
+            core_groundMarkers.setPath(vec3(selectedZone.loading.center))
+          end
           compatibleZones = {}
           ui_message(string.format("Loading from %s. Drive to zone - truck will arrive when you get there.", selectedZone.secondaryTag), 5, "info")
         end
@@ -233,6 +239,11 @@ local uiCallbacks = {
       end
       Manager.jobObjects.deliveredPropIds = Manager.getLoadedPropIdsInTruck(0.1)
       Manager.deliveryTimer = 0
+      Manager.truckStoppedTimer = 0
+      Manager.truckLastPosition = nil
+      Manager.truckDamage = 0
+      Manager.damageCheckQueued = false
+      Manager.teleportQueued = false
       core_groundMarkers.setPath(nil)
       Manager.driveTruckToPoint(Manager.jobObjects.truckID, destPos)
       currentState = Config.STATE_DELIVERING
@@ -257,7 +268,13 @@ local function updatePlayerCache(dt)
   if playerCacheTimer >= checkInterval then
     cachedPlayerVeh = be:getPlayerVehicle(0)
     if cachedPlayerVeh then
-      cachedPlayerPos = cachedPlayerVeh:getPosition()
+      local success, pos = pcall(function() return cachedPlayerVeh:getPosition() end)
+      if success then
+        cachedPlayerPos = pos
+      else
+        cachedPlayerVeh = nil
+        cachedPlayerPos = nil
+      end
     else
       cachedPlayerPos = nil
     end
@@ -268,11 +285,20 @@ end
 local function onUpdate(dt)
   if not Config or not Contracts or not Zones or not Manager or not UI then return end
 
+  local settingsZones = Config.settings and Config.settings.zones
+  local settingsPayload = Config.settings and Config.settings.payload
+  local settingsTruck = Config.settings and Config.settings.truck
+  local settingsUI = Config.settings and Config.settings.ui
+
   updatePlayerCache(dt)
+
+  if not cachedPlayerVeh or not cachedPlayerPos then return end
+  local playerVeh = cachedPlayerVeh
+  local playerPos = cachedPlayerPos
 
   if not Zones.sitesData then
     Zones.sitesLoadTimer = Zones.sitesLoadTimer + dt
-    local retryInterval = Config.settings.zones and Config.settings.zones.sitesLoadRetryInterval or 1.0
+    local retryInterval = settingsZones and settingsZones.sitesLoadRetryInterval or 1.0
     if Zones.sitesLoadTimer >= retryInterval then
       Zones.loadQuarrySites(Contracts.getCurrentGameHour)
       Zones.sitesLoadTimer = 0
@@ -285,7 +311,7 @@ local function onUpdate(dt)
   
   if currentState == Config.STATE_LOADING then
     Manager.payloadUpdateTimer = Manager.payloadUpdateTimer + dt
-    local payloadInterval = Config.settings.payload and Config.settings.payload.updateInterval or 0.25
+    local payloadInterval = settingsPayload and settingsPayload.updateInterval or 0.25
     if Manager.payloadUpdateTimer >= payloadInterval then
       Manager.jobObjects.currentLoadMass = Manager.calculateTruckPayload()
       Manager.calculateItemDamage()
@@ -338,13 +364,13 @@ local function onUpdate(dt)
         Manager.jobObjects.truckSpawnQueued = false
         return true
       end
-        elseif truckExists and Manager.jobObjects.truckID then
-          local truck = be:getObjectByID(Manager.jobObjects.truckID)
-          if truck then
-            local pos, rot = Manager.calculateSpawnTransformForLocation(vec3(zone.spawn.pos), targetPos)
-            spawn.safeTeleport(truck, pos, rot, nil, nil, nil, true)
-            Manager.driveTruckToPoint(Manager.jobObjects.truckID, targetPos)
-            return true
+    elseif truckExists and Manager.jobObjects.truckID then
+      local truck = be:getObjectByID(Manager.jobObjects.truckID)
+      if truck then
+        local pos, rot = Manager.calculateSpawnTransformForLocation(vec3(zone.spawn.pos), targetPos)
+        spawn.safeTeleport(truck, pos, rot, nil, nil, nil, true)
+        Manager.driveTruckToPoint(Manager.jobObjects.truckID, targetPos)
+        return true
       else
         Manager.jobObjects.truckID = nil
         local truckId = Manager.spawnTruckForGroup(zone, Manager.jobObjects.materialType, targetPos)
@@ -365,7 +391,7 @@ local function onUpdate(dt)
     if truck then
       local destPos = Manager.jobObjects.deliveryDestination and vec3(Manager.jobObjects.deliveryDestination.pos) or (Manager.jobObjects.activeGroup and Manager.jobObjects.activeGroup.destination and vec3(Manager.jobObjects.activeGroup.destination.pos))
       if destPos then
-        local arrivalDist = Config.settings.truck and Config.settings.truck.arrivalDistanceThreshold or 10.0
+        local arrivalDist = settingsTruck and settingsTruck.arrivalDistanceThreshold or 10.0
         local truckPos = truck:getPosition()
         if not Manager.jobObjects.zoneSwapTruckAtDestination and (truckPos - destPos):length() < arrivalDist then
           Manager.jobObjects.zoneSwapTruckAtDestination = true
@@ -374,10 +400,6 @@ local function onUpdate(dt)
       end
     end
   end
-
-  if not cachedPlayerVeh or not cachedPlayerPos then return end
-  local playerVeh = cachedPlayerVeh
-  local playerPos = cachedPlayerPos
 
   if Manager.jobObjects.zoneSwapPending and Manager.jobObjects.zoneSwapTargetZone then
     local selectedZone = Manager.jobObjects.zoneSwapTargetZone
@@ -400,6 +422,7 @@ local function onUpdate(dt)
         Manager.deliveryTimer = 0
         Manager.truckStoppedTimer = 0
         Manager.truckLastPosition = nil
+        core_groundMarkers.setPath(nil)
       end
     end
   end
@@ -408,15 +431,18 @@ local function onUpdate(dt)
     if Manager.jobOfferSuppressed and not Zones.isPlayerInAnyLoadingZone(playerPos) then
       Manager.jobOfferSuppressed = false
     end
-    if not Manager.jobOfferSuppressed and playerVeh:getJBeamFilename() == "wl40" then
-      if Zones.isPlayerInAnyLoadingZone(playerPos) then
-        local currentZone = Zones.getPlayerCurrentZone and Zones.getPlayerCurrentZone(playerPos)
-        local zoneTag = currentZone and currentZone.secondaryTag
-        if Contracts.shouldRefreshContracts(zoneTag) or not Contracts.ContractSystem.initialContractsGenerated then
-          Contracts.generateInitialContracts(Zones.availableGroups)
+    if not Manager.jobOfferSuppressed and playerVeh then
+      local success, jbeamFilename = pcall(function() return playerVeh:getJBeamFilename() end)
+      if success and jbeamFilename == "wl40" then
+        if Zones.isPlayerInAnyLoadingZone(playerPos) then
+          local currentZone = Zones.getPlayerCurrentZone and Zones.getPlayerCurrentZone(playerPos)
+          local zoneTag = currentZone and currentZone.secondaryTag
+          if Contracts.shouldRefreshContracts(zoneTag) or not Contracts.ContractSystem.initialContractsGenerated then
+            Contracts.generateInitialContracts(Zones.availableGroups)
+          end
+          currentState = Config.STATE_CONTRACT_SELECT
+          Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_Unlock_01')
         end
-        currentState = Config.STATE_CONTRACT_SELECT
-        Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_Unlock_01')
       end
     end
 
@@ -443,6 +469,12 @@ local function onUpdate(dt)
       currentState = Config.STATE_IDLE
       return
     end
+    if group.loading and group.loading.center then
+      local targetPos = vec3(group.loading.center)
+      if not core_groundMarkers.getTargetPos() or core_groundMarkers.getTargetPos() ~= targetPos then
+        core_groundMarkers.setPath(targetPos)
+      end
+    end
     if group.loading:containsPoint2D(playerPos) then
       if spawnOrMoveTruckToZone(group, false) then
         currentState = Config.STATE_LOADING
@@ -450,6 +482,7 @@ local function onUpdate(dt)
         Manager.deliveryTimer = 0
         Manager.truckStoppedTimer = 0
         Manager.truckLastPosition = nil
+        core_groundMarkers.setPath(nil)
       end
       if not Manager.markerCleared then
         Manager.markerCleared = true
@@ -476,7 +509,7 @@ local function onUpdate(dt)
         currentState = Config.STATE_IDLE
         return
       end
-      local arrivalSpeed = Config.settings.truck and Config.settings.truck.arrivalSpeedThreshold or 2.0
+      local arrivalSpeed = settingsTruck and settingsTruck.arrivalSpeedThreshold or 2.0
       if group.loading:containsPoint2D(truck:getPosition()) and truck:getVelocity():length() < arrivalSpeed then
         Manager.stopTruck(Manager.jobObjects.truckID)
         Manager.truckStoppedInLoading = true
@@ -488,6 +521,7 @@ local function onUpdate(dt)
         Manager.deliveryTimer = 0
         Manager.truckStoppedTimer = 0
         Manager.truckLastPosition = nil
+        core_groundMarkers.setPath(nil)
         Engine.Audio.playOnce('AudioGui', 'event:>UI>Countdown>3_seconds')
       end
     end
@@ -511,7 +545,7 @@ local function onUpdate(dt)
         currentState = Config.STATE_IDLE
         return
       end
-      local arrivalSpeed = Config.settings.truck and Config.settings.truck.arrivalSpeedThreshold or 2.0
+      local arrivalSpeed = settingsTruck and settingsTruck.arrivalSpeedThreshold or 2.0
       if group.loading:containsPoint2D(truck:getPosition()) and truck:getVelocity():length() < arrivalSpeed then
         Manager.stopTruck(Manager.jobObjects.truckID)
         Manager.truckStoppedInLoading = true
@@ -519,6 +553,7 @@ local function onUpdate(dt)
           Manager.spawnJobMaterials(Contracts, Zones, playerPos)
         end
         ui_message("Truck arrived at loading zone.", 5, "success")
+        core_groundMarkers.setPath(nil)
         Engine.Audio.playOnce('AudioGui', 'event:>UI>Countdown>3_seconds')
       end
     end
@@ -526,9 +561,9 @@ local function onUpdate(dt)
   elseif currentState == Config.STATE_DELIVERING then
     local destPos = Manager.jobObjects.deliveryDestination and vec3(Manager.jobObjects.deliveryDestination.pos) or (Manager.jobObjects.activeGroup and Manager.jobObjects.activeGroup.destination and vec3(Manager.jobObjects.activeGroup.destination.pos))
     local movementResult, deliveryTime = Manager.handleTruckMovement(dt, destPos, Contracts)
-    if movementResult == "stuck" then
+    if movementResult == "damaged" then
       local contract = Contracts.ContractSystem.activeContract
-      if not contract then currentState = Manager.cleanupJob(true, Config.STATE_IDLE); return end
+      if not contract then Manager.cleanupJob(true, Config.STATE_IDLE); currentState = Config.STATE_IDLE; return end
       
       local stuckPropIds = Manager.getLoadedPropIdsInTruck(0.1)
       
@@ -557,71 +592,55 @@ local function onUpdate(dt)
             end
           end
         end
-        
-        if #stuckPropIds > 0 then
-          Manager.despawnPropIds(stuckPropIds, Zones, Contracts)
+      end
+      
+      if #stuckPropIds > 0 then
+        Manager.despawnPropIds(stuckPropIds, Zones, Contracts)
+      end
+      
+      Manager.jobObjects.deliveredPropIds, Manager.jobObjects.currentLoadMass, Manager.jobObjects.lastDeliveredMass = nil, 0, 0
+      Manager.deliveryTimer = 0
+      Manager.truckStoppedTimer = 0
+      Manager.truckLastPosition = nil
+      Manager.truckDamage = 0
+      Manager.damageCheckQueued = false
+      Manager.teleportQueued = false
+      
+      if Contracts.checkContractCompletion() then
+        if Manager.jobObjects.truckID then
+          local obj = be:getObjectByID(Manager.jobObjects.truckID)
+          if obj then obj:delete() end
         end
-        
-        Manager.jobObjects.deliveredPropIds, Manager.jobObjects.currentLoadMass, Manager.jobObjects.lastDeliveredMass = nil, 0, 0
-        Manager.deliveryTimer = 0
-        Manager.truckStoppedTimer = 0
-        Manager.truckLastPosition = nil
-        
-        if Contracts.checkContractCompletion() then
-          if Manager.jobObjects.truckID then
-            local obj = be:getObjectByID(Manager.jobObjects.truckID)
-            if obj then obj:delete() end
-          end
-          Manager.jobObjects.truckID, Manager.truckStoppedInLoading, Manager.markerCleared = nil, false, true
-          if Zones.isPlayerInAnyLoadingZone(playerPos) then
-            currentState = Config.STATE_AT_QUARRY_DECIDE
-            Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-            ui_message("Contract complete! Ready to finalize.", 6, "success")
-          else
-            currentState = Config.STATE_RETURN_TO_QUARRY
-            Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-            ui_message("Contract complete! Return to any loading zone to finalize and get paid.", 6, "success")
-          end
-        else
+        Manager.jobObjects.truckID, Manager.truckStoppedInLoading, Manager.markerCleared = nil, false, true
+        if Zones.isPlayerInAnyLoadingZone(playerPos) then
+          currentState = Config.STATE_AT_QUARRY_DECIDE
           Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-          if #Manager.propQueue == 0 then Manager.spawnJobMaterials(Contracts, Zones, playerPos) end
-          local group = Manager.jobObjects.activeGroup
+          ui_message("Contract complete! Ready to finalize.", 6, "success")
+        else
+          currentState = Config.STATE_RETURN_TO_QUARRY
+          Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
+          ui_message("Contract complete! Return to any loading zone to finalize and get paid.", 6, "success")
+        end
+      else
+        if #Manager.propQueue == 0 then Manager.spawnJobMaterials(Contracts, Zones, playerPos) end
+        local group = Manager.jobObjects.activeGroup
+        if group and Manager.jobObjects.truckID then
           local truck = be:getObjectByID(Manager.jobObjects.truckID)
           if truck then
             Manager.stopTruck(Manager.jobObjects.truckID)
-            local pos, rot = Manager.calculateSpawnTransformForLocation(vec3(group.spawn.pos), vec3(group.loading.center))
+            local loadingCenter = vec3(group.loading.center)
+            local pos, rot = Manager.calculateSpawnTransformForLocation(vec3(group.spawn.pos), loadingCenter)
             spawn.safeTeleport(truck, pos, rot, nil, nil, nil, true)
-            Manager.driveTruckToPoint(Manager.jobObjects.truckID, vec3(group.loading.center))
+            Manager.driveTruckToPoint(Manager.jobObjects.truckID, loadingCenter)
             currentState = Config.STATE_LOADING
             Manager.truckStoppedInLoading = false
           end
-        end
-      else
-        if #stuckPropIds > 0 then
-          Manager.despawnPropIds(stuckPropIds, Zones, Contracts)
-        end
-        
-        Manager.jobObjects.deliveredPropIds, Manager.jobObjects.currentLoadMass, Manager.jobObjects.lastDeliveredMass = nil, 0, 0
-        Manager.deliveryTimer = 0
-        Manager.truckStoppedTimer = 0
-        Manager.truckLastPosition = nil
-        
-        if #Manager.propQueue == 0 then Manager.spawnJobMaterials(Contracts, Zones, playerPos) end
-        local group = Manager.jobObjects.activeGroup
-        local truck = be:getObjectByID(Manager.jobObjects.truckID)
-        if truck then
-          Manager.stopTruck(Manager.jobObjects.truckID)
-          local pos, rot = Manager.calculateSpawnTransformForLocation(vec3(group.spawn.pos), vec3(group.loading.center))
-          spawn.safeTeleport(truck, pos, rot, nil, nil, nil, true)
-          Manager.driveTruckToPoint(Manager.jobObjects.truckID, vec3(group.loading.center))
-          currentState = Config.STATE_LOADING
-          Manager.truckStoppedInLoading = false
         end
       end
     elseif movementResult == true then
       -- Delivery arrived
       local contract = Contracts.ContractSystem.activeContract
-      if not contract then currentState = Manager.cleanupJob(true, Config.STATE_IDLE); return end
+      if not contract then Manager.cleanupJob(true, Config.STATE_IDLE); currentState = Config.STATE_IDLE; return end
       
       -- Update progress
       local deliveredMass = Manager.jobObjects.lastDeliveredMass or 0
@@ -678,19 +697,22 @@ local function onUpdate(dt)
         end
       else
         Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Mission_End_Success')
-        if #Manager.propQueue == 0 then Manager.spawnJobMaterials(Contracts, Zones) end
+        if #Manager.propQueue == 0 then Manager.spawnJobMaterials(Contracts, Zones, playerPos) end
         local group = Manager.jobObjects.activeGroup
-        local truck = be:getObjectByID(Manager.jobObjects.truckID)
-        if truck then
-          Manager.stopTruck(Manager.jobObjects.truckID)
-          local pos, rot = Manager.calculateSpawnTransformForLocation(vec3(group.spawn.pos), vec3(group.loading.center))
-          spawn.safeTeleport(truck, pos, rot, nil, nil, nil, true)
-          Manager.driveTruckToPoint(Manager.jobObjects.truckID, vec3(group.loading.center))
-          currentState = Config.STATE_LOADING
-          Manager.truckStoppedInLoading = false
-          Manager.deliveryTimer = 0
-          Manager.truckStoppedTimer = 0
-          Manager.truckLastPosition = nil
+        if group and Manager.jobObjects.truckID then
+          local truck = be:getObjectByID(Manager.jobObjects.truckID)
+          if truck then
+            Manager.stopTruck(Manager.jobObjects.truckID)
+            local loadingCenter = vec3(group.loading.center)
+            local pos, rot = Manager.calculateSpawnTransformForLocation(vec3(group.spawn.pos), loadingCenter)
+            spawn.safeTeleport(truck, pos, rot, nil, nil, nil, true)
+            Manager.driveTruckToPoint(Manager.jobObjects.truckID, loadingCenter)
+            currentState = Config.STATE_LOADING
+            Manager.truckStoppedInLoading = false
+            Manager.deliveryTimer = 0
+            Manager.truckStoppedTimer = 0
+            Manager.truckLastPosition = nil
+          end
         end
       end
     end
@@ -709,7 +731,7 @@ local function onUpdate(dt)
     end
   end
 
-  local uiUpdateInterval = Config.settings.ui and Config.settings.ui.updateInterval or 0.5
+  local uiUpdateInterval = settingsUI and settingsUI.updateInterval or 0.5
   if currentState ~= Config.STATE_IDLE then
     uiUpdateTimer = uiUpdateTimer + dt
     if uiUpdateTimer >= uiUpdateInterval then
