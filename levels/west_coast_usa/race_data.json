@@ -144,10 +144,10 @@
       "checkpointRoad":[
         "driftLoopRemaster"
       ],
-      "driftGoal":40000,
+      "driftGoal":25000,
       "hotlap":54,
       "label":"Drift Loop Remaster",
-      "reward":1500,
+      "reward":1300,
       "timeout":10,
       "type":[
         "drift"
