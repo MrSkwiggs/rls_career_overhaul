@@ -19,7 +19,7 @@ jobs:
         run: |
           cp -r ui-vue-src/* baseUI/src/
           cd baseUI
-          npm ci
+          npm install
           npm run build
       
       - name: Upload built files as artifact
