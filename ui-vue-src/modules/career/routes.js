@@ -1,12 +1,11 @@
 // Career routes --------------------------------------
 
 import ProgressLanding from "./views/ProgressLanding.vue"
-import BranchPage from "./views/BranchPage.vue"
 import CargoDeliveryReward from "./views/CargoDeliveryReward.vue"
 import CargoOverview from "./views/CargoOverviewMain.vue"
 import CargoDropOff from "./views/CargoDropOff.vue"
 import Computer from "./views/ComputerMain.vue"
-import InsurancePolicies from "./views/InsurancePoliciesMain.vue"
+import Insurances from "./views/InsurancesMain.vue"
 import Logbook from "./views/Logbook.vue"
 import Milestones from "./views/Milestones.vue"
 import MyCargo from "./views/MyCargo.vue"
@@ -199,9 +198,9 @@ export default [
 
       // Insurance policies List
       {
-        path: "insurancePolicies",
-        name: "insurancePolicies",
-        component: InsurancePolicies,
+        path: "insurances",
+        name: "insurances",
+        component: Insurances,
       },
 
       // Delivery Reward
@@ -268,22 +267,6 @@ export default [
         path: "domainSelection",
         name: "domainSelection",
         component: ProgressLanding,
-        props: true,
-        meta: {
-          uiApps: {
-            shown: false,
-          },
-          infoBar: {
-            visible: true,
-          },
-        },
-      },
-
-      //Branch Landing Page
-      {
-        path: "branchPage/:branchKey?/:skillKey?/",
-        name: "branchPage",
-        component: BranchPage,
         props: true,
         meta: {
           uiApps: {

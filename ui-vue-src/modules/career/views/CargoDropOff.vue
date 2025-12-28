@@ -775,7 +775,7 @@ export default {
 </script>
 
 <style scoped lang="scss">
-@import "@/styles/modules/animations";
+@use "@/styles/modules/animations" as *;
 
 @keyframes pulsingProgressBar {
   50% {
