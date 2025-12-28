@@ -1,0 +1,37 @@
+name: Update dist on PR
+on:
+  workflow_run:
+    workflows: ["Build UI on PR"]
+    types:
+      - completed
+
+jobs:
+  commit:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event.workflow_run.head_sha }}
+      
+      - name: Download built files
+        uses: actions/download-artifact@v4
+        with:
+          name: vue-dist-build
+          path: baseUI/dist/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+      
+      - name: Move to final location
+        run: |
+          mkdir -p ui/vue-dist
+          cp -r baseUI/dist/* ui/vue-dist/
+      
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update built UI files"
+          file_pattern: ui/vue-dist/*
+          branch: ${{ github.event.workflow_run.head_branch }}
