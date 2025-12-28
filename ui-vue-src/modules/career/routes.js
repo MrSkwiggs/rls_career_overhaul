@@ -1,7 +1,6 @@
 // Career routes --------------------------------------
 
 import ProgressLanding from "./views/ProgressLanding.vue"
-import BranchPage from "./views/BranchPage.vue"
 import CargoDeliveryReward from "./views/CargoDeliveryReward.vue"
 import CargoOverview from "./views/CargoOverviewMain.vue"
 import CargoDropOff from "./views/CargoDropOff.vue"
@@ -268,22 +267,6 @@ export default [
         path: "domainSelection",
         name: "domainSelection",
         component: ProgressLanding,
-        props: true,
-        meta: {
-          uiApps: {
-            shown: false,
-          },
-          infoBar: {
-            visible: true,
-          },
-        },
-      },
-
-      //Branch Landing Page
-      {
-        path: "branchPage/:branchKey?/:skillKey?/",
-        name: "branchPage",
-        component: BranchPage,
         props: true,
         meta: {
           uiApps: {
