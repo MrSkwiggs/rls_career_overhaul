@@ -786,21 +786,7 @@ position: [popupPosition.center, popupPosition.center], // can be single w/o arr
 </script>
 
 <style scoped lang="scss">
-@use "@/styles/modules/animations" as *;
-
-.cargo-drop-off-wrapper {
---content-flow: column;
---content-h-position: center;
-color: white;
-
-:deep(.layout-content) {
-  display: flex;
-  flex-flow: column;
-  align-items: center;
-  justify-content: center;
-}
-}
-
+@import "@/styles/modules/animations";
 
 @keyframes pulsingProgressBar {
 50% {

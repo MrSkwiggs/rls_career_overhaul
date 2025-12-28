@@ -305,8 +305,6 @@ export default [
           },
         },
       },
-
-
       // Profiles
       {
         path: "profiles",
