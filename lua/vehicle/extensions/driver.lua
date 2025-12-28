@@ -14,7 +14,7 @@ local function onExtensionLoaded()
     end
 end
 
-local function goToTarget(speedMode)
+local function goToTarget(speedMode, noTraffic)
     local path = mapmgr.getPointToPointPath(
         obj:getPosition(),
         destination,
@@ -26,16 +26,29 @@ local function goToTarget(speedMode)
     )
     table.remove(path, 1)
     ai.setPath(path)
-    ai.driveUsingPathWithTraffic({
-        wpTargetList = path,
-        routeSpeedMode = speedMode or 'legal'
-    })
-    ai.setParameters({
-        trafficWaitTime = 0.005,
-        lookAheadKv = 0.01,
-        awarenessForceCoef = 0.02, 
-        driveStyle = "offroad"
-    })
+    if noTraffic then
+        ai.driveUsingPath({
+            wpTargetList = path,
+            avoidCars = "on",
+            driveInLane = "on",
+            routeSpeedMode = speedMode or 'legal'
+        })
+        ai.setParameters({
+            lookAheadKv = 0.03,
+            awarenessForceCoef = 0.1,
+        })
+    else
+        ai.driveUsingPathWithTraffic({
+            wpTargetList = path,
+            routeSpeedMode = speedMode or 'legal'
+        })
+        ai.setParameters({
+            trafficWaitTime = 0.005,
+            lookAheadKv = 0.01,
+            awarenessForceCoef = 0.02, 
+            driveStyle = "offroad"
+        })
+    end
 end
 
 local function raceToTarget()
@@ -60,13 +73,13 @@ local function raceToTarget()
     })
 end
 
-local function returnTargetPosition(target, race, speedMode)
+local function returnTargetPosition(target, race, speedMode, noTraffic)
     print("returnTargetPosition: " .. tostring(target))
     destination = target
     if race then
         raceToTarget()
     else
-        goToTarget(speedMode)
+        goToTarget(speedMode, noTraffic)
     end
 end
 

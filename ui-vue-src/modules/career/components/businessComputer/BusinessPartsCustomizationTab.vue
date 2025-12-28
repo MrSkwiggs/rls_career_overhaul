@@ -92,7 +92,8 @@
           >
             <button
               class="result-section-header"
-              @click="toggleSearchSection(result.slotPath)"
+              @click.stop="toggleSearchSection(result.slotPath)"
+              @mousedown.stop
               data-focusable
             >
               <h3>{{ result.slotNiceName || result.slotName }}</h3>
@@ -132,7 +133,7 @@
                   <h4>{{ part.niceName || part.name }}</h4>
                 </div>
                 <div class="option-actions">
-                  <span class="option-price">$ {{ (part.value || 0).toLocaleString() }}</span>
+                  <span class="option-price">$ {{ formatPrice(part.value) }}</span>
                   <div v-if="part.installed" class="installed-button-wrapper">
                     <button
                       class="btn btn-disabled"
@@ -173,13 +174,13 @@
                       <div v-if="installMenuVisible === `${result.slotPath}_${part.name}`" class="install-menu">
                         <button v-if="!part.fromInventory" class="install-menu-item-button" @click="installPart(part, result)" data-focusable>
                           <span>New</span>
-                          <span class="price-badge">$ {{ (part.value || 0).toLocaleString() }}</span>
+                          <span class="price-badge">$ {{ formatPrice(part.value) }}</span>
                         </button>
                         <div v-for="usedPart in getOwnedVariants(part)" :key="usedPart.partId" class="install-menu-item">
                           <button class="install-menu-item-button" @click="installUsedPart(usedPart, result)" data-focusable>
                             <span>Owned</span>
                             <span class="mileage-badge">{{ formatMileage(getUsedPartMileage(usedPart)) }}</span>
-                            <span class="price-badge">$ {{ (usedPart.finalValue || usedPart.value || 0).toLocaleString() }}</span>
+                            <span class="price-badge">$ {{ formatPrice(usedPart.finalValue || usedPart.value) }}</span>
                           </button>
                         </div>
                       </div>
@@ -198,34 +199,40 @@
         <div v-if="currentCategoryOptions && currentCategoryOptions.length > 0" class="parts-options-section" :class="{ collapsed: !isPartsOpen }">
           <button
             class="options-header"
-            @click="isPartsOpen = !isPartsOpen"
+            @click.stop="isPartsOpen = !isPartsOpen"
+            @mousedown.stop
             data-focusable
           >
-            <h3>{{ currentCategory?.slotNiceName || currentCategory?.slotName }} Parts</h3>
-            <svg 
-              v-if="isPartsOpen"
-              class="chevron-icon" 
-              width="20" 
-              height="20" 
-              viewBox="0 0 24 24" 
-              fill="none" 
-              stroke="currentColor" 
-              stroke-width="2"
-            >
-              <polyline points="18 15 12 9 6 15"/>
-            </svg>
-            <svg 
-              v-else
-              class="chevron-icon" 
-              width="20" 
-              height="20" 
-              viewBox="0 0 24 24" 
-              fill="none" 
-              stroke="currentColor" 
-              stroke-width="2"
-            >
-              <polyline points="6 9 12 15 18 9"/>
-            </svg>
+            <div class="options-header-left">
+              <h3>{{ currentCategory?.slotNiceName || currentCategory?.slotName }} Parts</h3>
+            </div>
+            <div class="options-header-right">
+              <span class="installed-summary">{{ installedPartLabel }}</span>
+              <svg 
+                v-if="isPartsOpen"
+                class="chevron-icon" 
+                width="20" 
+                height="20" 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="currentColor" 
+                stroke-width="2"
+              >
+                <polyline points="18 15 12 9 6 15"/>
+              </svg>
+              <svg 
+                v-else
+                class="chevron-icon" 
+                width="20" 
+                height="20" 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="currentColor" 
+                stroke-width="2"
+              >
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </div>
           </button>
           
           <div v-if="isPartsOpen" class="options-list">
@@ -238,7 +245,7 @@
                 <h4>{{ option.niceName || option.name }}</h4>
               </div>
               <div class="option-actions">
-                <span class="option-price">$ {{ (option.value || 0).toLocaleString() }}</span>
+                <span class="option-price">$ {{ formatPrice(option.value) }}</span>
                 <div v-if="option.installed" class="installed-button-wrapper">
                   <button
                     class="btn btn-disabled"
@@ -279,13 +286,13 @@
                     <div v-if="installMenuVisible === `${currentCategory.path}_${option.name}`" class="install-menu">
                       <button v-if="!option.fromInventory" class="install-menu-item-button" @click="installPart(option, currentCategory)" data-focusable>
                         <span>New</span>
-                        <span class="price-badge">$ {{ (option.value || 0).toLocaleString() }}</span>
+                        <span class="price-badge">$ {{ formatPrice(option.value) }}</span>
                       </button>
                       <div v-for="usedPart in getOwnedVariants(option)" :key="usedPart.partId" class="install-menu-item">
                         <button class="install-menu-item-button" @click="installUsedPart(usedPart, currentCategory)" data-focusable>
                           <span>Owned</span>
                           <span class="mileage-badge">{{ formatMileage(getUsedPartMileage(usedPart)) }}</span>
-                          <span class="price-badge">$ {{ (usedPart.finalValue || usedPart.value || 0).toLocaleString() }}</span>
+                          <span class="price-badge">$ {{ formatPrice(usedPart.finalValue || usedPart.value) }}</span>
                         </button>
                       </div>
                     </div>
@@ -301,7 +308,8 @@
           <button
             v-for="category in displayCategories"
             :key="category.id"
-            @click="navigateToCategory(category)"
+            @click.stop="navigateToCategory(category)"
+            @mousedown.stop
             class="category-item"
             data-focusable
           >
@@ -362,6 +370,7 @@ const loading = ref(true) // Start with loading = true to show loading message i
 const openSearchSections = ref({})
 const removeMenuVisible = ref(null)
 const installMenuVisible = ref(null)
+const lastAutoOpenedKey = ref(null)
 
 const hasActiveSearch = computed(() => activeSearchQuery.value.length > 0)
 
@@ -487,6 +496,27 @@ const currentCategoryOptions = computed(() => {
   })
 })
 
+const shouldAutoOpenParts = () => {
+  const options = currentCategoryOptions.value
+  if (!options || options.length === 0) return false
+
+  const childCount = Array.isArray(displayCategories.value) ? displayCategories.value.length : 0
+  const noCategories = childCount === 0
+  const singleChild = childCount === 1
+
+  if (options.length === 1) return true
+  if (noCategories) return true
+  if (singleChild) return true
+
+  return false
+}
+
+const getAutoOpenKey = () => {
+  const nav = (navigationPath.value || []).join('>')
+  const path = currentCategory.value?.path || ''
+  return `${nav}|${path}`
+}
+
 const displayCategories = computed(() => {
   let categories = []
   if (navigationPath.value.length === 0) {
@@ -580,6 +610,11 @@ const formatMileage = (miles) => {
   return `${(miles / 1000).toFixed(1)}k mi`
 }
 
+const formatPrice = (value) => {
+  const num = value || 0
+  return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
 const getUsedPartMileage = (usedPart) => {
   if (!usedPart) return 0
   if (typeof usedPart.mileage === "number") {
@@ -612,6 +647,21 @@ const getOwnedVariants = (part) => {
 const hasOwnedVariants = (part) => {
   return getOwnedVariants(part).length > 0
 }
+
+const installedPartLabel = computed(() => {
+  const options = currentCategoryOptions.value
+  if (options && options.length > 0) {
+    const installedOption = options.find(opt => opt.installed)
+    if (installedOption) {
+      return installedOption.niceName || installedOption.name || '-'
+    }
+  }
+  const categoryPart = currentCategory.value?.partNiceName
+  if (categoryPart && categoryPart !== '-') {
+    return categoryPart
+  }
+  return '-'
+})
 
 const installUsedPart = async (usedPart, slot) => {
   installMenuVisible.value = null
@@ -853,6 +903,35 @@ watch(() => store.activeTabId, async (newTabId, oldTabId) => {
   }
 })
 
+watch(currentCategoryOptions, (options) => {
+  if (!options || options.length === 0) {
+    isPartsOpen.value = false
+    return
+  }
+
+  const key = getAutoOpenKey()
+  if (shouldAutoOpenParts() && lastAutoOpenedKey.value !== key) {
+    isPartsOpen.value = true
+    lastAutoOpenedKey.value = key
+  }
+}, { immediate: true })
+
+watch(navigationPath, () => {
+  const options = currentCategoryOptions.value
+  if (!options || options.length === 0) {
+    isPartsOpen.value = false
+    return
+  }
+
+  const key = getAutoOpenKey()
+  if (shouldAutoOpenParts() && lastAutoOpenedKey.value !== key) {
+    isPartsOpen.value = true
+    lastAutoOpenedKey.value = key
+  } else {
+    isPartsOpen.value = false
+  }
+}, { deep: true })
+
 const handleClickOutside = (e) => {
   if (!e.target.closest('.installed-button-wrapper')) {
     removeMenuVisible.value = null
@@ -1042,16 +1121,50 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.5em 0.75em;
-  background: transparent;
-  border: none;
+  padding: 0.75em 0.9em;
+  background: rgba(18, 18, 18, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.5em;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s, box-shadow 0.15s;
   margin-bottom: 0.75em;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
   
   &:hover {
-    background: rgba(23, 23, 23, 0.5);
-    border-radius: 0.25em;
+    background: rgba(28, 28, 28, 0.95);
+    border-color: rgba(245, 73, 0, 0.6);
+    transform: translateY(-1px);
+    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.45);
+  }
+
+  &:active {
+    transform: translateY(0);
+    border-color: rgba(245, 73, 0, 0.8);
+  }
+
+  .options-header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.35em;
+  }
+
+  .options-header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+  }
+
+  .installed-summary {
+    padding: 0.35em 0.65em;
+    background: rgba(245, 73, 0, 0.12);
+    border: 1px solid rgba(245, 73, 0, 0.4);
+    border-radius: 0.375em;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 0.8em;
+    max-width: 12em;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
   }
   
   h3 {
@@ -1146,16 +1259,25 @@ onBeforeUnmount(() => {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.5em 0.75em;
-    background: transparent;
-    border: none;
+    padding: 0.75em 0.9em;
+    background: rgba(18, 18, 18, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     cursor: pointer;
-    transition: background 0.2s;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s, box-shadow 0.15s;
     margin-bottom: 0.75em;
+    border-radius: 0.5em;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
     
     &:hover {
-      background: rgba(23, 23, 23, 0.5);
-      border-radius: 0.25em;
+      background: rgba(28, 28, 28, 0.95);
+      border-color: rgba(245, 73, 0, 0.5);
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+    }
+
+    &:active {
+      transform: translateY(0);
+      border-color: rgba(245, 73, 0, 0.75);
     }
     
     h3 {
@@ -1183,15 +1305,24 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.625em 0.75em;
-  background: transparent;
-  border: none;
+  padding: 0.75em 0.9em;
+  background: rgba(18, 18, 18, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   cursor: pointer;
-  transition: background 0.2s;
-  border-radius: 0.25em;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s, box-shadow 0.15s;
+  border-radius: 0.5em;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
   
   &:hover {
-    background: rgba(23, 23, 23, 0.5);
+    background: rgba(28, 28, 28, 0.95);
+    border-color: rgba(245, 73, 0, 0.5);
+    transform: translateY(-1px);
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+  }
+
+  &:active {
+    transform: translateY(0);
+    border-color: rgba(245, 73, 0, 0.75);
   }
   
   .category-name {

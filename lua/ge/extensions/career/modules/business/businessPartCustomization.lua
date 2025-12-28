@@ -32,16 +32,21 @@ local function getActiveSession(businessId)
 end
 
 local function getPartSupplierDiscountMultiplier(businessId)
-  if not businessId or not career_modules_business_businessSkillTree then
+  if not businessId then
     return 1.0
   end
 
-  local businessType = "tuningShop"
-  local treeId = "shop-upgrades"
-  local nodeId = "part-suppliers"
+  local allBusinessObjects = career_modules_business_businessManager and career_modules_business_businessManager.getAllBusinessObjects and career_modules_business_businessManager.getAllBusinessObjects() or {}
+  for businessType, businessObj in pairs(allBusinessObjects) do
+    if businessObj.getPartSupplierDiscountMultiplier then
+      local purchased = career_modules_business_businessManager.getPurchasedBusinesses(businessType) or {}
+      if purchased[businessId] then
+        return businessObj.getPartSupplierDiscountMultiplier(businessId)
+      end
+    end
+  end
 
-  local level = career_modules_business_businessSkillTree.getNodeProgress(businessId, treeId, nodeId) or 0
-  return 1.0 - (0.05 * level)
+  return 1.0
 end
 
 local function isPersonalVehicleId(vehicleId)
@@ -59,13 +64,19 @@ local function getSpawnedIdFromPersonalVehicleId(vehicleId)
 end
 
 local function getInventoryIdFromPersonalVehicleId(vehicleId, businessId)
-  if not isPersonalVehicleId(vehicleId) then
+  if not isPersonalVehicleId(vehicleId) or not businessId then
     return nil
   end
-  if career_modules_business_tuningShop and career_modules_business_tuningShop.getActivePersonalVehicle and businessId then
-    local activePersonal = career_modules_business_tuningShop.getActivePersonalVehicle(businessId)
-    if activePersonal and tostring(activePersonal.vehicleId) == tostring(vehicleId) and activePersonal.inventoryId then
-      return activePersonal.inventoryId
+  local allBusinessObjects = career_modules_business_businessManager and career_modules_business_businessManager.getAllBusinessObjects and career_modules_business_businessManager.getAllBusinessObjects() or {}
+  for businessType, businessObj in pairs(allBusinessObjects) do
+    if businessObj.getActivePersonalVehicle then
+      local purchased = career_modules_business_businessManager.getPurchasedBusinesses(businessType) or {}
+      if purchased[businessId] then
+        local activePersonal = businessObj.getActivePersonalVehicle(businessId)
+        if activePersonal and tostring(activePersonal.vehicleId) == tostring(vehicleId) and activePersonal.inventoryId then
+          return activePersonal.inventoryId
+        end
+      end
     end
   end
   return nil
@@ -305,14 +316,20 @@ local function replaceVehicleWithFuelHandling(vehObj, modelKey, config, beforeRe
 end
 
 local function getPersonalVehicleData(vehicleId, businessId)
-  if not isPersonalVehicleId(vehicleId) then
+  if not isPersonalVehicleId(vehicleId) or not businessId then
     return nil
   end
   
-  if career_modules_business_tuningShop and career_modules_business_tuningShop.getActivePersonalVehicle and businessId then
-    local activePersonal = career_modules_business_tuningShop.getActivePersonalVehicle(businessId)
-    if activePersonal and tostring(activePersonal.vehicleId) == tostring(vehicleId) then
-      return activePersonal
+  local allBusinessObjects = career_modules_business_businessManager and career_modules_business_businessManager.getAllBusinessObjects and career_modules_business_businessManager.getAllBusinessObjects() or {}
+  for businessType, businessObj in pairs(allBusinessObjects) do
+    if businessObj.getActivePersonalVehicle then
+      local purchased = career_modules_business_businessManager.getPurchasedBusinesses(businessType) or {}
+      if purchased[businessId] then
+        local activePersonal = businessObj.getActivePersonalVehicle(businessId)
+        if activePersonal and tostring(activePersonal.vehicleId) == tostring(vehicleId) then
+          return activePersonal
+        end
+      end
     end
   end
   
@@ -343,6 +360,17 @@ local function initializePreviewVehicle(businessId, vehicleId)
   end
 
   local vehId = vehObj:getID()
+
+  if isPersonal then
+    local partConditions = vehicle.partConditions or {}
+    local conditionsType = type(partConditions)
+    local count = 0
+    if conditionsType == "table" then
+      for _ in pairs(partConditions) do count = count + 1 end
+    end
+    core_vehicleBridge.executeAction(vehObj, 'initPartConditions', partConditions, nil, nil, nil, nil)
+  end
+
   local vehicleData = extensions.core_vehicle_manager.getVehicleData(vehId)
 
   -- We need vehicleData for ioCtx later, but config should come from storage if possible
@@ -438,53 +466,56 @@ local function resetVehicleToOriginal(businessId, vehicleId)
     return false
   end
 
+  local session = ensureActiveSession(businessId, vehicleId)
+  if not session or not session.initial or not session.initial.config then
+    return false
+  end
+  if session.operationInProgress then
+    return false
+  end
+
   local vehObj = getBusinessVehicleObject(businessId, vehicleId)
   if not vehObj then
     return false
   end
 
-  local session = ensureActiveSession(businessId, vehicleId)
-  if not session or not session.initial then
+  session.operationInProgress = true
+
+  local baselineConfig = deepcopy(session.initial.config)
+  local modelKey = session.initial.model
+  local vehicle = career_modules_business_businessInventory and
+                    career_modules_business_businessInventory.getVehicleById and
+                    career_modules_business_businessInventory.getVehicleById(businessId, vehicleId) or nil
+
+  if not modelKey and vehicle and vehicle.vehicleConfig then
+    modelKey = vehicle.vehicleConfig.model_key or vehicle.model_key
+  end
+  if not modelKey then
+    session.operationInProgress = false
     return false
+  end
+
+  local baselinePartConditions = deepcopy(session.initial.partConditions or {})
+  if (not next(baselinePartConditions)) and vehicle and vehicle.partConditions then
+    baselinePartConditions = deepcopy(vehicle.partConditions)
   end
 
   core_jobsystem.create(function(job)
     job.sleep(0.5)
 
-    local vehicle = career_modules_business_businessInventory.getVehicleById(businessId, vehicleId)
-    if not vehicle or not vehicle.vehicleConfig then
-      return
-    end
-
-    local modelKey = vehicle.vehicleConfig.model_key or vehicle.model_key
-    if not modelKey then
-      return
-    end
-
-    local originalConfig = nil
-    local baselineExists = session.initial ~= nil
-
-    if baselineExists then
-      originalConfig = deepcopy(session.initial.config)
-    else
-      return
-    end
-
-    local vehId = vehObj:getID()
-
-    replaceVehicleWithFuelHandling(vehObj, modelKey, originalConfig, function()
-      local partConditions = baselineExists and session.initial.partConditions or vehicle.partConditions
-      if partConditions then
-        core_vehicleBridge.executeAction(vehObj, 'initPartConditions', partConditions, nil, nil, nil, nil)
+    replaceVehicleWithFuelHandling(vehObj, modelKey, baselineConfig, function()
+      if baselinePartConditions and next(baselinePartConditions) then
+        core_vehicleBridge.executeAction(vehObj, 'initPartConditions', baselinePartConditions, nil, nil, nil, nil)
       end
     end, function()
       requestVehiclePowerWeight(vehObj, businessId, vehicleId)
+      session.operationInProgress = false
     end)
 
     session.preview = {
-      config = deepcopy(originalConfig),
-      partList = flattenPartsTree(originalConfig.partsTree or {}),
-      partConditions = deepcopy(baselineExists and session.initial.partConditions or vehicle.partConditions or {}),
+      config = deepcopy(baselineConfig),
+      partList = flattenPartsTree(baselineConfig.partsTree or {}),
+      partConditions = deepcopy(baselinePartConditions or {}),
       model = modelKey
     }
   end)
@@ -1333,6 +1364,15 @@ local function addPartToCart(businessId, vehicleId, currentCart, partToAdd)
           end
         end
 
+        -- Check if this part was from inventory (preserve fromInventory and partId flags)
+        local fromInventory = false
+        local partId = nil
+        if newPartItem.slotPath == slotPath and newPartItem.fromInventory then
+          fromInventory = true
+          partId = newPartItem.partId
+          partValue = 0  -- Parts from inventory are free
+        end
+
         local partData = {
           type = 'part',
           partName = partInfo.partName,
@@ -1342,6 +1382,11 @@ local function addPartToCart(businessId, vehicleId, currentCart, partToAdd)
           price = partValue,
           canRemove = canRemove
         }
+        
+        if fromInventory then
+          partData.fromInventory = true
+          partData.partId = partId
+        end
 
         if slotPath == partToAdd.slotPath then
           partData.partNiceName = partToAdd.partNiceName or partData.partNiceName
@@ -1472,6 +1517,60 @@ local function clearPreviewVehicle(businessId)
   end
 end
 
+local rollbackOnUiCloseInProgress = false
+local function onUIPlayStateChanged(enteredPlay)
+  if not enteredPlay then
+    return
+  end
+  if rollbackOnUiCloseInProgress or not currentSession then
+    return
+  end
+  if currentSession.operationInProgress then
+    return
+  end
+
+  rollbackOnUiCloseInProgress = true
+  local bId = currentSession.businessId
+  local vId = currentSession.vehicleId
+  resetVehicleToOriginal(bId, vId)
+  clearPreviewVehicle(bId)
+  rollbackOnUiCloseInProgress = false
+end
+
+local function onUiChangedState(toState, fromState)
+  if rollbackOnUiCloseInProgress or not currentSession then
+    return
+  end
+  if currentSession.operationInProgress then
+    return
+  end
+
+  if fromState == 'business-computer' and toState ~= 'business-computer' then
+    rollbackOnUiCloseInProgress = true
+    local bId = currentSession.businessId
+    local vId = currentSession.vehicleId
+    resetVehicleToOriginal(bId, vId)
+    clearPreviewVehicle(bId)
+    rollbackOnUiCloseInProgress = false
+  end
+end
+
+local function onUIInitialised()
+  if rollbackOnUiCloseInProgress or not currentSession then
+    return
+  end
+  if currentSession.operationInProgress then
+    return
+  end
+
+  rollbackOnUiCloseInProgress = true
+  local bId = currentSession.businessId
+  local vId = currentSession.vehicleId
+  resetVehicleToOriginal(bId, vId)
+  clearPreviewVehicle(bId)
+  rollbackOnUiCloseInProgress = false
+end
+
 M.onPowerWeightReceived = onPowerWeightReceived
 M.initializePreviewVehicle = initializePreviewVehicle
 M.resetVehicleToOriginal = resetVehicleToOriginal
@@ -1486,6 +1585,9 @@ M.clearPreviewVehicle = clearPreviewVehicle
 M.getAllRequiredParts = getAllRequiredParts
 M.addPartToCart = addPartToCart
 M.findRemovedParts = findRemovedParts
+M.onUIPlayStateChanged = onUIPlayStateChanged
+M.onUiChangedState = onUiChangedState
+M.onUIInitialised = onUIInitialised
 
 return M
 

@@ -2,6 +2,7 @@ import { computed, ref, watch } from "vue"
 import { defineStore } from "pinia"
 import { lua } from "@/bridge"
 import { useBridge } from "@/bridge"
+import { normalizeId } from "../utils/businessUtils"
 
 export const useBusinessComputerStore = defineStore("businessComputer", () => {
   const bridge = useBridge()
@@ -23,6 +24,8 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   const partsTreeCache = ref({})
   const isMenuActive = ref(false)
 
+  let menuCloseInProgress = false
+
   const cartTabs = ref([{ id: 'default', name: 'Build 1', parts: [], tuning: [], cartHash: null }])
   const activeTabId = ref('default')
   const originalVehicleState = ref(null)
@@ -39,19 +42,10 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   const businessType = computed(() => businessData.value.businessType)
   const businessName = computed(() => businessData.value.businessName || "Business")
   const playerInZone = computed(() => businessData.value.playerInZone !== false)
-  const normalizeVehicleIdValue = (id) => {
-    if (id === undefined || id === null) return null
-    const numeric = Number(id)
-    return Number.isNaN(numeric) ? String(id) : numeric
-  }
-  const normalizeJobIdValue = (jobId) => {
-    if (jobId === undefined || jobId === null) {
-      return 'nojob'
-    }
-    return String(jobId)
-  }
+
   const clearCachesForJob = (jobId) => {
-    const key = normalizeJobIdValue(jobId)
+    const normalized = normalizeId(jobId)
+    const key = normalized !== null ? String(normalized) : 'nojob'
     if (partsTreeCache.value[key]) {
       delete partsTreeCache.value[key]
     }
@@ -61,7 +55,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   }
   const getBusinessVehicleById = (vehicleId) => {
     const list = vehicles.value || []
-    return list.find(vehicle => normalizeVehicleIdValue(vehicle?.vehicleId) === vehicleId) || null
+    return list.find(vehicle => normalizeId(vehicle?.vehicleId) === vehicleId) || null
   }
   const damageLockInfo = computed(() => {
     const vehicle = pulledOutVehicle.value
@@ -185,10 +179,10 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
       nextActiveId = vehiclesFromData[0]?.vehicleId ?? data?.pulledOutVehicle?.vehicleId ?? null
     }
     activeVehicleId.value = nextActiveId ?? null
-    const normalizedActiveId = normalizeVehicleIdValue(nextActiveId)
+    const normalizedActiveId = normalizeId(nextActiveId)
     let activeEntry = null
     if (normalizedActiveId !== null) {
-      activeEntry = vehiclesFromData.find(vehicle => normalizeVehicleIdValue(vehicle?.vehicleId) === normalizedActiveId) || null
+      activeEntry = vehiclesFromData.find(vehicle => normalizeId(vehicle?.vehicleId) === normalizedActiveId) || null
     }
     if (!activeEntry && data?.pulledOutVehicle) {
       activeEntry = data.pulledOutVehicle
@@ -210,6 +204,13 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
       pulledOutVehicle: activeEntry,
       pulledOutVehicles: vehiclesFromData,
       techs: processedTechs
+    }
+    // Preserve existing parts if new data doesn't include them or has empty parts
+    const hasValidParts = payload.parts && Array.isArray(payload.parts) && payload.parts.length > 0
+    const hasExistingParts = businessData.value?.parts && Array.isArray(businessData.value.parts) && businessData.value.parts.length > 0
+    
+    if (!hasValidParts && hasExistingParts) {
+      payload.parts = businessData.value.parts
     }
     businessData.value = payload
     if (payload.tabs) {
@@ -318,15 +319,28 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
     }
     isMenuActive.value = true
     try {
-      const data = await lua.career_modules_business_businessComputer.getBusinessComputerUIData(businessType, businessId)
+      let data
+      if (businessType === 'tuningShop') {
+        data = await lua.career_modules_business_tuningShop.getUIData(businessId)
+      } else {
+        data = await lua.career_modules_business_businessComputer.getBusinessComputerUIData(businessType, businessId)
+      }
       setBusinessData(data)
     } catch (error) {
     }
   }
 
+  const getLuaModule = () => {
+    if (businessType.value === 'tuningShop') {
+      return lua.career_modules_business_tuningShop
+    }
+    return lua.career_modules_business_businessComputer
+  }
+
   const acceptJob = async (jobId) => {
     if (!businessId.value) return false
     try {
+      // Always use businessComputer for job actions - it triggers UI events
       const success = await lua.career_modules_business_businessComputer.acceptJob(businessId.value, jobId)
       return success
     } catch (error) {
@@ -337,7 +351,12 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   const assignTechToJob = async (techId, jobId) => {
     if (!businessId.value) return false
     try {
-      const success = await lua.career_modules_business_businessComputer.assignTechToJob(businessId.value, techId, jobId)
+      let success
+      if (businessType.value === 'tuningShop') {
+        success = await lua.career_modules_business_tuningShop.assignJobToTech(businessId.value, techId, jobId)
+      } else {
+        success = await lua.career_modules_business_businessComputer.assignTechToJob(businessId.value, techId, jobId)
+      }
       return success
     } catch (error) {
       return false
@@ -347,6 +366,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   const declineJob = async (jobId) => {
     if (!businessId.value) return false
     try {
+      // Always use businessComputer for job actions - it triggers UI events
       const success = await lua.career_modules_business_businessComputer.declineJob(businessId.value, jobId)
       return success
     } catch (error) {
@@ -357,6 +377,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   const abandonJob = async (jobId) => {
     if (!businessId.value) return false
     try {
+      // Always use businessComputer for job actions - it triggers UI events
       const success = await lua.career_modules_business_businessComputer.abandonJob(businessId.value, jobId)
       return success
     } catch (error) {
@@ -367,6 +388,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   const completeJob = async (jobId) => {
     if (!businessId.value) return false
     try {
+      // Always use businessComputer for job actions - it triggers UI events
       const success = await lua.career_modules_business_businessComputer.completeJob(businessId.value, jobId)
       return success
     } catch (error) {
@@ -377,7 +399,12 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   const renameTech = async (techId, newName) => {
     if (!businessId.value) return false
     try {
-      const success = await lua.career_modules_business_businessComputer.renameTech(businessId.value, techId, newName ?? "")
+      let success
+      if (businessType.value === 'tuningShop') {
+        success = await lua.career_modules_business_tuningShop.updateTechName(businessId.value, techId, newName ?? "")
+      } else {
+        success = await lua.career_modules_business_businessComputer.renameTech(businessId.value, techId, newName ?? "")
+      }
       return success
     } catch (error) {
       return false
@@ -393,6 +420,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
       return false
     }
     try {
+      // Always use businessComputer for vehicle operations - it triggers UI events
       const success = normalizeLuaResult(await lua.career_modules_business_businessComputer.pullOutVehicle(businessId.value, vehicleId))
       return !!success
     } catch (error) {
@@ -405,7 +433,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
       return false
     }
     try {
-      const result = await lua.career_modules_business_businessComputer.selectPersonalVehicle(businessId.value, inventoryId)
+      const result = await getLuaModule().selectPersonalVehicle(businessId.value, inventoryId)
       if (result && result.success) {
         return true
       }
@@ -426,9 +454,10 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
     }
     try {
       const targetVehicleId = vehicleId ?? pulledOutVehicle.value?.vehicleId ?? null
-      const normalizedTargetId = normalizeVehicleIdValue(targetVehicleId)
+      const normalizedTargetId = normalizeId(targetVehicleId)
       const targetVehicleEntry = normalizedTargetId ? getBusinessVehicleById(normalizedTargetId) : null
       const targetJobId = targetVehicleEntry?.jobId
+      // Always use businessComputer for vehicle operations - it triggers UI events
       const success = normalizeLuaResult(await lua.career_modules_business_businessComputer.putAwayVehicle(businessId.value, targetVehicleId))
       if (success) {
         clearCachesForJob(targetJobId)
@@ -436,7 +465,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
           lua.career_modules_business_businessComputer.clearVehicleDataCaches()
         } catch (error) {
         }
-        if (!vehicleId || normalizeVehicleIdValue(vehicleId) === normalizeVehicleIdValue(pulledOutVehicle.value?.vehicleId)) {
+        if (!vehicleId || normalizeId(vehicleId) === normalizeId(pulledOutVehicle.value?.vehicleId)) {
           pulledOutVehicle.value = null
           activeVehicleId.value = null
         }
@@ -451,14 +480,15 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
     if (!businessId.value || vehicleId === undefined || vehicleId === null) {
       return false
     }
-    const normalizedTarget = normalizeVehicleIdValue(vehicleId)
-    if (normalizeVehicleIdValue(activeVehicleId.value) === normalizedTarget) {
+    const normalizedTarget = normalizeId(vehicleId)
+    if (normalizeId(activeVehicleId.value) === normalizedTarget) {
       return true
     }
 
     const previousVehicleId = activeVehicleId.value
 
     try {
+      // Always use businessComputer for vehicle operations - it triggers UI events
       const success = normalizeLuaResult(await lua.career_modules_business_businessComputer.setActiveVehicle(businessId.value, vehicleId))
       if (success) {
         if (previousVehicleId && businessId.value && previousVehicleId !== normalizedTarget) {
@@ -483,7 +513,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
 
         activeVehicleId.value = vehicleId
         const vehiclesList = Array.isArray(pulledOutVehicles.value) ? pulledOutVehicles.value : []
-        let selectedVehicle = vehiclesList.find(vehicle => normalizeVehicleIdValue(vehicle?.vehicleId) === normalizedTarget) || null
+        let selectedVehicle = vehiclesList.find(vehicle => normalizeId(vehicle?.vehicleId) === normalizedTarget) || null
         const requiresRefresh = !selectedVehicle || selectedVehicle.jobId === undefined || selectedVehicle.jobId === null
         pulledOutVehicle.value = selectedVehicle
         businessData.value = {
@@ -495,7 +525,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
           try {
             await loadBusinessData(businessType.value, businessId.value)
             const refreshedList = Array.isArray(pulledOutVehicles.value) ? pulledOutVehicles.value : []
-            selectedVehicle = refreshedList.find(vehicle => normalizeVehicleIdValue(vehicle?.vehicleId) === normalizedTarget) || null
+            selectedVehicle = refreshedList.find(vehicle => normalizeId(vehicle?.vehicleId) === normalizedTarget) || null
             pulledOutVehicle.value = selectedVehicle
           } catch (error) {
           }
@@ -598,6 +628,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
             }
           }
           await requestVehicleTuningData(pulledOutVehicle.value.vehicleId)
+          await updatePowerWeight()
         }
       }, 600)
     }
@@ -629,14 +660,40 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   }
 
   const onMenuClosed = () => {
+    const closingBusinessId = businessId.value
+    const closingVehicleId = pulledOutVehicle.value?.vehicleId ?? null
+    const closingVehicleView = vehicleView.value
+
+    if (!menuCloseInProgress && closingBusinessId && (closingVehicleView === 'parts' || closingVehicleView === 'tuning') && closingVehicleId) {
+      menuCloseInProgress = true
+      try {
+        const p = lua.career_modules_business_businessComputer.resetVehicleToOriginal(closingBusinessId, closingVehicleId)
+        if (p && typeof p.finally === 'function') {
+          p.finally(() => { menuCloseInProgress = false })
+        } else {
+          menuCloseInProgress = false
+        }
+      } catch (error) {
+        menuCloseInProgress = false
+      }
+
+      try {
+        const p2 = lua.career_modules_business_businessPartCustomization.clearPreviewVehicle(closingBusinessId)
+        if (p2 && typeof p2.catch === 'function') {
+          p2.catch(() => {})
+        }
+      } catch (error) {
+      }
+    }
+
     isMenuActive.value = false
     clearCart()
     partsTreeCache.value = {}
     tuningDataCache.value = {}
 
-    if (businessId.value) {
+    if (closingBusinessId) {
       try {
-        lua.career_modules_business_businessPartCustomization.clearPreviewVehicle(businessId.value)
+        lua.career_modules_business_businessPartCustomization.clearPreviewVehicle(closingBusinessId)
       } catch (error) {
       }
     }
@@ -1066,7 +1123,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
     }
 
     try {
-      const jobsData = await lua.career_modules_business_businessComputer.getJobsOnly(currentBusinessId)
+      const jobsData = await getLuaModule().getJobsOnly(currentBusinessId)
       if (jobsData) {
         businessData.value = {
           ...businessData.value,
@@ -1104,7 +1161,6 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   }
 
   const handlePartInventoryData = (data) => {
-    if (!isMenuActive.value) return
     const currentBusinessId = businessId.value
     if (!currentBusinessId) return
 
@@ -1221,7 +1277,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
     pulledOutVehicles.value = vehiclesFromData
     if (data.vehicleId) {
       activeVehicleId.value = data.vehicleId
-      pulledOutVehicle.value = vehiclesFromData.find(v => normalizeVehicleIdValue(v?.vehicleId) === normalizeVehicleIdValue(data.vehicleId)) || null
+      pulledOutVehicle.value = vehiclesFromData.find(v => normalizeId(v?.vehicleId) === normalizeId(data.vehicleId)) || null
     }
     businessData.value = {
       ...businessData.value,
@@ -1239,7 +1295,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
     if (vehiclesFromData.length === 0) {
       pulledOutVehicle.value = null
       activeVehicleId.value = null
-    } else if (data.vehicleId && normalizeVehicleIdValue(pulledOutVehicle.value?.vehicleId) === normalizeVehicleIdValue(data.vehicleId)) {
+    } else if (data.vehicleId && normalizeId(pulledOutVehicle.value?.vehicleId) === normalizeId(data.vehicleId)) {
       pulledOutVehicle.value = vehiclesFromData[0] || null
       activeVehicleId.value = pulledOutVehicle.value?.vehicleId || null
     }
@@ -1273,14 +1329,18 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
     }
 
     const partToAdd = {
-      partName: part.name,
-      partNiceName: part.niceName,
+      partName: part.name || part.partName,
+      partNiceName: part.niceName || part.partNiceName,
       slotPath: slot.path,
       slotNiceName: slot.slotNiceName || slot.slotName,
-      price: part.value || 0
+      price: part.value || 0,
+      fromInventory: part.fromInventory || false,
+      partId: part.partId || null,
+      partCondition: part.partCondition || null
     }
 
     try {
+      // Always use businessComputer for cart operations - tuningShop doesn't have these functions
       const tempCart = await lua.career_modules_business_businessComputer.addPartToCart(
         businessId.value,
         pulledOutVehicle.value.vehicleId,
@@ -1347,6 +1407,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
 
     if (businessId.value && pulledOutVehicle.value?.vehicleId) {
       try {
+        // Always use businessComputer for cart operations
         await lua.career_modules_business_businessComputer.applyCartPartsToVehicle(
           businessId.value,
           pulledOutVehicle.value.vehicleId,
@@ -1425,6 +1486,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
 
       if (businessId.value && pulledOutVehicle.value?.vehicleId) {
         try {
+          // Always use businessComputer for cart operations
           await lua.career_modules_business_businessComputer.applyCartPartsToVehicle(
             businessId.value,
             pulledOutVehicle.value.vehicleId,
@@ -1514,6 +1576,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
               saveCurrentTabState()
               currentAppliedCartHash.value = generateCartHash(partsCart.value, tuningCart.value)
 
+              // Always use businessComputer for cart operations
               await lua.career_modules_business_businessComputer.applyCartPartsToVehicle(
                 businessId.value,
                 pulledOutVehicle.value.vehicleId,
@@ -1584,6 +1647,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
     }
 
     try {
+      // Always use businessComputer for cart operations - tuningShop doesn't have these functions
       const cartItems = await lua.career_modules_business_businessComputer.addTuningToCart(
         businessId.value,
         pulledOutVehicle.value.vehicleId,
@@ -1679,6 +1743,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
       } catch (error) {
       }
     }
+    await updatePowerWeight()
   }
 
   const updatePowerWeight = async () => {
@@ -1882,10 +1947,15 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   const getBrandSelection = async () => {
     if (!businessId.value) return null
     try {
-      const selection = await lua.career_modules_business_businessComputer.getBrandSelection(businessId.value)
-      brandSelection.value = selection || null
+      const selection = await getLuaModule().getBrandSelection(businessId.value)
+      if (selection === "" || selection === null || selection === undefined) {
+        brandSelection.value = null
+      } else {
+        brandSelection.value = selection
+      }
       return selection
     } catch (error) {
+      brandSelection.value = null
       return null
     }
   }
@@ -1893,7 +1963,8 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   const setBrandSelection = async (brand) => {
     if (!businessId.value) return false
     try {
-      const success = await lua.career_modules_business_businessComputer.setBrandSelection(businessId.value, brand || null)
+      const value = brand === null || brand === undefined ? "" : brand
+      const success = await getLuaModule().setBrandSelection(businessId.value, value)
       if (success) {
         brandSelection.value = brand || null
       }
@@ -1906,10 +1977,18 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   const getRaceSelection = async () => {
     if (!businessId.value) return null
     try {
-      const selection = await lua.career_modules_business_businessComputer.getRaceSelection(businessId.value)
-      raceSelection.value = selection || null
+      const selection = await getLuaModule().getRaceSelection(businessId.value)
+      if (selection === "" || selection === null || selection === undefined) {
+        raceSelection.value = null
+      } else {
+        raceSelection.value = selection
+        if (availableRaceTypes.value.length === 0) {
+          getAvailableRaceTypes()
+        }
+      }
       return selection
     } catch (error) {
+      raceSelection.value = null
       return null
     }
   }
@@ -1917,7 +1996,8 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   const setRaceSelection = async (raceType) => {
     if (!businessId.value) return false
     try {
-      const success = await lua.career_modules_business_businessComputer.setRaceSelection(businessId.value, raceType || null)
+      const value = raceType === null || raceType === undefined ? "" : raceType
+      const success = await getLuaModule().setRaceSelection(businessId.value, value)
       if (success) {
         raceSelection.value = raceType || null
       }
@@ -1929,14 +2009,15 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
 
   const getAvailableBrands = () => {
     try {
-      lua.career_modules_business_businessComputer.requestAvailableBrands()
+      getLuaModule().requestAvailableBrands()
     } catch (error) {
     }
   }
 
   const getAvailableRaceTypes = () => {
+    if (!businessId.value) return
     try {
-      lua.career_modules_business_businessComputer.requestAvailableRaceTypes()
+      lua.career_modules_business_businessComputer.requestAvailableRaceTypes(businessId.value)
     } catch (error) {
     }
   }
@@ -1953,6 +2034,28 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
       await getAvailableRaceTypes()
     }
   }, { immediate: true })
+
+  watch(raceRecognitionUnlocked, async (unlocked) => {
+    if (unlocked && businessId.value) {
+      await getRaceSelection()
+      await getAvailableRaceTypes()
+    }
+  })
+
+  watch(brandRecognitionUnlocked, async (unlocked) => {
+    if (unlocked && businessId.value) {
+      await getBrandSelection()
+      await getAvailableBrands()
+    }
+  })
+
+  bridge.events.on("businessComputer:onAvailableRaceTypesReceived", (data) => {
+    if (data && Array.isArray(data.raceTypes)) {
+      availableRaceTypes.value = data.raceTypes
+    } else {
+      availableRaceTypes.value = []
+    }
+  })
 
   bridge.events.on("businessComputer:onKitsUpdated", (data) => {
     if (!isMenuActive.value) return

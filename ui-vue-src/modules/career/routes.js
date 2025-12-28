@@ -6,6 +6,7 @@ import CargoOverview from "./views/CargoOverviewMain.vue"
 import CargoDropOff from "./views/CargoDropOff.vue"
 import Computer from "./views/ComputerMain.vue"
 import Insurances from "./views/InsurancesMain.vue"
+import DriverAbstract from "./views/DriverAbstract.vue"
 import Logbook from "./views/Logbook.vue"
 import Milestones from "./views/Milestones.vue"
 import MyCargo from "./views/MyCargo.vue"
@@ -21,6 +22,8 @@ import VehicleInventory from "./views/VehicleInventoryMain.vue"
 import VehiclePurchase from "./views/VehiclePurchaseMain.vue"
 import VehicleShopping from "./views/VehicleShoppingMain.vue"
 import VehiclePerformance from "./views/VehiclePerformanceMain.vue"
+import ChooseInsurance from "./views/ChooseInsuranceMain.vue"
+import Negotiation from "./views/VehicleNegotiationMain.vue"
 import Sleep from "./views/SleepMenu.vue"
 import Loans from "./views/LoanMenu.vue"
 import RoleAssignment from "./views/RoleAssignment.vue"
@@ -40,10 +43,10 @@ import PhoneBank from "./views/PhoneBank.vue"
 import PhoneBankAccount from "./views/PhoneBankAccount.vue"
 import PhoneBankRename from "./views/PhoneBankRename.vue"
 import PhoneTuningShop from "./views/PhoneTuningShop.vue"
+import PhoneQuarry from "./views/PhoneQuarry.vue"
 import LevelSwitch from "./views/LevelSwitch.vue"
 import ChallengeComplete from "./views/ChallengeComplete.vue"
 import BusinessComputerMain from "./views/BusinessComputerMain.vue"
-
 export default [
   // Career Pause
   {
@@ -69,6 +72,12 @@ export default [
   {
     path: "/career",
     children: [
+      // Choose Insurance
+      {
+        path: "chooseInsurance",
+        name: "chooseInsurance",
+        component: ChooseInsurance,
+      },
 
       // Career Pause (WIP with middle panel)
       {
@@ -126,7 +135,7 @@ export default [
 
       // Vehicle Certification
       {
-        path: "vehiclePerformance/:inventoryId?/:computerId?/:backUIState?/:testInProgress?",
+        path: "vehiclePerformance/:inventoryId?",
         name: "vehiclePerformance",
         component: VehiclePerformance,
         props: true,
@@ -180,11 +189,23 @@ export default [
         name: "vehiclePurchase",
         component: VehiclePurchase,
         props: true,
+        meta: {
+          uiApps: {
+            shown: false,
+          },
+        },
+      },
+
+      // Negotiation
+      {
+        path: "negotiation",
+        name: "negotiation",
+        component: Negotiation,
       },
 
       // Vehicle Shopping
       {
-        path: "vehicleShopping/:screenTag?/:buyingAvailable?/:marketplaceAvailable?",
+        path: "vehicleShopping/:screenTag?/:buyingAvailable?/:marketplaceAvailable?/:selectedSellerId?",
         name: "vehicleShopping",
         component: VehicleShopping,
         props: true,
@@ -201,6 +222,13 @@ export default [
         path: "insurances",
         name: "insurances",
         component: Insurances,
+      },
+
+      // Driver's Abstract
+      {
+        path: "playerAbstract",
+        name: "playerAbstract",
+        component: DriverAbstract,
       },
 
       // Delivery Reward
@@ -277,7 +305,6 @@ export default [
           },
         },
       },
-
       // Profiles
       {
         path: "profiles",
@@ -411,6 +438,12 @@ export default [
         path: "phone-tuning-shop",
         name: "phone-tuning-shop",
         component: PhoneTuningShop
+      },
+
+      {
+        path: "phone-quarry",
+        name: "phone-quarry",
+        component: PhoneQuarry
       },
 
       {

@@ -20,7 +20,7 @@
 
         <div class="job-meta-row">
           <div class="reward-text">
-            <span class="currency">$</span>{{ job.reward.toLocaleString() }}
+            {{ formatCurrency(job.reward) }}
           </div>
           <div class="separator">•</div>
           <div class="goal-text">
@@ -46,8 +46,7 @@
           <div v-else class="goal-section-sleek">
             <div class="goal-row current">
               <span class="goal-label">Current</span>
-              <span class="goal-value highlight">{{ formatTimeWithUnit(job.currentTime ?? job.baselineTime,
-                job.timeUnit, job.decimalPlaces) }}</span>
+              <span class="goal-value highlight">{{ formatTime(job.currentTime ?? job.baselineTime, job.decimalPlaces) }}</span>
             </div>
             <div class="progress-bar-sleek">
               <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
@@ -68,7 +67,7 @@
                     </svg>
                     <span>Installing {{ kitInstallKitName }}</span>
                   </div>
-                  <div class="kit-install-time">{{ formatKitInstallTime(kitInstallSecondsRemaining) }} remaining</div>
+                  <div class="kit-install-time">{{ formatTime(kitInstallSecondsRemaining) }} remaining</div>
                 </div>
               </template>
               <template v-else-if="!hasTechAssigned">
@@ -148,7 +147,7 @@
             {{ job.vehicleYear }} {{ job.vehicleName }}
           </h3>
           <div class="reward-text-sleek">
-            <span class="currency">$</span>{{ job.reward.toLocaleString() }}
+            {{ formatCurrency(job.reward) }}
           </div>
         </div>
       </div>
@@ -174,8 +173,7 @@
             </div>
             <div class="goal-row current">
               <span class="goal-label">Current</span>
-              <span class="goal-value highlight">{{ formatTimeWithUnit(job.currentTime ?? job.baselineTime,
-                job.timeUnit, job.decimalPlaces) }}</span>
+              <span class="goal-value highlight">{{ formatTime(job.currentTime ?? job.baselineTime, job.decimalPlaces) }}</span>
             </div>
             <div class="progress-bar-sleek">
               <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
@@ -209,7 +207,7 @@
                 </svg>
                 <span>Installing {{ kitInstallKitName }}</span>
               </div>
-              <div class="kit-install-time">{{ formatKitInstallTime(kitInstallSecondsRemaining) }} remaining</div>
+              <div class="kit-install-time">{{ formatTime(kitInstallSecondsRemaining) }} remaining</div>
             </div>
           </template>
           <template v-else-if="!hasTechAssigned">
@@ -268,6 +266,7 @@
 import { computed, ref, onMounted, onUnmounted, watch } from "vue"
 import { useBusinessComputerStore } from "../../stores/businessComputerStore"
 import { lua } from "@/bridge"
+import { formatCurrency, formatTime, formatPhase, normalizeId } from "../../utils/businessUtils"
 
 const props = defineProps({
   job: Object,
@@ -287,13 +286,8 @@ const props = defineProps({
 const emit = defineEmits(['pull-out', 'put-away', 'abandon', 'accept', 'decline', 'complete', 'assign'])
 
 const store = useBusinessComputerStore()
-const normalizeJobId = (value) => {
-  if (value === undefined || value === null) {
-    return null
-  }
-  return String(value)
-}
-const jobIdentifier = computed(() => normalizeJobId(props.job?.jobId ?? props.job?.id))
+
+const jobIdentifier = computed(() => normalizeId(props.job?.jobId ?? props.job?.id))
 const techAssigned = computed(() => {
   if (!props.job?.techAssigned) return null
   return props.job.techAssigned
@@ -303,7 +297,7 @@ const assignedTech = computed(() => {
   const techs = store.techs || []
   const tech = techs.find(t => String(t.id) === String(techAssigned.value)) || null
   if (!tech) return null
-  const techJobId = normalizeJobId(tech.jobId)
+  const techJobId = normalizeId(tech.jobId)
   if (techJobId !== jobIdentifier.value) return null
   return tech
 })
@@ -318,30 +312,19 @@ const techProgress = computed(() => {
 })
 const techStatus = computed(() => {
   if (!assignedTech.value) return null
-  const phaseMap = {
-    baseline: "Baseline Run",
-    validation: "Validation Run",
-    postUpdate: "Verification",
-    completed: "Completed",
-    failed: "Failed",
-    idle: "Idle",
-    build: "Building",
-    update: "Tuning",
-    cooldown: "Cooling Down"
-  }
-  return assignedTech.value.label || phaseMap[assignedTech.value.phase] || assignedTech.value.action || "Working"
+  return formatPhase(assignedTech.value, false)
 })
 const pulledOutVehicleForJob = computed(() => {
   if (!Array.isArray(store.pulledOutVehicles)) {
     return null
   }
-  return store.pulledOutVehicles.find(vehicle => normalizeJobId(vehicle?.jobId) === jobIdentifier.value) || null
+  return store.pulledOutVehicles.find(vehicle => normalizeId(vehicle?.jobId) === jobIdentifier.value) || null
 })
 const vehicleForJob = computed(() => {
   if (!Array.isArray(store.vehicles)) {
     return null
   }
-  return store.vehicles.find(vehicle => normalizeJobId(vehicle?.jobId) === jobIdentifier.value) || null
+  return store.vehicles.find(vehicle => normalizeId(vehicle?.jobId) === jobIdentifier.value) || null
 })
 const damageLockApplies = computed(() => {
   if (!pulledOutVehicleForJob.value) {
@@ -444,48 +427,6 @@ const hasPulledOutVehicle = computed(() => {
   return liftsFull.value && !isPulledOut.value
 })
 
-const formatTime = (time, decimalPlaces) => {
-  if (typeof time !== 'number' || isNaN(time)) {
-    return time || '0'
-  }
-
-  if (time >= 60) {
-    const minutes = Math.floor(time / 60)
-    const seconds = Math.round(time % 60)
-    if (seconds >= 1) {
-      return `${minutes} min ${seconds} s`
-    } else {
-      return `${minutes} min`
-    }
-  }
-
-  const decimals = decimalPlaces || 0
-  if (decimals > 0) {
-    return time.toFixed(decimals) + ' s'
-  }
-
-  return Math.round(time) + ' s'
-}
-
-const formatTimeWithUnit = (time, timeUnit, decimalPlaces) => {
-  if (typeof time !== 'number' || isNaN(time)) {
-    return (time || '0') + (timeUnit || '')
-  }
-  const formatted = formatTime(time, decimalPlaces)
-  return formatted
-}
-
-const formatKitInstallTime = (seconds) => {
-  if (!seconds || seconds <= 0) return '0s'
-  const numSeconds = Number(seconds)
-  if (isNaN(numSeconds)) return '0s'
-  if (numSeconds < 60) return `${Math.round(numSeconds)}s`
-  const minutes = Math.floor(numSeconds / 60)
-  const remainingSeconds = Math.round(numSeconds % 60)
-  if (remainingSeconds === 0) return `${minutes}m`
-  return `${minutes}m ${remainingSeconds}s`
-}
-
 const stopCountdown = () => {
   if (countdownTimer.value) {
     clearInterval(countdownTimer.value)
@@ -558,7 +499,13 @@ const checkCanComplete = async () => {
   }
 
   try {
-    const result = await lua.career_modules_business_businessComputer.canCompleteJob(props.businessId, props.job.jobId)
+    let result
+    if (store.businessType === 'tuningShop') {
+      const response = await lua.career_modules_business_tuningShop.canCompleteJob(props.businessId, props.job.jobId)
+      result = response && response.success === true
+    } else {
+      result = await lua.career_modules_business_businessComputer.canCompleteJob(props.businessId, props.job.jobId)
+    }
     canComplete.value = result === true
   } catch (error) {
     canComplete.value = false
@@ -619,8 +566,8 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
 .job-card {
   background: rgba(23, 23, 23, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 0.5rem;
-  padding: 0.75rem;
+  border-radius: 0.5em;
+  padding: 0.75em;
   transition: border-color 0.2s;
 
   &:hover {
@@ -630,16 +577,16 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
 
 /* Common/Shared Styles */
 .btn {
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.375rem;
-  font-size: 0.875rem;
+  padding: 0.5em 0.75em;
+  border-radius: 0.375em;
+  font-size: 0.875em;
   font-weight: 500;
   cursor: pointer;
   border: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
+  gap: 0.5em;
   transition: all 0.2s;
 
   &.flex-grow {
@@ -651,8 +598,8 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
   }
 
   &.btn-icon {
-    padding: 0.5rem;
-    width: 2.25rem;
+    padding: 0.5em;
+    width: 2.25em;
     /* fixed width for icon buttons */
     flex-shrink: 0;
   }
@@ -699,14 +646,14 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
 .job-content-new {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.75em;
 }
 
 .job-image-new {
   position: relative;
   width: 100%;
   aspect-ratio: 16/9;
-  border-radius: 0.375rem;
+  border-radius: 0.375em;
   overflow: hidden;
   background: rgba(0, 0, 0, 0.5);
 
@@ -720,18 +667,18 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
 
 .expiration-overlay {
   position: absolute;
-  bottom: 0.5rem;
-  right: 0.5rem;
+  bottom: 0.5em;
+  right: 0.5em;
   background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(4px);
   color: rgba(255, 255, 255, 0.9);
-  padding: 0.25rem 0.5rem;
-  border-radius: 0.25rem;
-  font-size: 0.75rem;
+  padding: 0.25em 0.5em;
+  border-radius: 0.25em;
+  font-size: 0.75em;
   font-weight: 500;
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.35em;
 
   &.expired {
     background: rgba(239, 68, 68, 0.9);
@@ -746,13 +693,13 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
 .job-details-container {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.5em;
 }
 
 .vehicle-name-new {
   margin: 0;
   color: white;
-  font-size: 1rem;
+  font-size: 1em;
   font-weight: 600;
   line-height: 1.3;
   white-space: nowrap;
@@ -763,8 +710,8 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
 .job-meta-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.875rem;
+  gap: 0.5em;
+  font-size: 0.875em;
 }
 
 .separator {
@@ -788,7 +735,7 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
   color: rgba(245, 73, 0, 1);
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.35em;
   font-weight: 500;
 
   svg {
@@ -798,8 +745,8 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
 
 .job-actions-new {
   display: flex;
-  gap: 0.5rem;
-  margin-top: 0.25rem;
+  gap: 0.5em;
+  margin-top: 0.25em;
   flex-direction: row;
 }
 
@@ -807,20 +754,20 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
 .job-content-active.sleek {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.75em;
 }
 
 .job-header-sleek {
   display: flex;
-  gap: 0.75rem;
+  gap: 0.75em;
   align-items: center;
 }
 
 .job-image-sleek {
-  width: 4rem;
+  width: 4em;
   /* Compact thumbnail size */
-  height: 4rem;
-  border-radius: 0.375rem;
+  height: 4em;
+  border-radius: 0.375em;
   overflow: hidden;
   background: rgba(0, 0, 0, 0.5);
   flex-shrink: 0;
@@ -838,13 +785,13 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 0.25rem;
+  gap: 0.25em;
 }
 
 .vehicle-name-sleek {
   margin: 0;
   color: white;
-  font-size: 0.95rem;
+  font-size: 0.95em;
   font-weight: 600;
   line-height: 1.2;
   overflow: hidden;
@@ -857,18 +804,18 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
 .reward-text-sleek {
   color: #22c55e;
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 0.9em;
 }
 
 /* Tech Status Sleek */
 .tech-status-sleek {
   background: rgba(245, 73, 0, 0.15);
   border: 1px solid rgba(245, 73, 0, 0.25);
-  border-radius: 0.375rem;
-  padding: 0.5rem 0.75rem;
+  border-radius: 0.375em;
+  padding: 0.5em 0.75em;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.35em;
 }
 
 .tech-info-row {
@@ -879,7 +826,7 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
 
 .tech-phase {
   color: #f97316;
-  font-size: 0.8rem;
+  font-size: 0.8em;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -887,7 +834,7 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
 
 .tech-name-small {
   color: rgba(255, 255, 255, 0.5);
-  font-size: 0.75rem;
+  font-size: 0.75em;
 }
 
 .tech-progress-bar {
@@ -907,23 +854,23 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
 .goal-section-sleek {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 0.375rem;
-  padding: 0.5rem 0.75rem;
+  border-radius: 0.375em;
+  padding: 0.5em 0.75em;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.35em;
 }
 
 .goal-row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  font-size: 0.8rem;
+  font-size: 0.8em;
 
   .goal-label {
     color: rgba(255, 255, 255, 0.5);
     text-transform: uppercase;
-    font-size: 0.7rem;
+    font-size: 0.7em;
   }
 
   .goal-value {
@@ -942,7 +889,7 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
   background: rgba(255, 255, 255, 0.1);
   border-radius: 1.5px;
   overflow: hidden;
-  margin-top: 0.15rem;
+  margin-top: 0.15em;
 
   .progress-fill {
     height: 100%;
@@ -952,7 +899,7 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
 
 .job-actions-sleek {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.5em;
   margin-top: auto;
 
   &.full-layout-actions {
@@ -962,10 +909,10 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
 
 .lock-message {
   color: #ef4444;
-  font-size: 0.8rem;
+  font-size: 0.8em;
   font-weight: 600;
   text-align: center;
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.25em;
   width: 100%;
 }
 
@@ -973,22 +920,22 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.25em;
 }
 
 .kit-install-message {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
+  gap: 0.5em;
   color: #3b82f6;
-  font-size: 0.8rem;
+  font-size: 0.8em;
   font-weight: 600;
   text-align: center;
   width: 100%;
-  padding: 0.5rem;
+  padding: 0.5em;
   background: rgba(59, 130, 246, 0.1);
-  border-radius: 0.375rem;
+  border-radius: 0.375em;
   border: 1px solid rgba(59, 130, 246, 0.3);
 
   svg {
@@ -998,7 +945,7 @@ watch(() => [vehicleForJob.value?.kitInstallTimeRemaining, pulledOutVehicleForJo
 
 .kit-install-time {
   color: rgba(59, 130, 246, 0.8);
-  font-size: 0.75rem;
+  font-size: 0.75em;
   text-align: center;
   width: 100%;
 }

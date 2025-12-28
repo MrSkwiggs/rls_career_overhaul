@@ -20,7 +20,8 @@
         ]
       ],
       "functions":{
-        "insurancePolicies":true,
+        "insurances":true,
+        "playerAbstract":true,
         "painting":true,
         "partInventory":true,
         "partShop":true,
@@ -85,7 +86,8 @@
         ]
       ],
       "functions":{
-        "insurancePolicies":true,
+        "insurances":true,
+        "playerAbstract":true,
         "painting":true,
         "partInventory":true,
         "partShop":true,
@@ -122,7 +124,8 @@
         ]
       ],
       "functions":{
-        "insurancePolicies":true,
+        "insurances":true,
+        "playerAbstract":true,
         "painting":true,
         "partInventory":true,
         "partShop":true,
@@ -156,7 +159,8 @@
         ]
       ],
       "functions":{
-        "insurancePolicies":true,
+        "insurances":true,
+        "playerAbstract":true,
         "painting":true,
         "partInventory":true,
         "partShop":true,
@@ -193,7 +197,8 @@
         ]
       ],
       "functions":{
-        "insurancePolicies":true,
+        "insurances":true,
+        "playerAbstract":true,
         "painting":true,
         "partInventory":true,
         "partShop":true,
@@ -230,7 +235,8 @@
         ]
       ],
       "functions":{
-        "insurancePolicies":true,
+        "insurances":true,
+        "playerAbstract":true,
         "partInventory":true,
         "vehicleInventory":true
       },
@@ -262,7 +268,8 @@
         ]
       ],
       "functions":{
-        "insurancePolicies":true,
+        "insurances":true,
+        "playerAbstract":true,
         "partInventory":true,
         "tuning":true,
         "vehicleInventory":true
@@ -295,7 +302,8 @@
         ]
       ],
       "functions":{
-        "insurancePolicies":true,
+        "insurances":true,
+        "playerAbstract":true,
         "painting":true,
         "partInventory":true,
         "partShop":true,
@@ -332,7 +340,8 @@
         ]
       ],
       "functions":{
-        "insurancePolicies":true,
+        "insurances":true,
+        "playerAbstract":true,
         "painting":true,
         "partInventory":true,
         "partShop":true,
@@ -366,7 +375,7 @@
         ]
       ],
       "functions":{
-        "insurancePolicies":false,
+        "insurances":false,
         "painting":false,
         "partInventory":false,
         "partShop":false,
@@ -398,7 +407,8 @@
         ]
       ],
       "functions":{
-        "insurancePolicies":true,
+        "insurances":true,
+        "playerAbstract":true,
         "painting":true,
         "partInventory":true,
         "partShop":true,
@@ -430,7 +440,8 @@
         ]
       ],
       "functions":{
-        "insurancePolicies":true,
+        "insurances":true,
+        "playerAbstract":true,
         "painting":true,
         "partInventory":true,
         "partShop":true,
@@ -462,7 +473,8 @@
         ]
       ],
       "functions":{
-        "insurancePolicies":true,
+        "insurances":true,
+        "playerAbstract":true,
         "painting":true,
         "partInventory":true,
         "partShop":true,
@@ -494,7 +506,8 @@
         ]
       ],
       "functions":{
-        "insurancePolicies":true,
+        "insurances":true,
+        "playerAbstract":true,
         "partInventory":true,
         "sleep":true,
         "tuning":true,

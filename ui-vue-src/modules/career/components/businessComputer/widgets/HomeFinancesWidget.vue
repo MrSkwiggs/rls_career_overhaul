@@ -59,6 +59,7 @@
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useBusinessComputerStore } from "../../../stores/businessComputerStore"
 import { useBridge, lua } from '@/bridge'
+import { formatCurrency } from "../../../utils/businessUtils"
 
 const store = useBusinessComputerStore()
 const { events } = useBridge()
@@ -74,10 +75,14 @@ const requestFinancesData = async () => {
   
   loading.value = true
   try {
-    await lua.career_modules_business_businessComputer.requestFinancesData(
-      store.businessType,
-      store.businessId
-    )
+    if (store.businessType === 'tuningShop') {
+      await lua.career_modules_business_tuningShop.requestFinancesData(store.businessId)
+    } else {
+      await lua.career_modules_business_businessComputer.requestFinancesData(
+        store.businessType,
+        store.businessId
+      )
+    }
   } catch (error) {
     loading.value = false
   }
@@ -114,15 +119,6 @@ onUnmounted(() => {
   events.off('businessComputer:onFinancesData', handleFinancesData)
   events.off('bank:onAccountUpdate', handleAccountUpdate)
 })
-
-const formatCurrency = (amount) => {
-  if (amount === null || amount === undefined) return '$0'
-  const num = Math.abs(amount)
-  const sign = amount < 0 ? '-' : ''
-  if (num >= 1000000) return sign + '$' + (num / 1000000).toFixed(2) + 'M'
-  if (num >= 1000) return sign + '$' + (num / 1000).toFixed(1) + 'k'
-  return sign + '$' + Math.floor(num).toLocaleString()
-}
 
 // Chart Logic (Simplified)
 const chartWidth = 400
@@ -220,7 +216,7 @@ const chartLinePath = computed(() => {
 .home-widget {
   background: rgba(30, 30, 30, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 1rem;
+  border-radius: 1em;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -228,7 +224,7 @@ const chartLinePath = computed(() => {
 }
 
 .widget-header {
-  padding: 1rem 1.25rem;
+  padding: 1em 1.25em;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   display: flex;
   justify-content: space-between;
@@ -237,14 +233,14 @@ const chartLinePath = computed(() => {
 
   h3 {
     margin: 0;
-    font-size: 1.1rem;
+    font-size: 1.1em;
     font-weight: 600;
     color: #fff;
   }
 }
 
 .balance-badge {
-    font-size: 1rem;
+    font-size: 1em;
     font-weight: 600;
     color: #2ecc71;
     
@@ -260,7 +256,7 @@ const chartLinePath = computed(() => {
 }
 
 .loading-state {
-    padding: 2rem;
+    padding: 2em;
     text-align: center;
     color: rgba(255, 255, 255, 0.5);
 }
@@ -283,7 +279,7 @@ const chartLinePath = computed(() => {
 }
 
 .finance-summary {
-    padding: 0.75rem 1rem;
+    padding: 0.75em 1em;
     display: flex;
     justify-content: space-around;
     align-items: center;
@@ -295,7 +291,7 @@ const chartLinePath = computed(() => {
 
 .summary-divider {
     width: 1px;
-    height: 2rem;
+    height: 2em;
     background: rgba(255, 255, 255, 0.1);
 }
 
@@ -303,11 +299,11 @@ const chartLinePath = computed(() => {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.25rem;
+    gap: 0.25em;
     flex: 1;
     
     .label {
-        font-size: 0.7rem;
+        font-size: 0.7em;
         color: rgba(255, 255, 255, 0.5);
         text-transform: uppercase;
         letter-spacing: 0.05em;
@@ -315,7 +311,7 @@ const chartLinePath = computed(() => {
     }
     
     .value {
-        font-size: 0.9rem;
+        font-size: 0.9em;
         font-weight: 600;
         color: #fff;
         white-space: nowrap;

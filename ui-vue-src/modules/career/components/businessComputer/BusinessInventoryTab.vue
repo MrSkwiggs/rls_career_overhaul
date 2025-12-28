@@ -122,11 +122,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from "vue"
+import { ref, computed, onMounted, watch } from "vue"
 import { useBusinessComputerStore } from "../../stores/businessComputerStore"
 import { lua } from "@/bridge"
+import { useEvents } from "@/services/events"
+import { formatPrice, getConditionClass, getConditionText } from "../../utils/businessUtils"
 
 const store = useBusinessComputerStore()
+const events = useEvents()
 const searchQuery = ref('')
 const openSections = ref({})
 
@@ -171,37 +174,8 @@ const totalValue = computed(() => {
   return Math.round(total * 100) / 100
 })
 
-const formatPrice = (price) => {
-  const rounded = Math.round(price * 100) / 100
-  return rounded.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })
-}
-
 const toggleSection = (vehicle) => {
   openSections.value[vehicle] = openSections.value[vehicle] === false ? true : false
-}
-
-const getConditionClass = (mileage) => {
-  if (mileage < 10000) {
-    return 'condition-excellent'
-  } else if (mileage < 50000) {
-    return 'condition-good'
-  } else if (mileage < 100000) {
-    return 'condition-fair'
-  } else {
-    return 'condition-poor'
-  }
-}
-
-const getConditionText = (mileage) => {
-  if (mileage < 10000) {
-    return 'Excellent'
-  } else if (mileage < 50000) {
-    return 'Good'
-  } else if (mileage < 100000) {
-    return 'Fair'
-  } else {
-    return 'Poor'
-  }
 }
 
 const sellPart = async (partId) => {
@@ -237,10 +211,20 @@ const sellAllVehicleParts = async (vehicleName) => {
   }
 }
 
-onMounted(() => {
-  if (store.requestPartInventory) {
+const loadInventory = () => {
+  if (store.businessId && store.requestPartInventory) {
     store.requestPartInventory()
   }
+}
+
+watch(() => store.businessId, (newId) => {
+  if (newId) {
+    loadInventory()
+  }
+}, { immediate: false })
+
+onMounted(() => {
+  loadInventory()
 })
 
 </script>

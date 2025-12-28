@@ -37,7 +37,7 @@
                 <span class="part-id">ID: {{ item.partId }}</span>
               </div>
               <div class="part-details">
-                <span class="condition" :class="conditionClass(item.condition)">
+                <span class="condition" :class="getConditionClassFromText(item.condition)">
                   {{ item.condition }}
                 </span>
                 <span class="mileage">{{ item.mileage.toLocaleString() }} mi</span>
@@ -59,6 +59,7 @@
 <script setup>
 import { computed } from "vue"
 import { useBusinessComputerStore } from "../../stores/businessComputerStore"
+import { formatPrice, getConditionClassFromText } from "../../utils/businessUtils"
 
 const store = useBusinessComputerStore()
 
@@ -81,66 +82,50 @@ const groupedParts = computed(() => {
   })
   return Object.values(groups)
 })
-
-const formatPrice = (price) => {
-  const rounded = Math.round(price * 100) / 100
-  return rounded.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })
-}
-
-const conditionClass = (condition) => {
-  const classes = {
-    'Excellent': 'condition-excellent',
-    'Good': 'condition-good',
-    'Fair': 'condition-fair',
-    'Poor': 'condition-poor'
-  }
-  return classes[condition] || ''
-}
-
 </script>
 
 <style scoped lang="scss">
 .parts-inventory-tab {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1.5em;
 }
 
 .tab-header {
   h2 {
-    margin: 0 0 0.5rem 0;
+    margin: 0 0 0.5em 0;
     color: rgba(245, 73, 0, 1);
-    font-size: 1.5rem;
+    font-size: 1.5em;
     font-weight: 600;
   }
   
   p {
     margin: 0;
     color: rgba(255, 255, 255, 0.6);
-    font-size: 0.875rem;
+    font-size: 0.875em;
   }
 }
 
 .parts-stats {
   display: flex;
-  gap: 1rem;
+  gap: 1em;
   
   .stat {
-    padding: 1rem;
+    padding: 1em;
     background: rgba(23, 23, 23, 0.5);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.5rem;
+    border-radius: 0.5em;
     display: flex;
     flex-direction: column;
     
     .label {
       color: rgba(255, 255, 255, 0.6);
-      font-size: 0.875rem;
+      font-size: 0.875em;
     }
     
     .value {
       color: rgba(245, 73, 0, 1);
-      font-size: 1.25rem;
+      font-size: 1.25em;
       font-weight: 500;
     }
   }
@@ -149,68 +134,68 @@ const conditionClass = (condition) => {
 .parts-group-card {
   background: rgba(23, 23, 23, 0.5);
   border: 1px solid rgba(245, 73, 0, 0.3);
-  border-radius: 0.5rem;
+  border-radius: 0.5em;
   overflow: hidden;
 }
 
 .card-header {
-  padding: 1rem 1.5rem;
+  padding: 1em 1.5em;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(23, 23, 23, 0.3);
   
   h3 {
     margin: 0;
     color: rgba(245, 73, 0, 1);
-    font-size: 1.125rem;
+    font-size: 1.125em;
     font-weight: 600;
   }
 }
 
 .card-content {
-  padding: 1.5rem;
+  padding: 1.5em;
 }
 
 .parts-items {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.75em;
 }
 
 .part-item {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  padding: 0.75rem;
+  gap: 1em;
+  padding: 0.75em;
   background: rgba(26, 26, 26, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 0.25rem;
+  border-radius: 0.25em;
 }
 
 .part-info {
   flex: 1;
   
   h4 {
-    margin: 0 0 0.25rem 0;
+    margin: 0 0 0.25em 0;
     color: white;
-    font-size: 0.875rem;
+    font-size: 0.875em;
     font-weight: 600;
   }
   
   .part-id {
     color: rgba(255, 255, 255, 0.5);
-    font-size: 0.75rem;
+    font-size: 0.75em;
   }
 }
 
 .part-details {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 1em;
   
   .condition {
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
+    padding: 0.25em 0.5em;
+    border-radius: 0.25em;
+    font-size: 0.75em;
     font-weight: 500;
     
     &.condition-excellent {
@@ -240,20 +225,20 @@ const conditionClass = (condition) => {
   
   .mileage {
     color: rgba(245, 73, 0, 1);
-    font-size: 0.875rem;
+    font-size: 0.875em;
   }
   
   .price {
     color: rgba(34, 197, 94, 1);
     font-weight: 500;
-    font-size: 0.875rem;
+    font-size: 0.875em;
   }
 }
 
 .btn {
-  padding: 0.5rem 1rem;
-  border-radius: 0.375rem;
-  font-size: 0.875rem;
+  padding: 0.5em 1em;
+  border-radius: 0.375em;
+  font-size: 0.875em;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
@@ -270,9 +255,8 @@ const conditionClass = (condition) => {
 }
 
 .empty-state {
-  padding: 3rem;
+  padding: 3em;
   text-align: center;
   color: rgba(255, 255, 255, 0.5);
 }
 </style>
-
