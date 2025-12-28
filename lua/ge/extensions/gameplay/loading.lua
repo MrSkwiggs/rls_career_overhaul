@@ -331,6 +331,7 @@ local function loadSubModules()
         extensions.unload(extName)
         setExtensionUnloadMode(extName, "manual")
         table.insert(loadedExtensions, extName)
+        log("I", "Loading extension: " .. extName)
       end
     end
   end

@@ -357,7 +357,7 @@ local function getGaragePrice(garageId, computerId)
   local garage = freeroam_facilities.getFacility("garage", garageId)
   if garage then
     if career_modules_hardcore.isHardcoreMode() then
-      return garage.defaultPrice
+      return garage.defaultPrice * 0.75
     else
       -- Check if this garage is a starting garage in an active challenge
       if career_challengeModes and career_challengeModes.isChallengeActive() then
@@ -375,7 +375,7 @@ local function getGaragePrice(garageId, computerId)
       
       local price = garage.starterGarage and 0 or garage.defaultPrice
       log("D", "garageManager", "getGaragePrice: Garage " .. garageId .. " price: " .. price .. " (starterGarage: " .. tostring(garage.starterGarage) .. ")")
-      return tonumber(price)
+      return tonumber(price) * 0.75
     end
   end
   return nil

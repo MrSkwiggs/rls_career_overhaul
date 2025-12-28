@@ -1,6 +1,6 @@
 local M = {}
 
-local Config = gameplay_loading_config
+local Config = nil
 local uiAnim = { opacity = 0, yOffset = 50, pulse = 0, targetOpacity = 0 }
 local uiHidden = false
 local markerAnim = { time = 0, pulseScale = 1.0, rotationAngle = 0, beamHeight = 0, ringExpand = 0 }
@@ -23,7 +23,8 @@ end
 
 local function drawWorkSiteMarker(dt, currentState, stateDrivingToSite, markerCleared, activeGroup)
   if currentState ~= stateDrivingToSite or markerCleared or not activeGroup or not activeGroup.loading then return end
-
+  
+  Config = gameplay_loading_config
   local uiSettings = Config.settings.ui or {}
   local pulseSpeed = uiSettings.markerPulseSpeed or 2.5
   local rotationSpeed = uiSettings.markerRotationSpeed or 0.4
@@ -54,6 +55,7 @@ end
 local function drawZoneChoiceMarkers(dt, currentState, stateChoosingZone, compatibleZones)
   if currentState ~= stateChoosingZone or #compatibleZones == 0 then return end
 
+  Config = gameplay_loading_config
   local uiSettings = Config.settings.ui or {}
   local pulseSpeed = uiSettings.zoneMarkerPulseSpeed or 2.5
   local beamSpeed = uiSettings.markerBeamSpeed or 30.0
@@ -106,6 +108,7 @@ end
 
 local function getQuarryStateForUI(currentState, playerMod, contractsMod, managerMod, zonesMod)
   local contractsForUI = {}
+  Config = gameplay_loading_config
   for i, c in ipairs(contractsMod.ContractSystem.availableContracts or {}) do
     table.insert(contractsForUI, {
       id = c.id, name = c.name, tier = c.tier, material = c.material,
@@ -172,7 +175,11 @@ end
 
 local function drawUI(dt, currentState, configStates, playerMod, contractsMod, managerMod, zonesMod, callbacks)
   if not imgui then return end
-  
+  Config = gameplay_loading_config
+  if not Config then
+    print("Error: Config not found")
+    return
+  end
   local devMode = Config.settings and Config.settings.devMode or false
   if not devMode then return end
 
@@ -631,6 +638,9 @@ M.drawZoneChoiceMarkers = drawZoneChoiceMarkers
 M.getQuarryStateForUI = getQuarryStateForUI
 M.requestQuarryState = requestQuarryState
 M.drawUI = drawUI
+M.onExtensionLoaded = function()
+  log("I", "Loading Extension: ui loaded")
+end
 
 return M
 

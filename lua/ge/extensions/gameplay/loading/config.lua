@@ -142,10 +142,12 @@ local function loadConfiguration()
   if next(M.materials) == nil then
     print("[Loading] Warning: No materials loaded! System may not function correctly.")
   end
+  extensions.hook("loadingConfigLoaded")
 end
 
 local function onExtensionLoaded()
   loadConfiguration()
+  log("I", "Loading Extension: config loaded")
 end
 
 local function onWorldReadyState(state)

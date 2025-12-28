@@ -1466,5 +1466,12 @@ function M.onTruckDamageCallback(damage)
   M.damageCheckQueued = false
 end
 
+M.onExtensionLoaded = function()
+  log("I", "Loading Extension: manager loaded")
+end
+M.loadingConfigLoaded = function()
+  Config = gameplay_loading_config
+end
+
 return M
 

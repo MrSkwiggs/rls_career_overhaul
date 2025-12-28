@@ -1,5 +1,7 @@
 local M = {}
 
+local Config = gameplay_loading_config
+
 M.sitesData = nil
 M.sitesFilePath = nil
 M.availableGroups = {}
@@ -210,7 +212,6 @@ local function discoverGroups(sites)
   local groups = {}
   if not sites or not sites.sortedTags then return groups end
 
-  local Config = extensions.gameplay_loading_config
   local primary = { spawn = true, destination = true, loading = true }
   local materialTags = {}
   if Config.materials then
@@ -350,7 +351,6 @@ end
 
 local function getZonesByTypeName(typeName)
   local zones = {}
-  local Config = extensions.gameplay_loading_config
   if not Config or not Config.materials then return zones end
   
   for _, g in ipairs(M.availableGroups) do
@@ -473,7 +473,6 @@ local function getNearestZoneWithinDistance(playerPos, maxDistance)
 end
 
 local function getAllZonesStockInfo(getCurrentGameHour)
-  local Config = extensions.gameplay_loading_config
   local zonesStock = {}
   for _, group in ipairs(M.availableGroups) do
     local cache = ensureGroupCache(group, getCurrentGameHour)
@@ -501,7 +500,6 @@ end
 
 local function getFacilityIdForZone(zoneTag)
   if not zoneTag then return nil end
-  local Config = extensions.gameplay_loading_config
   local facilities = Config and Config.facilities
   if not facilities then return nil end
   
@@ -516,7 +514,6 @@ end
 
 local function validateZoneBelongsToFacility(zoneTag, facilityId)
   if not zoneTag or not facilityId then return false end
-  local Config = extensions.gameplay_loading_config
   local facilities = Config and Config.facilities
   if not facilities then return false end
   
@@ -540,6 +537,12 @@ M.getZonesByMaterial = getZonesByMaterial
 M.getZonesByTypeName = getZonesByTypeName
 M.getFacilityIdForZone = getFacilityIdForZone
 M.validateZoneBelongsToFacility = validateZoneBelongsToFacility
+M.onExtensionLoaded = function()
+  log("I", "Loading Extension: zones loaded")
+end
+M.loadingConfigLoaded = function()
+  Config = gameplay_loading_config
+end
 
 return M
 
