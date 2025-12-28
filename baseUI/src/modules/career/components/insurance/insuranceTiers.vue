@@ -29,7 +29,7 @@ const props = defineProps({
 </script>
 
 <style lang="scss">
-@import '@/../../../ui/ui-vue/src/modules/career/components/insurance/insuranceStyle.css';
+@import "insuranceStyle.css";
 </style>
 
 <style scoped lang="scss">
