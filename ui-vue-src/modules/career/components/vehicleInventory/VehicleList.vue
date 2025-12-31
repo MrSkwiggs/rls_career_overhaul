@@ -313,7 +313,7 @@ const isFunctionAvailable = (vehicle, buttonData) => {
     (buttonData.notForSaleRequired && vehicle.listedForSale) ||
     (buttonData.requireAtCurrentGarage && !vehicle.atCurrentGarage) ||
     (buttonData.requireAtDifferentGarage && vehicle.atCurrentGarage) ||
-    (buttonData && buttonData.buttonText !== 'Trade-In' && !vehicle.atCurrentGarage && !currentGarageHasSpace.value)
+    (!vehicle.atCurrentGarage && !currentGarageHasSpace.value)
   )
 }
 
