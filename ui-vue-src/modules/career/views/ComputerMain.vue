@@ -78,20 +78,6 @@
                 <span class="label">{{ infoById[computerFunction.id].label }}</span>
               </div>
             </template>
-            <div class="computer-function-tile"
-              :class="{ 'action-disabled': !canSellGarage }"
-              tabindex="0"
-              bng-nav-item v-bng-on-ui-nav:ok.asMouse.focusRequired
-              @click.stop="sellGarage"
-              @mousedown.stop
-              @mouseover="setReason(1, !canSellGarage ? (vehicleCount > 0 ? `Garage must be empty to sell (${vehicleCount} vehicles inside)` : 'Cannot sell starter garage') : undefined)"
-              @focus="setReason(1, !canSellGarage ? (vehicleCount > 0 ? `Garage must be empty to sell (${vehicleCount} vehicles inside)` : 'Cannot sell starter garage') : undefined)"
-              @mouseleave="setReason(1)"
-              @blur="setReason(1)"
-              >
-              <BngIcon class="icon" :type="icons.beamCurrency" />
-              <span class="label">Sell Garage ({{ sellPrice }}<BngIcon style="font-size: 0.8em;" :type="icons.beamCurrency" />)</span>
-            </div>
           </div>
           <div class="disable-reason" v-if="disableReason[0]">
             <BngIcon class="disable-icon" v-show="disableReason[0]" :type="icons.info" />
@@ -150,33 +136,6 @@ import VehicleTileRow from "../components/vehicleInventory/VehicleTileRow.vue"
 
 const computerStore = useComputerStore()
 const currentVehicleData = ref(null)
-
-const canSellGarage = ref(false)
-const sellPrice = ref(0)
-const vehicleCount = ref(0)
-
-const updateSellData = async () => {
-  const computerId = computerStore.computerData.computerId
-  if (computerId) {
-    const sellInfo = await lua.career_modules_garageManager.canSellGarage(computerId)
-    if (sellInfo) {
-      canSellGarage.value = sellInfo[0]
-      vehicleCount.value = sellInfo[1]
-    }
-    const price = await lua.career_modules_garageManager.getGaragePrice(null, computerId)
-    sellPrice.value = price || 0
-  }
-}
-
-watch(() => computerStore.computerData, () => {
-  updateSellData()
-}, { deep: true })
-
-const sellGarage = async () => {
-  if (!canSellGarage.value) return
-  const computerId = computerStore.computerData.computerId
-  await lua.career_modules_garageManager.sellGarage(computerId, sellPrice.value)
-}
 
 watch(() => computerStore.activeInventoryId, (newId) => {
   if (Number(newId)) {
@@ -260,7 +219,6 @@ const start = async () => {
   // UINavEvents.setFilteredEvents(UI_EVENT_GROUPS.focusMoveScalar)
   getUINavServiceInstance().setFilteredEvents(UI_EVENT_GROUPS.focusMoveScalar)
   computerStore.requestComputerData()
-  updateSellData()
 
   if (Number(computerStore.activeInventoryId)) {
     lua.career_modules_inventory.getVehicleUiData(computerStore.activeInventoryId).then(data => {
