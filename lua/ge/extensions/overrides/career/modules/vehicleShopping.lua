@@ -1275,7 +1275,10 @@ local function buyVehicleAndSendToGarage(options)
   end
 
   local garagePos, _ = freeroam_facilities.getGaragePosRot(targetGarage)
-  local delay = getDeliveryDelay(purchaseData.vehicleInfo.pos:distance(garagePos))
+  local delay = 1
+  if purchaseData.vehicleInfo.pos then
+    delay = getDeliveryDelay(purchaseData.vehicleInfo.pos:distance(garagePos))
+  end
   spawnFollowUpActions = {
     delayAccess = delay,
     targetGarageId = targetGarage.id,
