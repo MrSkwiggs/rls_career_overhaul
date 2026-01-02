@@ -15,11 +15,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.head_ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
           lfs: true
+          fetch-depth: 0
       
       - name: Pull LFS
-        run: git lfs pull
+        run: |
+          git lfs install
+          git lfs pull
+          git lfs checkout
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -58,11 +63,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.head_ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
           lfs: true
+          fetch-depth: 0
       
       - name: Pull LFS
-        run: git lfs pull
+        run: |
+          git lfs install
+          git lfs pull
+          git lfs checkout
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -101,11 +111,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.head_ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
           lfs: true
+          fetch-depth: 0
       
       - name: Pull LFS
-        run: git lfs pull
+        run: |
+          git lfs install
+          git lfs pull
+          git lfs checkout
       
       - name: Calculate version and delete old artifacts
         id: version
