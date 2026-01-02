@@ -18,6 +18,9 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           lfs: true
       
+      - name: Pull LFS
+        run: git lfs pull
+      
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -58,6 +61,9 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           lfs: true
       
+      - name: Pull LFS
+        run: git lfs pull
+      
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -97,6 +103,9 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           lfs: true
+      
+      - name: Pull LFS
+        run: git lfs pull
       
       - name: Calculate version and delete old artifacts
         id: version
