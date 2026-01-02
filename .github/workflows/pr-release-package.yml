@@ -15,8 +15,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.head_ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
           lfs: true
+          fetch-depth: 0
+      
+      - name: Pull LFS
+        run: |
+          git lfs install
+          git fetch --all
+          git lfs fetch --all
+          git lfs pull
+          git lfs checkout
       
       - name: Pull LFS
         run: git lfs pull
@@ -58,8 +68,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.head_ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
           lfs: true
+          fetch-depth: 0
+      
+      - name: Pull LFS
+        run: |
+          git lfs install
+          git fetch --all
+          git lfs fetch --all
+          git lfs pull
+          git lfs checkout
       
       - name: Pull LFS
         run: git lfs pull
@@ -101,8 +121,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.head_ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
           lfs: true
+          fetch-depth: 0
+      
+      - name: Pull LFS
+        run: |
+          git lfs install
+          git fetch --all
+          git lfs fetch --all
+          git lfs pull
+          git lfs checkout
       
       - name: Pull LFS
         run: git lfs pull
