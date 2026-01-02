@@ -23,6 +23,8 @@ jobs:
       - name: Pull LFS
         run: |
           git lfs install
+          git fetch --all
+          git lfs fetch --all
           git lfs pull
           git lfs checkout
       
@@ -71,6 +73,8 @@ jobs:
       - name: Pull LFS
         run: |
           git lfs install
+          git fetch --all
+          git lfs fetch --all
           git lfs pull
           git lfs checkout
       
@@ -119,6 +123,8 @@ jobs:
       - name: Pull LFS
         run: |
           git lfs install
+          git fetch --all
+          git lfs fetch --all
           git lfs pull
           git lfs checkout
       
