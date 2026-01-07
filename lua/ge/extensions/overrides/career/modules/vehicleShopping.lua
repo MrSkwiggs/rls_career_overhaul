@@ -753,6 +753,103 @@ local function invalidateVehicleCache()
   vehicleCache.cacheValid = false
 end
 
+local function rebuildDealershipCache(dealershipId)
+  if not vehicleCache.cacheValid then
+    cacheDealers()
+    return
+  end
+
+  local facilities = freeroam_facilities.getFacilities(getCurrentLevelIdentifier())
+  if not facilities or not facilities.dealerships then
+    return
+  end
+
+  local dealership = nil
+  for _, d in ipairs(facilities.dealerships) do
+    if d.id == dealershipId then
+      dealership = d
+      break
+    end
+  end
+
+  if not dealership then
+    return
+  end
+
+  local regularEligibleVehicles = vehicleCache.regularVehicles
+  if not regularEligibleVehicles or tableIsEmpty(regularEligibleVehicles) then
+    regularEligibleVehicles = util_configListGenerator.getEligibleVehicles() or {}
+    normalizePopulations(regularEligibleVehicles, 0.4)
+    vehicleCache.regularVehicles = regularEligibleVehicles
+  end
+
+  local filter = dealership.filter or {}
+  if dealership.associatedOrganization then
+    local org = freeroam_organizations.getOrganization(dealership.associatedOrganization)
+    local level = getOrgLevelData(org)
+    if level and level.filter then
+      filter = level.filter
+    end
+  end
+
+  local subFilters = dealership.subFilters or {}
+  if dealership.associatedOrganization then
+    local org = freeroam_organizations.getOrganization(dealership.associatedOrganization)
+    local level = getOrgLevelData(org)
+    if level and level.subFilters then
+      subFilters = level.subFilters
+    end
+  end
+
+  local filteredRegular = {}
+  local filters = {}
+
+  if subFilters and not tableIsEmpty(subFilters) then
+    for _, subFilter in ipairs(subFilters) do
+      local aggregateFilter = deepcopy(filter or {})
+      tableMergeRecursive(aggregateFilter, subFilter)
+      aggregateFilter._probability = (type(subFilter.probability) == "number" and subFilter.probability) or 1
+      table.insert(filters, aggregateFilter)
+    end
+  else
+    local aggregateFilter = deepcopy(filter or {})
+    aggregateFilter._probability = 1
+    table.insert(filters, aggregateFilter)
+  end
+
+  for _, f in ipairs(filters) do
+    local subProb = f._probability or f.probability or 1
+    for _, vehicleInfo in ipairs(regularEligibleVehicles) do
+      if doesVehiclePassFilter(vehicleInfo, f) then
+        local cachedVehicle = deepcopy(vehicleInfo)
+        cachedVehicle.precomputedFilter = f
+        cachedVehicle.subFilterProbability = subProb
+        cachedVehicle.cachedPartsValue = getVehiclePartsValue(vehicleInfo.model_key, vehicleInfo.key)
+        table.insert(filteredRegular, cachedVehicle)
+      end
+    end
+  end
+
+  if tableIsEmpty(filteredRegular) then
+    log("W", "Career", string.format("No vehicles matched filters for dealership %s after level change; using fallback", dealershipId))
+    for _, vehicleInfo in ipairs(regularEligibleVehicles) do
+      local fallbackVehicle = deepcopy(vehicleInfo)
+      fallbackVehicle.precomputedFilter = nil
+      fallbackVehicle.subFilterProbability = 1
+      fallbackVehicle.cachedPartsValue = getVehiclePartsValue(fallbackVehicle.model_key, fallbackVehicle.key)
+      table.insert(filteredRegular, fallbackVehicle)
+    end
+    filters = {}
+  end
+
+  vehicleCache.dealershipCache[dealershipId] = {
+    regularVehicles = filteredRegular,
+    filters = filters
+  }
+
+  log("I", "Career", string.format("Rebuilt cache for dealership %s: %d vehicles", dealershipId, #filteredRegular))
+end
+
 -- Vehicle list management functions
 local function updateVehicleList(fromScratch)
   fromScratch = not not fromScratch
@@ -920,7 +1017,8 @@ local function updateVehicleList(fromScratch)
     if not sellersInfos[seller.id] then
       sellersInfos[seller.id] = {
         lastGenerationTime = 0,
-        mapId = currentMap
+        mapId = currentMap,
+        lastOrgLevel = nil
       }
       changed = true
     end
@@ -930,6 +1028,17 @@ local function updateVehicleList(fromScratch)
 
     local randomVehicleInfos = {}
     local currentVehicleCount = unsoldCountBySellerId[seller.id] or 0
+
+    local currentOrgLevel = nil
+    if seller.associatedOrganization then
+      local org = freeroam_organizations.getOrganization(seller.associatedOrganization)
+      if org and org.reputation then
+        currentOrgLevel = org.reputation.level
+      end
+    end
+
+    local storedLevel = sellersInfos[seller.id].lastOrgLevel
+    local levelChanged = (currentOrgLevel ~= nil) and (storedLevel ~= nil) and (storedLevel ~= currentOrgLevel)
 
     local maxStock = seller.stock or 10
     if seller.associatedOrganization then
@@ -953,7 +1062,12 @@ local function updateVehicleList(fromScratch)
       local maxVehicles = math.floor(vehicleOfferTimeToLive / adjustedTimeBetweenOffers)
       numberOfVehiclesToGenerate = math.min(math.floor((currentTime - sellersInfos[seller.id].lastGenerationTime) / adjustedTimeBetweenOffers), maxVehicles)
 
-      if fromScratch or sellersInfos[seller.id].lastGenerationTime == 0 then
+      if levelChanged then
+        rebuildDealershipCache(seller.id)
+        numberOfVehiclesToGenerate = availableSlots
+        log("I", "Career", string.format("Level changed for %s (from %d to %d), restocking to %d vehicles", 
+          seller.id, storedLevel, currentOrgLevel, availableSlots))
+      elseif fromScratch or sellersInfos[seller.id].lastGenerationTime == 0 then
         numberOfVehiclesToGenerate = availableSlots
         log("D", "Career",
           string.format("Initial stock fill for %s: generating %d vehicles", seller.id, numberOfVehiclesToGenerate))
@@ -1146,6 +1260,10 @@ local function updateVehicleList(fromScratch)
     if not tableIsEmpty(randomVehicleInfos) then
       sellersInfos[seller.id].lastGenerationTime = currentTime
       changed = true
+    end
+
+    if currentOrgLevel ~= nil then
+      sellersInfos[seller.id].lastOrgLevel = currentOrgLevel
     end
 
     sellerMeta[seller.id] = {
@@ -2231,6 +2349,7 @@ M.checkSpawnedVehicleStatus = function()
 end
 
 M.cacheDealers = cacheDealers
+M.rebuildDealershipCache = rebuildDealershipCache
 M.getRandomVehicleFromCache = getRandomVehicleFromCache
 M.getCacheStats = getCacheStats
 M.getMapStats = getMapStats
