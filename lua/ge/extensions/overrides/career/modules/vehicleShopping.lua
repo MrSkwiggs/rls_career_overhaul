@@ -24,6 +24,8 @@ local tetherRange = 4
 local vehicleShopDirtyDate
 local vehiclesInShop = {}
 local sellersInfos = {}
+local otherMapsData = {}
+local lastMap
 local currentSeller
 local purchaseData
 local tether
@@ -1956,45 +1958,68 @@ local function onExtensionLoaded()
   local data = not outdated and jsonReadFile(savePath .. "/career/vehicleShop.json")
   if data then
     local currentMap = getCurrentLevelIdentifier()
-    vehiclesInShop = data.vehiclesInShop or {}
-    sellersInfos = data.sellersInfos or {}
-    vehicleShopDirtyDate = data.dirtyDate
     vehicleWatchlist = data.vehicleWatchlist or {}
 
-    local filteredVehicles = {}
-    for _, vehicleInfo in ipairs(vehiclesInShop) do
-      vehicleInfo.pos = vec3(vehicleInfo.pos)
-      if not vehicleInfo.mapId then
-        vehicleInfo.mapId = currentMap
+    -- New format with 'maps' key
+    if data.maps then
+      otherMapsData = data.maps
+      -- Restore vec3 for positions in all maps
+      for _, mapData in pairs(otherMapsData) do
+        if mapData.vehiclesInShop then
+          for _, vehicleInfo in ipairs(mapData.vehiclesInShop) do
+            vehicleInfo.pos = vec3(vehicleInfo.pos)
+          end
+        end
       end
-      if vehicleInfo.mapId == currentMap then
-        table.insert(filteredVehicles, vehicleInfo)
-      end
-    end
-    vehiclesInShop = filteredVehicles
+    else
+      -- Migration from old flat format
+      local oldVehicles = data.vehiclesInShop or {}
+      local oldSellers = data.sellersInfos or {}
+      local oldDirtyDate = data.dirtyDate
 
-    local filteredSellers = {}
-    for sellerId, sellerInfo in pairs(sellersInfos) do
-      if not sellerInfo.mapId then
-        sellerInfo.mapId = currentMap
+      for _, vehicleInfo in ipairs(oldVehicles) do
+        vehicleInfo.pos = vec3(vehicleInfo.pos)
+        local mId = vehicleInfo.mapId or currentMap
+        if not otherMapsData[mId] then otherMapsData[mId] = {vehiclesInShop = {}, sellersInfos = {}} end
+        table.insert(otherMapsData[mId].vehiclesInShop, vehicleInfo)
       end
-      if sellerInfo.mapId == currentMap then
-        filteredSellers[sellerId] = sellerInfo
+
+      for sellerId, sellerInfo in pairs(oldSellers) do
+        local mId = sellerInfo.mapId or currentMap
+        if not otherMapsData[mId] then otherMapsData[mId] = {vehiclesInShop = {}, sellersInfos = {}} end
+        otherMapsData[mId].sellersInfos[sellerId] = sellerInfo
+      end
+      
+      -- Assign dirty date to the current map if it was migration
+      if otherMapsData[currentMap] then
+        otherMapsData[currentMap].dirtyDate = oldDirtyDate
       end
     end
-    sellersInfos = filteredSellers
+
+    -- Set current map data
+    local currentData = otherMapsData[currentMap] or {}
+    vehiclesInShop = currentData.vehiclesInShop or {}
+    sellersInfos = currentData.sellersInfos or {}
+    vehicleShopDirtyDate = currentData.dirtyDate
+    lastMap = currentMap
   end
 end
 
 local function onSaveCurrentSaveSlot(currentSavePath, oldSaveDate)
-  if vehicleShopDirtyDate and oldSaveDate >= vehicleShopDirtyDate then
-    return
-  end
+  local currentMap = getCurrentLevelIdentifier()
+  
+  -- Update the stash for the current map
+  otherMapsData[currentMap] = {
+    vehiclesInShop = vehiclesInShop,
+    sellersInfos = sellersInfos,
+    dirtyDate = vehicleShopDirtyDate
+  }
+
   local data = {}
-  data.vehiclesInShop = vehiclesInShop
-  data.sellersInfos = sellersInfos
-  data.dirtyDate = vehicleShopDirtyDate
+  data.maps = otherMapsData
   data.vehicleWatchlist = vehicleWatchlist
+  data.version = moduleVersion
+  
   career_saveSystem.jsonWriteFileSafe(currentSavePath .. "/career/vehicleShop.json", data, true)
 end
 
@@ -2034,22 +2059,29 @@ local function onWorldReadyState(state)
   if state == 2 then
     local currentMap = getCurrentLevelIdentifier()
 
-    local filteredVehicles = {}
-    for _, vehicleInfo in ipairs(vehiclesInShop) do
-      if vehicleInfo.mapId == currentMap then
-        table.insert(filteredVehicles, vehicleInfo)
-      end
+    -- Stash previous map data if it exists
+    if lastMap and lastMap ~= currentMap then
+      otherMapsData[lastMap] = {
+        vehiclesInShop = vehiclesInShop,
+        sellersInfos = sellersInfos,
+        dirtyDate = vehicleShopDirtyDate
+      }
     end
-    vehiclesInShop = filteredVehicles
 
-    local filteredSellers = {}
-    for sellerId, sellerInfo in pairs(sellersInfos) do
-      if sellerInfo.mapId == currentMap then
-        filteredSellers[sellerId] = sellerInfo
-      end
+    -- Load new map data
+    if otherMapsData[currentMap] then
+      local currentData = otherMapsData[currentMap]
+      vehiclesInShop = currentData.vehiclesInShop or {}
+      sellersInfos = currentData.sellersInfos or {}
+      vehicleShopDirtyDate = currentData.dirtyDate
+    else
+      -- If no data for this map, start fresh but keep watchlist
+      vehiclesInShop = {}
+      sellersInfos = {}
+      vehicleShopDirtyDate = nil
     end
-    sellersInfos = filteredSellers
 
+    lastMap = currentMap
     cacheDealers()
   end
 end
