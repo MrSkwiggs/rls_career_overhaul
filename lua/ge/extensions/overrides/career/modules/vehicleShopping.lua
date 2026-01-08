@@ -659,17 +659,7 @@ local function cacheDealers()
 
         vehicleCache.dealershipCache[dealershipId] = vehicleCache.dealershipCache[dealershipId] or {}
         if tableIsEmpty(filteredRegular) then
-          log("W", "Career", string.format("No vehicles matched filters for dealership %s; using fallback stock", dealershipId))
-          filteredRegular = {}
-          for _, vehicleInfo in ipairs(regularEligibleVehicles) do
-            local fallbackVehicle = deepcopy(vehicleInfo)
-            fallbackVehicle.precomputedFilter = nil
-            fallbackVehicle.subFilterProbability = 1
-            fallbackVehicle.cachedPartsValue = getVehiclePartsValue(fallbackVehicle.model_key, fallbackVehicle.key)
-            totalPartsCalculated = totalPartsCalculated + 1
-            table.insert(filteredRegular, fallbackVehicle)
-          end
-          filters = {}
+          log("W", "Career", string.format("No vehicles matched filters for dealership %s", dealershipId))
         end
         vehicleCache.dealershipCache[dealershipId].regularVehicles = filteredRegular
         vehicleCache.dealershipCache[dealershipId].filters = filters
@@ -831,15 +821,7 @@ local function rebuildDealershipCache(dealershipId)
   end
 
   if tableIsEmpty(filteredRegular) then
-    log("W", "Career", string.format("No vehicles matched filters for dealership %s after level change; using fallback", dealershipId))
-    for _, vehicleInfo in ipairs(regularEligibleVehicles) do
-      local fallbackVehicle = deepcopy(vehicleInfo)
-      fallbackVehicle.precomputedFilter = nil
-      fallbackVehicle.subFilterProbability = 1
-      fallbackVehicle.cachedPartsValue = getVehiclePartsValue(fallbackVehicle.model_key, fallbackVehicle.key)
-      table.insert(filteredRegular, fallbackVehicle)
-    end
-    filters = {}
+    log("W", "Career", string.format("No vehicles matched filters for dealership %s after level change", dealershipId))
   end
 
   vehicleCache.dealershipCache[dealershipId] = {
