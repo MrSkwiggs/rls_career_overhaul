@@ -1051,7 +1051,10 @@ local function updateVehicleList(fromScratch)
     local availableSlots = math.max(0, maxStock - currentVehicleCount)
 
     local numberOfVehiclesToGenerate = 0
-    local adjustedTimeBetweenOffers = dealershipTimeBetweenOffers / (seller.vehicleGenerationMultiplier or 1)
+    local adjustedTimeBetweenOffers = vehicleOfferTimeToLive / maxStock
+    if seller.vehicleGenerationMultiplier then
+      adjustedTimeBetweenOffers = adjustedTimeBetweenOffers / seller.vehicleGenerationMultiplier
+    end
 
     if onlyStarterVehicles then
       -- Generate the starter vehicles
@@ -1065,12 +1068,17 @@ local function updateVehicleList(fromScratch)
       if levelChanged then
         rebuildDealershipCache(seller.id)
         numberOfVehiclesToGenerate = availableSlots
+        sellersInfos[seller.id].lastGenerationTime = 0
         log("I", "Career", string.format("Level changed for %s (from %d to %d), restocking to %d vehicles", 
           seller.id, storedLevel, currentOrgLevel, availableSlots))
       elseif fromScratch or sellersInfos[seller.id].lastGenerationTime == 0 then
         numberOfVehiclesToGenerate = availableSlots
         log("D", "Career",
           string.format("Initial stock fill for %s: generating %d vehicles", seller.id, numberOfVehiclesToGenerate))
+      elseif availableSlots > 0 and numberOfVehiclesToGenerate < availableSlots then
+        numberOfVehiclesToGenerate = availableSlots
+        log("D", "Career",
+          string.format("Stock below target for %s: generating %d vehicles to reach %d", seller.id, availableSlots, maxStock))
       end
 
       -- Generate the vehicles without duplicating vehicles that are already in the dealership
@@ -1090,7 +1098,7 @@ local function updateVehicleList(fromScratch)
     local starterVehicleYears = {bx = 1990, etki = 1989, covet = 1989}
 
     for i, randomVehicleInfo in ipairs(randomVehicleInfos) do
-      randomVehicleInfo.generationTime = currentTime - ((i - 1) * dealershipTimeBetweenOffers)
+      randomVehicleInfo.generationTime = currentTime - ((i - 1) * adjustedTimeBetweenOffers)
       randomVehicleInfo.offerTTL = onlyStarterVehicles and math.huge or vehicleOfferTimeToLive
 
       randomVehicleInfo.sellerId = seller.id
@@ -1288,7 +1296,7 @@ local function updateVehicleList(fromScratch)
     local availableSlotsAfter = math.max(0, maxStock - currentCount)
     if availableSlotsAfter > 0 then
       local lastGen = (sellersInfos[seller.id] and sellersInfos[seller.id].lastGenerationTime) or 0
-      local interval = meta and meta.adjustedTimeBetweenOffers or (dealershipTimeBetweenOffers / (seller.vehicleGenerationMultiplier or 1))
+      local interval = meta and meta.adjustedTimeBetweenOffers or (vehicleOfferTimeToLive / maxStock)
       local nextGen = (lastGen > 0 and (lastGen + interval)) or currentTime
       if nextGen < minNext then
         minNext = nextGen
