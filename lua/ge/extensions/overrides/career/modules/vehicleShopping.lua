@@ -324,6 +324,12 @@ local function onUiChangedState(toState)
 end
 
 local function onUpdate(dt)
+  refreshAccumulator = refreshAccumulator + dt
+  if refreshAccumulator < 5 then
+    return
+  end
+  refreshAccumulator = 0
+
   -- Watchlist expiration check
   if not tableIsEmpty(vehicleWatchlist) and (not currentUiState or currentUiState == "play") then
     local currentTime = os.time()
@@ -659,7 +665,8 @@ local function cacheDealers()
 
         vehicleCache.dealershipCache[dealershipId] = vehicleCache.dealershipCache[dealershipId] or {}
         if tableIsEmpty(filteredRegular) then
-          log("W", "Career", string.format("No vehicles matched filters for dealership %s", dealershipId))
+          log("I", "Career", string.format("Dealership not configured: %s", dealershipId))
+          vehicleCache.dealershipCache[dealershipId].notConfigured = true
         end
         vehicleCache.dealershipCache[dealershipId].regularVehicles = filteredRegular
         vehicleCache.dealershipCache[dealershipId].filters = filters
@@ -820,13 +827,15 @@ local function rebuildDealershipCache(dealershipId)
     end
   end
 
-  if tableIsEmpty(filteredRegular) then
-    log("W", "Career", string.format("No vehicles matched filters for dealership %s after level change", dealershipId))
+  local notConfigured = tableIsEmpty(filteredRegular)
+  if notConfigured then
+    log("I", "Career", string.format("Dealership not configured: %s", dealershipId))
   end
 
   vehicleCache.dealershipCache[dealershipId] = {
     regularVehicles = filteredRegular,
-    filters = filters
+    filters = filters,
+    notConfigured = notConfigured
   }
 
   log("I", "Career", string.format("Rebuilt cache for dealership %s: %d vehicles", dealershipId, #filteredRegular))
@@ -996,6 +1005,11 @@ local function updateVehicleList(fromScratch)
   local sellerMeta = {}
 
   for _, seller in ipairs(sellers) do
+    local dealershipData = vehicleCache.dealershipCache[seller.id]
+    if dealershipData and dealershipData.notConfigured then
+      goto continue
+    end
+
     if not sellersInfos[seller.id] then
       sellersInfos[seller.id] = {
         lastGenerationTime = 0,
@@ -1260,6 +1274,8 @@ local function updateVehicleList(fromScratch)
       maxStock = maxStock,
       adjustedTimeBetweenOffers = adjustedTimeBetweenOffers
     }
+
+    ::continue::
   end
 
   local minNext = math.huge
