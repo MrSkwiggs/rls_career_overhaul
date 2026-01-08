@@ -6,7 +6,7 @@ local M = {}
 
 local imgui = ui_imgui
 
-M.dependencies = {'career_saveSystem', 'core_recoveryPrompt', 'gameplay_traffic'}
+M.dependencies = {'career_saveSystem', 'core_recoveryPrompt', 'gameplay_traffic', 'core_jobSystem'}
 
 M.tutorialEnabled = false
 
