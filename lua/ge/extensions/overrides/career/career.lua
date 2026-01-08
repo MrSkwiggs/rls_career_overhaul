@@ -814,8 +814,11 @@ end
 
 local function onVehicleGroupSpawned()
   if core_gamestate.getLoadingStatus("careerLoading") then
-    commands.setGameCamera(true)
-    core_gamestate.requestExitLoadingScreen("careerLoading")
+    core_jobSystem.create(function(job)
+      job.sleep(6.7)
+      commands.setGameCamera(true)
+      core_gamestate.requestExitLoadingScreen("careerLoading")
+    end)
   end
 end
 
