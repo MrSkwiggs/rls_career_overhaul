@@ -22,24 +22,18 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-:: 1. Cleanup old build dir
-if exist "%BUILD_DIR%" (
-    echo [1/5] Cleaning up old build directory...
-    rmdir /s /q "%BUILD_DIR%"
-)
-
 :: 2. Create and prepare build directory
-echo [2/5] Preparing build directory...
+echo [1/4] Preparing build directory...
 mkdir "%BUILD_DIR%"
 :: Copy baseUI to temp build directory
 robocopy "%BASE_UI%" "%BUILD_DIR%" /E /MT /NFL /NDL /NJH /NJS /nc /ns /np
 
 :: 3. Overwrite with custom source
-echo [3/5] Merging ui-vue-src into build directory...
+echo [2/4] Merging ui-vue-src into build directory...
 robocopy "%VUE_SRC%" "%BUILD_DIR%\src" /E /MT /NFL /NDL /NJH /NJS /nc /ns /np
 
 :: 4. Build
-echo [4/5] Building UI...
+echo [3/4] Building UI...
 pushd "%BUILD_DIR%"
 
 :: Copy existing node_modules from baseUI to speed up if they exist
@@ -74,7 +68,7 @@ if %ERRORLEVEL% neq 0 (
 popd
 
 :: 5. Copy to final location
-echo [5/5] Copying build results to %DIST_TARGET%...
+echo [4/4] Copying build results to %DIST_TARGET%...
 if not exist "%DIST_TARGET%" mkdir "%DIST_TARGET%"
 :: Clean target first to avoid stale files
 del /q /s "%DIST_TARGET%\*" 2>nul
