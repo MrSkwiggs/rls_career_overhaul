@@ -1113,7 +1113,6 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   }
 
   const handleJobsUpdated = async (data) => {
-    if (!isMenuActive.value) return
     const currentBusinessId = businessId.value
     const currentBusinessType = businessType.value
 
@@ -1151,7 +1150,6 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   }
 
   const handleTechsUpdated = (data) => {
-    if (!isMenuActive.value) return
     const currentBusinessId = businessId.value
     const currentBusinessType = businessType.value
 
@@ -1285,7 +1283,6 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   }
 
   const handleVehiclePulledOut = (data) => {
-    if (!isMenuActive.value) return
     if (String(data.businessId) !== String(businessId.value)) return
     const vehiclesFromData = Array.isArray(data.pulledOutVehicles) ? data.pulledOutVehicles : []
     pulledOutVehicles.value = vehiclesFromData
@@ -1302,7 +1299,6 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   }
 
   const handleVehiclePutAway = (data) => {
-    if (!isMenuActive.value) return
     if (String(data.businessId) !== String(businessId.value)) return
     const vehiclesFromData = Array.isArray(data.pulledOutVehicles) ? data.pulledOutVehicles : []
     pulledOutVehicles.value = vehiclesFromData
@@ -1321,17 +1317,17 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
     }
   }
 
-  events.on('businessComputer:onPartCartUpdated', handlePartCartUpdated)
-  events.on('businessComputer:onJobsUpdated', handleJobsUpdated)
-  events.on('businessComputer:onTechsUpdated', handleTechsUpdated)
-  events.on('businessComputer:onPartInventoryData', handlePartInventoryData)
-  events.on('businessComputer:onJobAccepted', handleJobAccepted)
-  events.on('businessComputer:onJobDeclined', handleJobDeclined)
-  events.on('businessComputer:onJobAbandoned', handleJobAbandoned)
-  events.on('businessComputer:onJobCompleted', handleJobCompleted)
-  events.on('businessComputer:onTechAssigned', handleTechAssigned)
-  events.on('businessComputer:onVehiclePulledOut', handleVehiclePulledOut)
-  events.on('businessComputer:onVehiclePutAway', handleVehiclePutAway)
+  bridge.events.on('businessComputer:onPartCartUpdated', handlePartCartUpdated)
+  bridge.events.on('businessComputer:onJobsUpdated', handleJobsUpdated)
+  bridge.events.on('businessComputer:onTechsUpdated', handleTechsUpdated)
+  bridge.events.on('businessComputer:onPartInventoryData', handlePartInventoryData)
+  bridge.events.on('businessComputer:onJobAccepted', handleJobAccepted)
+  bridge.events.on('businessComputer:onJobDeclined', handleJobDeclined)
+  bridge.events.on('businessComputer:onJobAbandoned', handleJobAbandoned)
+  bridge.events.on('businessComputer:onJobCompleted', handleJobCompleted)
+  bridge.events.on('businessComputer:onTechAssigned', handleTechAssigned)
+  bridge.events.on('businessComputer:onVehiclePulledOut', handleVehiclePulledOut)
+  bridge.events.on('businessComputer:onVehiclePutAway', handleVehiclePutAway)
 
   const addPartToCart = async (part, slot) => {
     if (!businessId.value || !pulledOutVehicle.value?.vehicleId) {
