@@ -2765,6 +2765,17 @@ M.applyKit = function(businessId, vehicleId, kitId)
   }
 end
 
+local function onCareerModulesActivated()
+  if career_modules_business_businessManager then
+    local purchased = career_modules_business_businessManager.getAllPurchasedBusinesses()
+    for businessType, businesses in pairs(purchased) do
+      for businessId, _ in pairs(businesses) do
+        setBusinessContext(businessType, businessId)
+      end
+    end
+  end
+end
+
 local function onExtensionLoaded()
   businessContexts = {}
   return true
@@ -2803,6 +2814,8 @@ local function isPersonalUseUnlocked(businessId)
 end
 
 M.onExtensionLoaded = onExtensionLoaded
+M.onCareerModulesActivated = onCareerModulesActivated
+M.setBusinessContext = setBusinessContext
 M.getTechData = getTechData
 M.getManagerData = getManagerData
 M.enterShoppingVehicle = enterShoppingVehicle
