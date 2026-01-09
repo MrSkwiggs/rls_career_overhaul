@@ -1132,7 +1132,12 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
     }
 
     try {
-      const jobsData = await getLuaModule().getJobsOnly(currentBusinessId)
+      let jobsData = data
+      // If data only contains id/type and not the job lists, fetch them
+      if (!jobsData || !jobsData.activeJobs || !jobsData.newJobs) {
+        jobsData = await getLuaModule().getJobsOnly(currentBusinessId)
+      }
+
       if (jobsData) {
         businessData.value = {
           ...businessData.value,

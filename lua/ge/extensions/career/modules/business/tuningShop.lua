@@ -24,6 +24,9 @@ local managerAccumulator = 0
 local costsAccumulator = 0
 local totalSimTime = 0
 
+local notifyJobsUpdated -- forward declaration
+local getJobsOnly -- forward declaration
+
 local freeroamUtils = require('gameplay/events/freeroam/utils')
 local tuningShopTechs = require('ge/extensions/career/modules/business/tuningShopTechs')
 -- local tuningShopKits = require('ge/extensions/career/modules/business/tuningShopKits')
@@ -243,17 +246,6 @@ local function ensureJobLifetime(job, businessId)
   else
     job.remainingLifetime = lifetime
   end
-end
-
-local function notifyJobsUpdated(businessId)
-  if not businessId or not guihooks then
-    return
-  end
-
-  guihooks.trigger('businessComputer:onJobsUpdated', {
-    businessType = "tuningShop",
-    businessId = tostring(businessId)
-  })
 end
 
 local function getSkillTreeLevel(businessId, treeId, nodeId)
@@ -3527,22 +3519,44 @@ local function getManagerData(businessId)
   }
 end
 
-local function getActiveJobs(businessId)
-  local jobs = getJobsForBusiness(businessId)
+local function getActiveJobs(businessId, skipRefresh)
+  local id = normalizeBusinessId(businessId)
+  local jobs = skipRefresh and loadBusinessJobs(id) or getJobsForBusiness(id)
   local activeJobs = {}
   for _, job in ipairs(jobs.active or {}) do
-    table.insert(activeJobs, formatJobForUI(job, businessId))
+    table.insert(activeJobs, formatJobForUI(job, id))
   end
   return activeJobs
 end
 
-local function getNewJobs(businessId)
-  local jobs = getJobsForBusiness(businessId)
+local function getNewJobs(businessId, skipRefresh)
+  local id = normalizeBusinessId(businessId)
+  local jobs = skipRefresh and loadBusinessJobs(id) or getJobsForBusiness(id)
   local newJobs = {}
   for _, job in ipairs(jobs.new or {}) do
-    table.insert(newJobs, formatJobForUI(job, businessId))
+    table.insert(newJobs, formatJobForUI(job, id))
   end
   return newJobs
+end
+
+getJobsOnly = function(businessId, skipRefresh)
+  local id = normalizeBusinessId(businessId)
+  return {
+    businessId = tostring(id),
+    businessType = "tuningShop",
+    activeJobs = getActiveJobs(id, skipRefresh),
+    newJobs = getNewJobs(id, skipRefresh),
+    maxActiveJobs = getMaxActiveJobs(id)
+  }
+end
+
+notifyJobsUpdated = function(businessId)
+  if not businessId or not guihooks then
+    return
+  end
+
+  local data = getJobsOnly(businessId, true)
+  guihooks.trigger('businessComputer:onJobsUpdated', data)
 end
 
 local function onUpdate(dtReal, dtSim, dtRaw)
@@ -3595,7 +3609,9 @@ local function onUpdate(dtReal, dtSim, dtRaw)
       -- Refresh jobs (expirations and generation) periodically in background
       local lastRefresh = lastJobRefreshTimes[id] or totalSimTime
       if (totalSimTime - lastRefresh) >= 10.0 then
-        refreshJobs(id, false)
+        if refreshJobs(id, false) then
+          jobsChanged = true
+        end
       end
 
       if shouldProcessTechs then
@@ -4010,8 +4026,10 @@ M.initializeBusinessData = initializeBusinessData
 M.openMenu = openMenu
 M.getUIData = getUIData
 M.getJobsForBusiness = getJobsForBusiness
+M.getJobsOnly = getJobsOnly
 M.getActiveJobs = getActiveJobs
 M.getNewJobs = getNewJobs
+M.getMaxActiveJobs = getMaxActiveJobs
 M.acceptJob = acceptJob
 M.declineJob = declineJob
 M.abandonJob = abandonJob
