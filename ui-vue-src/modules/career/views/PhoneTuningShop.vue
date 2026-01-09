@@ -541,6 +541,14 @@ onMounted(async () => {
   events.on('businessComputer:onTechsUpdated', handleTechsUpdated)
   
   try {
+    // Check if career is active before calling business manager
+    const isCareerActive = await lua.career_career.isActive()
+    if (!isCareerActive) {
+      hasBusiness.value = false
+      loading.value = false
+      return
+    }
+    
     const purchased = await lua.career_modules_business_businessManager.getPurchasedBusinesses("tuningShop")
     let targetBusinessId = null
     if (purchased) {
