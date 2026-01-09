@@ -150,6 +150,24 @@
               Hire Tech
             </button>
           </div>
+          <div v-else-if="tech.jobId" class="assign-panel">
+            <button
+              class="btn-stop"
+              @click.stop="handleStopTech(tech)"
+              @mousedown.stop
+              data-focusable
+            >
+              Stop Job
+            </button>
+            <button
+              class="btn-fire"
+              @click.stop="handleFireTech(tech)"
+              @mousedown.stop
+              data-focusable
+            >
+              Fire Tech
+            </button>
+          </div>
           <div v-else-if="!tech.jobId" class="assign-panel">
             <button
               class="btn-assign"
@@ -505,6 +523,14 @@ const handleFireTech = async (tech) => {
 const handleHireTech = async (tech) => {
   if (!tech || !tech.fired) return
   const success = await store.hireTech(tech.id)
+  if (success) {
+    closeJobModal()
+  }
+}
+
+const handleStopTech = async (tech) => {
+  if (!tech || !tech.jobId || tech.fired) return
+  const success = await store.stopTechFromJob(tech.id)
   if (success) {
     closeJobModal()
   }
@@ -908,6 +934,31 @@ const handleHireTech = async (tech) => {
   .btn-icon {
     font-size: 1.2em;
     line-height: 1;
+  }
+}
+
+.btn-stop {
+  width: 100%;
+  padding: 0.75em;
+  background: rgba(241, 196, 15, 0.1);
+  border: 1px solid rgba(241, 196, 15, 0.3);
+  border-radius: 8px;
+  color: #f1c40f;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  
+  &:hover {
+    background: rgba(241, 196, 15, 0.2);
+    transform: translateY(-1px);
+  }
+  
+  &:active {
+    transform: translateY(0);
   }
 }
 

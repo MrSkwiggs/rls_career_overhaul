@@ -1101,6 +1101,97 @@ local function hireTech(businessId, techId)
   return true
 end
 
+local function stopTechFromJob(businessId, techId)
+  businessId = normalizeBusinessId(businessId)
+  techId = tonumber(techId)
+  if not businessId or not techId then
+    return false, "invalidParameters"
+  end
+
+  local tech = getTechById(businessId, techId)
+  if not tech then
+    return false, "techNotFound"
+  end
+
+  if tech.fired then
+    return false, "techFired"
+  end
+
+  if not tech.jobId then
+    return false, "noJobAssigned"
+  end
+
+  local jobId = tech.jobId
+  local job = helpers.getJobById and helpers.getJobById(businessId, jobId) or nil
+  if not job then
+    resetTechToIdle(tech)
+    notifyTechsUpdated(businessId)
+    return false, "jobNotFound"
+  end
+
+  resetTechToIdle(tech)
+  job.locked = false
+  job.techAssigned = nil
+
+  if helpers.loadBusinessJobs then
+    local jobs = helpers.loadBusinessJobs(businessId)
+    local isInActive = false
+    local activeJobIndex = nil
+
+    for i, activeJob in ipairs(jobs.active or {}) do
+      local jId = tonumber(activeJob.jobId) or activeJob.jobId
+      if jId == jobId then
+        isInActive = true
+        activeJobIndex = i
+        break
+      end
+    end
+
+    if not isInActive then
+      local maxActiveJobs = helpers.getMaxActiveJobs and helpers.getMaxActiveJobs(businessId) or 2
+      local currentActiveCount = #(jobs.active or {})
+
+      if currentActiveCount < maxActiveJobs then
+        if not jobs.active then
+          jobs.active = {}
+        end
+        table.insert(jobs.active, job)
+      else
+        if helpers.removeJobVehicle then
+          helpers.removeJobVehicle(businessId, jobId)
+        end
+
+        if helpers.clearJobLeaderboardEntry then
+          helpers.clearJobLeaderboardEntry(businessId, jobId)
+        end
+
+        for i, activeJob in ipairs(jobs.active or {}) do
+          local jId = tonumber(activeJob.jobId) or activeJob.jobId
+          if jId == jobId then
+            table.remove(jobs.active, i)
+            break
+          end
+        end
+
+        for i, newJob in ipairs(jobs.new or {}) do
+          local jId = tonumber(newJob.jobId) or newJob.jobId
+          if jId == jobId then
+            table.remove(jobs.new, i)
+            break
+          end
+        end
+      end
+    end
+  end
+
+  notifyTechsUpdated(businessId)
+  if helpers.notifyJobsUpdated then
+    helpers.notifyJobsUpdated(businessId)
+  end
+
+  return true
+end
+
 local function resetTechs()
   businessTechs = {}
 end
@@ -1122,6 +1213,7 @@ M.getTechMaxTier = getTechMaxTier
 M.canAssignTechToJob = canAssignTechToJob
 M.fireTech = fireTech
 M.hireTech = hireTech
+M.stopTechFromJob = stopTechFromJob
 
 return M
 

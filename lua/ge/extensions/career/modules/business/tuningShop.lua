@@ -3962,6 +3962,7 @@ local function onCareerActivated()
     loadBusinessJobs = loadBusinessJobs,
     notifyJobsUpdated = notifyJobsUpdated,
     getMaxPulledOutVehicles = getMaxPulledOutVehicles,
+    getMaxActiveJobs = getMaxActiveJobs,
     clearBusinessCachesForJob = function(businessId, jobId)
       if career_modules_business_businessComputer and career_modules_business_businessComputer.clearBusinessCachesForJob then
         career_modules_business_businessComputer.clearBusinessCachesForJob(businessId, jobId)
@@ -4053,6 +4054,7 @@ M.assignJobToTech = tuningShopTechs.assignJobToTech
 M.isJobLockedByTech = tuningShopTechs.isJobLockedByTech
 M.fireTech = tuningShopTechs.fireTech
 M.hireTech = tuningShopTechs.hireTech
+M.stopTechFromJob = tuningShopTechs.stopTechFromJob
 M.getTechData = getTechData
 M.getManagerData = getManagerData
 M.getBrandSelection = getBrandSelection

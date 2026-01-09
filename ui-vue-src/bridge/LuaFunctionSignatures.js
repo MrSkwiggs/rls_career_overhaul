@@ -1366,6 +1366,7 @@ export default {
     assignJobToTech: (businessId, techId, jobId) => [String, Integer, Integer],
     fireTech: (businessId, techId) => [String, Integer],
     hireTech: (businessId, techId) => [String, Integer],
+    stopTechFromJob: (businessId, techId) => [String, Integer],
     getTechsForBusiness: (businessId) => String,
   },
 
