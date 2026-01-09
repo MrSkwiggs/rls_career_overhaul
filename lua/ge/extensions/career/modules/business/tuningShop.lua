@@ -10,6 +10,7 @@ local businessJobs = {}
 local businessXP = {}
 local cachedRaceDataByBusiness = {}
 local generationTimers = {}
+local lastJobRefreshTimes = {}
 local managerTimers = {}
 local operatingCostTimers = {}
 local jobIdCounter = 0
@@ -21,6 +22,7 @@ local UPDATE_INTERVAL_COSTS = 5.0
 local techsAccumulator = 0
 local managerAccumulator = 0
 local costsAccumulator = 0
+local totalSimTime = 0
 
 local freeroamUtils = require('gameplay/events/freeroam/utils')
 local tuningShopTechs = require('ge/extensions/career/modules/business/tuningShopTechs')
@@ -2219,7 +2221,46 @@ local function updateNewJobExpirations(businessId, jobs, dtSim)
   return changed
 end
 
+local function refreshJobs(businessId, forced)
+  local id = normalizeBusinessId(businessId)
+  if not id then return false end
+
+  local jobs = loadBusinessJobs(id)
+  local now = totalSimTime
+  local lastRefresh = lastJobRefreshTimes[id] or now
+  local dt = now - lastRefresh
+  
+  local changed = false
+  if dt > 0 then
+    if updateNewJobExpirations(id, jobs, dt) then
+      changed = true
+    end
+  end
+
+  generationTimers[id] = (generationTimers[id] or 0) + dt
+  local genInterval = getGenerationIntervalSeconds(id)
+  
+  if generationTimers[id] >= genInterval or (forced and #(jobs.new or {}) == 0) then
+    local timeToProcess = generationTimers[id]
+    if forced and #(jobs.new or {}) == 0 and timeToProcess < genInterval then
+      timeToProcess = genInterval
+    end
+
+    if processJobGeneration(id, jobs, timeToProcess) then
+      changed = true
+    end
+    generationTimers[id] = generationTimers[id] % genInterval
+  end
+
+  lastJobRefreshTimes[id] = now
+  if changed then
+    notifyJobsUpdated(id)
+  end
+  return changed
+end
+
 local function getJobsForBusiness(businessId)
+  refreshJobs(businessId, true)
   local jobs = loadBusinessJobs(businessId)
   if not jobs.new then
     jobs.new = {}
@@ -3514,6 +3555,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     return
   end
 
+  totalSimTime = totalSimTime + deltaSim
   techsAccumulator = techsAccumulator + deltaSim
   managerAccumulator = managerAccumulator + deltaSim
   costsAccumulator = costsAccumulator + deltaSim
@@ -3550,18 +3592,10 @@ local function onUpdate(dtReal, dtSim, dtRaw)
 
       local jobsChanged = false
 
-      generationTimers[id] = (generationTimers[id] or 0) + deltaSim
-      local genInterval = getGenerationIntervalSeconds(id)
-      if generationTimers[id] >= genInterval then
-        local jobs = loadBusinessJobs(id)
-        jobs.new = jobs.new or {}
-        if processJobGeneration(id, jobs, generationTimers[id]) then
-          jobsChanged = true
-        end
-        if updateNewJobExpirations(id, jobs, generationTimers[id]) then
-          jobsChanged = true
-        end
-        generationTimers[id] = generationTimers[id] % genInterval
+      -- Refresh jobs (expirations and generation) periodically in background
+      local lastRefresh = lastJobRefreshTimes[id] or totalSimTime
+      if (totalSimTime - lastRefresh) >= 10.0 then
+        refreshJobs(id, false)
       end
 
       if shouldProcessTechs then

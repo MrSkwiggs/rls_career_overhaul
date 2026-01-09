@@ -289,6 +289,15 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
         }
       }
 
+      // Add local countdown for job expirations to keep them in sync with the UI
+      if (Array.isArray(businessData.value.newJobs)) {
+        businessData.value.newJobs.forEach(job => {
+          if (typeof job.expiresInSeconds === 'number' && job.expiresInSeconds > 0) {
+            job.expiresInSeconds = Math.max(0, job.expiresInSeconds - 0.1)
+          }
+        })
+      }
+
     }, 100) // 10Hz update for smoothness
   }
 
