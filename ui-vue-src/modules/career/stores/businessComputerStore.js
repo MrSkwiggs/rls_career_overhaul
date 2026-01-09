@@ -163,6 +163,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   const managerAssignmentInterval = computed(() => businessData.value?.managerAssignmentInterval || null)
   const managerReadyToAssign = computed(() => businessData.value?.managerReadyToAssign === true)
   const managerTimeRemaining = computed(() => businessData.value?.managerTimeRemaining || null)
+  const managerPaused = computed(() => businessData.value?.managerPaused === true)
   const personalUseUnlocked = computed(() => businessData.value?.personalUseUnlocked === true)
   const personalVehicles = computed(() => {
     const list = pulledOutVehicles.value || []
@@ -470,6 +471,46 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
       }
       return success
     } catch (error) {
+      return false
+    }
+  }
+
+  const setManagerPaused = async (paused) => {
+    if (!businessId.value) return false
+    try {
+      let success
+      if (businessType.value === 'tuningShop') {
+        const result = await lua.career_modules_business_tuningShop.setManagerPaused(businessId.value, paused)
+        
+        // Handle multiple return values: [success, pausedState]
+        let newPausedState
+        if (Array.isArray(result) && result.length >= 2) {
+          success = result[0] === true || result[0] === 'true' || result[0] === 1
+          newPausedState = result[1] === true
+        } else {
+          success = result === true || result === 'true' || result === 1
+          newPausedState = paused === true
+        }
+        
+        // Update immediately with the new paused state (create new object to trigger reactivity)
+        if (success && businessData.value) {
+          businessData.value = {
+            ...businessData.value,
+            managerPaused: newPausedState
+          }
+        }
+      } else {
+        return false
+      }
+      
+      if (success) {
+        // Refresh the full data to ensure everything is in sync
+        await loadBusinessData(businessType.value, businessId.value)
+      }
+      
+      return success
+    } catch (error) {
+      console.error('Error setting manager paused:', error)
       return false
     }
   }
@@ -2250,11 +2291,13 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
     fireTech,
     hireTech,
     stopTechFromJob,
+    setManagerPaused,
     hasManager,
     hasGeneralManager,
     managerAssignmentInterval,
     managerReadyToAssign,
     managerTimeRemaining,
+    managerPaused,
     brandSelection,
     raceSelection,
     availableBrands,
