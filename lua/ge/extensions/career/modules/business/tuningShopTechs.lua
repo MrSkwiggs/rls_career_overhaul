@@ -105,26 +105,26 @@ local function ensureTechSlots(businessId)
   local capacity = math.max(0, getTechCapacity(businessId))
   
   local techs = businessTechs[businessId] or {}
-  local firedTechs = {}
-  local hiredTechs = {}
   
   for _, tech in ipairs(techs) do
     ensureTechIdentity(tech, tech.id)
-    if tech.fired then
-      table.insert(firedTechs, tech)
-    else
-      table.insert(hiredTechs, tech)
+  end
+  
+  local hiredCount = 0
+  local totalCount = #techs
+  local maxId = 0
+  for _, tech in ipairs(techs) do
+    if not tech.fired then
+      hiredCount = hiredCount + 1
+    end
+    if tech.id and tech.id > maxId then
+      maxId = tech.id
     end
   end
   
-  local nextId = 1
-  for _, tech in ipairs(hiredTechs) do
-    if tech.id >= nextId then
-      nextId = tech.id + 1
-    end
-  end
+  local nextId = maxId + 1
   
-  while #hiredTechs < capacity do
+  while totalCount < capacity do
     local newTech = {
       id = nextId,
       name = string.format("Tech #%d", nextId),
@@ -140,20 +140,14 @@ local function ensureTechSlots(businessId)
       fired = false
     }
     ensureTechIdentity(newTech, nextId)
-    table.insert(hiredTechs, newTech)
+    table.insert(techs, newTech)
+    totalCount = totalCount + 1
+    hiredCount = hiredCount + 1
     nextId = nextId + 1
   end
   
-  local result = {}
-  for _, tech in ipairs(hiredTechs) do
-    table.insert(result, tech)
-  end
-  for _, tech in ipairs(firedTechs) do
-    table.insert(result, tech)
-  end
-  
-  businessTechs[businessId] = result
-  return result
+  businessTechs[businessId] = techs
+  return techs
 end
 
 local function getBusinessTechsPath(businessId)

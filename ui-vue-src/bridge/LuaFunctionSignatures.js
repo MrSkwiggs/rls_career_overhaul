@@ -1364,6 +1364,8 @@ export default {
     isPersonalUseUnlocked: (businessId) => Boolean,
     updateTechName: (businessId, techId, name) => [String, Integer, String],
     assignJobToTech: (businessId, techId, jobId) => [String, Integer, Integer],
+    fireTech: (businessId, techId) => [String, Integer],
+    hireTech: (businessId, techId) => [String, Integer],
     getTechsForBusiness: (businessId) => String,
   },
 

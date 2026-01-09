@@ -174,7 +174,7 @@
       </div>
     </div>
 
-    <div v-else class="empty-state">
+    <div v-if="techList.length === 0" class="empty-state">
       <div class="empty-state__icon">🔧</div>
       <h3>No Technicians Hired</h3>
       <p>Purchase shop upgrades to hire technicians and automate your workflow.</p>
@@ -250,7 +250,7 @@ const availableJobs = computed(() => {
 
 const techList = computed(() => store.techs || [])
 const techCapabilityTier = computed(() => {
-  const firstWithTier = techList.value.find(t => typeof t.maxTier === "number")
+  const firstWithTier = techList.value.find(t => typeof t.maxTier === "number" && !t.fired)
   return firstWithTier ? firstWithTier.maxTier : null
 })
 
