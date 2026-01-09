@@ -6,7 +6,7 @@ local M = {}
 
 local imgui = ui_imgui
 
-M.dependencies = {'career_saveSystem', 'core_recoveryPrompt', 'gameplay_traffic', 'core_jobSystem'}
+M.dependencies = {'career_saveSystem', 'core_recoveryPrompt', 'gameplay_traffic'}
 
 M.tutorialEnabled = false
 
@@ -814,7 +814,7 @@ end
 
 local function onVehicleGroupSpawned()
   if core_gamestate.getLoadingStatus("careerLoading") then
-    core_jobSystem.create(function(job)
+    core_jobsystem.create(function(job)
       job.sleep(6.7)
       commands.setGameCamera(true)
       core_gamestate.requestExitLoadingScreen("careerLoading")
