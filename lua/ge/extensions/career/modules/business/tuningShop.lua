@@ -2987,7 +2987,12 @@ local function getOperatingCosts(businessId)
   end
 
   local techList = tuningShopTechs.getTechsForBusiness(businessId) or {}
-  local techCount = #techList
+  local techCount = 0
+  for _, tech in ipairs(techList) do
+    if not tech.fired then
+      techCount = techCount + 1
+    end
+  end
   techsCost = techCount * 2500
 
   local additionalLiftsCost = additionalLifts * 5000
@@ -4046,6 +4051,8 @@ M.getTechsForBusiness = tuningShopTechs.getTechsForBusiness
 M.updateTechName = tuningShopTechs.updateTechName
 M.assignJobToTech = tuningShopTechs.assignJobToTech
 M.isJobLockedByTech = tuningShopTechs.isJobLockedByTech
+M.fireTech = tuningShopTechs.fireTech
+M.hireTech = tuningShopTechs.hireTech
 M.getTechData = getTechData
 M.getManagerData = getManagerData
 M.getBrandSelection = getBrandSelection
