@@ -3,14 +3,15 @@
     <BngScreenHeading class="profiles-title" :preheadings="[$ctx_t('ui.playmodes.career')]">{{ $ctx_t("ui.career.savedProgress") }} </BngScreenHeading>
     <BackAside v-bng-on-ui-nav:back,menu="navigateToMainMenu" class="profiles-back" @click="navigateToMainMenu" />
     <BngList :layout="LIST_LAYOUTS.RIBBON" :targetWidth="22" :targetHeight="28" :targetMargin="1" noBackground class="profiles-modern-list">
-      <ProfileCreateCard v-model:profileName="newProfileName" class="profile-card" @card:activate="value => onCardActivated(value, -1)" @load="onCreateSave" />
+      <ProfileCreateCard v-model:profileName="newProfileName" v-model:active="createCardActive" class="profile-card" @card:activate="value => onCardActivated(value, -1)" @load="onCreateSave" />
       <ProfileCard
         v-for="(profile, index) of profiles"
         v-bng-popover="profile.incompatibleVersion ? 'tooltip-outdated-message' : null"
         v-bind="profile"
-        v-bng-disabled="(isManage || selectedCard === -1) && selectedCard !== index"
+        v-bng-disabled="isManage && selectedCard !== index"
         :key="profile.id"
         :active="activeProfileId === profile.id"
+        :forceCloseManage="selectedCard === -1"
         class="profile-card"
         @card:activate="value => onCardActivated(value, index)"
         @manage:change="value => onManageChange(value, index)"
@@ -44,6 +45,7 @@ const activeProfileId = ref(null)
 const selectedCard = ref(null)
 const isManage = ref(false)
 const newProfileName = ref(null)
+const createCardActive = ref(false)
 
 let isLoading = false
 
@@ -60,7 +62,12 @@ const onCreateSave = async (profileName, tutorialChecked, hardcoreMode, challeng
 function onCardActivated(active, index) {
   if (active) {
     selectedCard.value = index
-    if (index === -1) newProfileName.value = getNewName()
+    if (index === -1) {
+      newProfileName.value = getNewName()
+    } else {
+      // Close the create card when a profile card is activated
+      createCardActive.value = false
+    }
   } else {
     selectedCard.value = null
   }

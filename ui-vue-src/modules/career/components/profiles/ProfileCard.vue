@@ -164,6 +164,7 @@ const props = defineProps({
   branches: Array,
   activeChallenge: Object,
   cheatsMode: Boolean,
+  forceCloseManage: Boolean,
 })
 
 const emit = defineEmits(["card:activate", "manage:change", "load"])
@@ -175,6 +176,18 @@ const expanded = ref(false)
 const cardStates = reactive({
   focused: false,
   hovered: false,
+})
+
+// Watch for parent telling us to close manage mode (e.g., when create card opens)
+watch(() => props.forceCloseManage, (shouldClose) => {
+  if (shouldClose && isManage.value) {
+    isManage.value = false
+    currentMenu.value = null
+    isActivated.value = false
+    expanded.value = false
+    emit("card:activate", false)
+    emit("manage:change", false)
+  }
 })
 
 const validateName = inject("validateName")
@@ -226,6 +239,12 @@ const canBubbleEvent = e => {
 
 const onScopeChanged = value => {
   isActivated.value = value
+  // Reset manage mode when scope deactivates to prevent mixed UI state
+  if (!value && isManage.value) {
+    isManage.value = false
+    currentMenu.value = null
+    emit("manage:change", false)
+  }
 }
 
 function onFocused(focused) {
