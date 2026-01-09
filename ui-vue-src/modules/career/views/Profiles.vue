@@ -1,7 +1,7 @@
 <template>
-  <div v-bng-scoped-nav="{ activated: isActivated, canDeactivate }" class="profiles-container" @deactivate="onDeactivate">
+  <div v-bng-scoped-nav="{ activateOnMount: true }" class="profiles-container" @deactivate="onDeactivate">
     <BngScreenHeading class="profiles-title" :preheadings="[$ctx_t('ui.playmodes.career')]">{{ $ctx_t("ui.career.savedProgress") }} </BngScreenHeading>
-    <BackAside class="profiles-back" @click="onDeactivate()" />
+    <BackAside v-bng-on-ui-nav:back,menu="navigateToMainMenu" class="profiles-back" @click="navigateToMainMenu" />
     <BngList :layout="LIST_LAYOUTS.RIBBON" :targetWidth="22" :targetHeight="28" :targetMargin="1" noBackground class="profiles-modern-list">
       <ProfileCreateCard v-model:profileName="newProfileName" class="profile-card" @card:activate="value => onCardActivated(value, -1)" @load="onCreateSave" />
       <ProfileCard
@@ -40,9 +40,6 @@ const { events } = useBridge()
 
 const profiles = ref(null)
 const activeProfileId = ref(null)
-
-// screen scoped nav. should be automatically activated when the screen is loaded
-const isActivated = ref(true)
 
 const selectedCard = ref(null)
 const isManage = ref(false)
@@ -84,20 +81,23 @@ onBeforeUnmount(() => {
 
 provide("validateName", validateName)
 
-const onDeactivate = () => {
-  // if (store.isLoading) return
-
-  if (isLoading) {
-    isLoading = false
-  } else if (activeProfileId.value) {
+const navigateToMainMenu = () => {
+  if (activeProfileId.value) {
     window.bngVue.gotoAngularState("menu.careerPause")
   } else {
     window.bngVue.gotoGameState("menu.mainmenu")
   }
 }
 
-const canDeactivate = () => {
-  return false
+const onDeactivate = (event) => {
+  // Don't navigate if this is a forced deactivation (e.g., component unmounting)
+  if (event?.detail?.force) return
+
+  if (isLoading) {
+    isLoading = false
+  } else {
+    navigateToMainMenu()
+  }
 }
 
 async function onProfilesReceived(data) {
