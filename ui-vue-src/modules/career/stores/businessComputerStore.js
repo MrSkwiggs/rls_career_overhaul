@@ -420,6 +420,42 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
     }
   }
 
+  const fireTech = async (techId) => {
+    if (!businessId.value) return false
+    try {
+      let success
+      if (businessType.value === 'tuningShop') {
+        success = await lua.career_modules_business_tuningShop.fireTech(businessId.value, techId)
+      } else {
+        return false
+      }
+      if (success) {
+        await loadBusinessData(businessType.value, businessId.value)
+      }
+      return success
+    } catch (error) {
+      return false
+    }
+  }
+
+  const hireTech = async (techId) => {
+    if (!businessId.value) return false
+    try {
+      let success
+      if (businessType.value === 'tuningShop') {
+        success = await lua.career_modules_business_tuningShop.hireTech(businessId.value, techId)
+      } else {
+        return false
+      }
+      if (success) {
+        await loadBusinessData(businessType.value, businessId.value)
+      }
+      return success
+    } catch (error) {
+      return false
+    }
+  }
+
   const pullOutVehicle = async (vehicleId) => {
     if (!businessId.value) {
       return false
@@ -2193,6 +2229,8 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
     techs,
     assignTechToJob,
     renameTech,
+    fireTech,
+    hireTech,
     hasManager,
     hasGeneralManager,
     managerAssignmentInterval,
