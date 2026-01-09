@@ -127,7 +127,12 @@ end
 local function sleep(time)
     isSleeping = true
     sleepTime = time
-    ui_fadeScreen.cycle(0.5, 0.5, 0.5)
+    core_jobsystem.create(function(job)
+        local cycleTime = 0.5   
+        ui_fadeScreen.start(cycleTime)
+        job.sleep(cycleTime)
+        ui_fadeScreen.stop(cycleTime)
+    end)
 end
 
 M.openMenuFromComputer = openMenuFromComputer
