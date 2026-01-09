@@ -2765,8 +2765,22 @@ M.applyKit = function(businessId, vehicleId, kitId)
   }
 end
 
+local function onCareerModulesActivated()
+  if career_modules_business_businessManager then
+    local purchased = career_modules_business_businessManager.getAllPurchasedBusinesses()
+    for businessType, businesses in pairs(purchased) do
+      for businessId, _ in pairs(businesses) do
+        setBusinessContext(businessType, businessId)
+      end
+    end
+  end
+end
+
 local function onExtensionLoaded()
   businessContexts = {}
+  if career_career and career_career.isActive() then
+    onCareerModulesActivated()
+  end
   return true
 end
 
