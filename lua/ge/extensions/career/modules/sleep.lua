@@ -128,10 +128,13 @@ local function sleep(time)
     isSleeping = true
     sleepTime = time
     core_jobsystem.create(function(job)
+        local play = scenetree.tod.play
+        scenetree.tod.play = true
         local cycleTime = 0.5   
         ui_fadeScreen.start(cycleTime)
-        job.sleep(cycleTime)
+        job.sleep(time)
         ui_fadeScreen.stop(cycleTime)
+        scenetree.tod.play = play
     end)
 end
 
