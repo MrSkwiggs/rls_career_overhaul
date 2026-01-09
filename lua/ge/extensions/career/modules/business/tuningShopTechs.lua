@@ -1050,12 +1050,7 @@ local function fireTech(businessId, techId)
   end
 
   if tech.jobId then
-    local job = helpers.getJobById and helpers.getJobById(businessId, tech.jobId) or nil
-    if job then
-      job.locked = false
-      job.techAssigned = nil
-    end
-    resetTechToIdle(tech)
+    return false, "techHasJob"
   end
 
   tech.fired = true

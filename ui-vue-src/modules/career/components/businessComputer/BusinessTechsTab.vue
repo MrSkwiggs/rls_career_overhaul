@@ -159,14 +159,6 @@
             >
               Stop Job
             </button>
-            <button
-              class="btn-fire"
-              @click.stop="handleFireTech(tech)"
-              @mousedown.stop
-              data-focusable
-            >
-              Fire Tech
-            </button>
           </div>
           <div v-else-if="!tech.jobId" class="assign-panel">
             <button
