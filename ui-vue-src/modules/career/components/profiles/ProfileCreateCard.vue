@@ -1,6 +1,6 @@
 <template>
   <BngCard
-    v-bng-scoped-nav="{ activated: isActive }"
+    v-bng-scoped-nav="{ activated: isActive, autoFocusDelay: 0 }"
     v-bng-blur
     v-bng-sound-class="'bng_hover_generic'"
     :hideFooter="true"
@@ -104,7 +104,7 @@
           <button ref="cancelButton" class="modern-btn modern-cancel" @click="closeCard">Cancel</button>
         </div>
       </div>
-      <div v-if="!isActive" class="create-content-cover" @click="setActive(true)">
+      <div v-if="!isActive" bng-nav-item class="create-content-cover" @click.stop="setActive(true)">
         <div class="cover-plus-container">
           <div class="cover-plus-button">+</div>
         </div>
@@ -125,9 +125,9 @@ import ChallengeDropdown from "./ChallengeDropdown.vue"
 const emit = defineEmits(["card:activate", "load"])
 
 const profileName = defineModel("profileName", { required: true })
+const isActive = defineModel("active", { type: Boolean, default: false })
 const hardcoreMode = ref(false)
 const cheatsMode = ref(false)
-const isActive = ref(false)
 
 const validateName = inject("validateName")
 const nameError = ref(null)
@@ -284,8 +284,11 @@ function setActive(value) {
       return
     }
   }
-  isActive.value = value
-  emit("card:activate", value)
+  // Only emit if value actually changed (avoid duplicate events when parent controls via model)
+  if (isActive.value !== value) {
+    isActive.value = value
+    emit("card:activate", value)
+  }
 }
 
 function onEnter(event) {
@@ -299,8 +302,10 @@ function onMenu() {
 }
 
 function closeCard() {
-  isActive.value = false
-  emit("card:activate", false)
+  if (isActive.value) {
+    isActive.value = false
+    emit("card:activate", false)
+  }
 }
 </script>
 
