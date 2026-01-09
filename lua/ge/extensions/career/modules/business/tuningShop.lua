@@ -3279,6 +3279,41 @@ local function ensureTabsRegistered()
   return true
 end
 
+local function getFormattedPersonalVehiclesInZone(businessId)
+  if not businessId then
+    return {}
+  end
+  
+  local businessType = "tuningShop"
+  local business = freeroam_facilities.getFacility(businessType, businessId)
+  local isOnBusinessMap = business ~= nil
+  local playerInZone = isOnBusinessMap and isPlayerInTuningShopZone(businessId) or false
+  
+  local formattedPersonalVehicles = {}
+  local personalUseUnlocked = isPersonalUseUnlocked(businessId)
+  if personalUseUnlocked and playerInZone and isOnBusinessMap then
+    local inventoryVehiclesInZone = getInventoryVehiclesInGarageZone(businessId)
+    for _, invVeh in ipairs(inventoryVehiclesInZone) do
+      local personalEntry = createPersonalVehicleEntry(businessId, invVeh.inventoryId, invVeh.inventoryVehicleData, invVeh.spawnedId)
+      if personalEntry then
+        local formatted = formatVehicleForUI(personalEntry, businessId)
+        if formatted then
+          formatted.damage = 0
+          formatted.damageLocked = false
+          formatted.damageThreshold = getDamageThreshold(businessId)
+          formatted.inGarageZone = true
+          formatted.isPersonal = true
+          formatted.inventoryId = invVeh.inventoryId
+          formatted.spawnedVehicleId = personalEntry.spawnedVehicleId
+          table.insert(formattedPersonalVehicles, formatted)
+        end
+      end
+    end
+  end
+  
+  return formattedPersonalVehicles
+end
+
 local function getUIData(businessId)
   if not businessId then
     return nil
@@ -3877,6 +3912,7 @@ local businessObject = {
   getOperatingCosts = function(businessId) return getOperatingCosts(businessId) end,
   initializeBusinessData = function(businessId) return initializeBusinessData(businessId) end,
   getUIData = function(businessId) return getUIData(businessId) end,
+  getFormattedPersonalVehiclesInZone = function(businessId) return getFormattedPersonalVehiclesInZone(businessId) end,
   getManagerData = function(businessId) return getManagerData(businessId) end,
   getMaxPulledOutVehicles = function(businessId) return getMaxPulledOutVehicles(businessId) end,
   isPlayerInBusinessZone = function(businessId) return isPlayerInTuningShopZone(businessId) end,
@@ -4096,6 +4132,7 @@ M.loadRaceData = loadRaceData
 M.initializeBusinessData = initializeBusinessData
 M.openMenu = openMenu
 M.getUIData = getUIData
+M.getFormattedPersonalVehiclesInZone = getFormattedPersonalVehiclesInZone
 M.getJobsForBusiness = getJobsForBusiness
 M.getJobsOnly = getJobsOnly
 M.getActiveJobs = getActiveJobs
@@ -4147,6 +4184,7 @@ M.isSpawnedVehicleInGarageZone = isSpawnedVehicleInGarageZone
 M.isPositionInGarageZone = isPositionInGarageZone
 M.isPersonalUseUnlocked = isPersonalUseUnlocked
 M.getInventoryVehiclesInGarageZone = getInventoryVehiclesInGarageZone
+M.createPersonalVehicleEntry = createPersonalVehicleEntry
 M.selectPersonalVehicle = selectPersonalVehicle
 M.getActivePersonalVehicle = getActivePersonalVehicle
 M.clearActivePersonalVehicle = clearActivePersonalVehicle
