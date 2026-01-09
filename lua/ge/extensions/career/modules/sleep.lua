@@ -125,16 +125,17 @@ local function onScreenFadeState(state)
 end
 
 local function sleep(time)
+    print("sleeping to time: " .. tostring(time))
     isSleeping = true
     sleepTime = time
     core_jobsystem.create(function(job)
+        local cycleTime = 0.5
         local play = scenetree.tod.play
         scenetree.tod.play = true
-        local cycleTime = 0.5   
         ui_fadeScreen.start(cycleTime)
-        job.sleep(time)
+        job.sleep(cycleTime)
         ui_fadeScreen.stop(cycleTime)
-        scenetree.tod.play = play
+        scenetree.tod.play = play or false
     end)
 end
 
