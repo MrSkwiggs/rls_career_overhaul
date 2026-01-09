@@ -2778,9 +2778,6 @@ end
 
 local function onExtensionLoaded()
   businessContexts = {}
-  if career_career and career_career.isActive() then
-    onCareerModulesActivated()
-  end
   return true
 end
 
@@ -2817,6 +2814,8 @@ local function isPersonalUseUnlocked(businessId)
 end
 
 M.onExtensionLoaded = onExtensionLoaded
+M.onCareerModulesActivated = onCareerModulesActivated
+M.setBusinessContext = setBusinessContext
 M.getTechData = getTechData
 M.getManagerData = getManagerData
 M.enterShoppingVehicle = enterShoppingVehicle
