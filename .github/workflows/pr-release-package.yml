@@ -108,6 +108,7 @@ jobs:
         with:
           commit_message: "chore: update built UI files"
           file_pattern: ui/vue-dist/*
+          add_options: '--force'
           branch: ${{ github.head_ref }}
   
   zip:
