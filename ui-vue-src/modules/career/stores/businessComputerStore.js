@@ -615,34 +615,43 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
         originalVehicleState.value = null
         originalCurveData.value = null
 
-        activeVehicleId.value = vehicleId
-        const vehiclesList = Array.isArray(pulledOutVehicles.value) ? pulledOutVehicles.value : []
-        let selectedVehicle = vehiclesList.find(vehicle => normalizeId(vehicle?.vehicleId) === normalizedTarget) || null
-        const requiresRefresh = !selectedVehicle || selectedVehicle.jobId === undefined || selectedVehicle.jobId === null
-        pulledOutVehicle.value = selectedVehicle
+        // activeVehicleId and pulledOutVehicle are set by onVehiclePulledOut/onPersonalVehicleSelected event handlers
+        // Save the current selection before any refresh
+        const savedActiveVehicleId = activeVehicleId.value
+        const savedPulledOutVehicle = pulledOutVehicle.value
+        const currentVehicle = savedPulledOutVehicle
+        const requiresRefresh = !currentVehicle || currentVehicle.jobId === undefined || currentVehicle.jobId === null
         businessData.value = {
           ...businessData.value,
-          pulledOutVehicle: selectedVehicle
+          pulledOutVehicle: currentVehicle
         }
 
         if (requiresRefresh && businessType.value && businessId.value) {
           try {
             await loadBusinessData(businessType.value, businessId.value)
-            const refreshedList = Array.isArray(pulledOutVehicles.value) ? pulledOutVehicles.value : []
-            selectedVehicle = refreshedList.find(vehicle => normalizeId(vehicle?.vehicleId) === normalizedTarget) || null
-            pulledOutVehicle.value = selectedVehicle
+            // Restore the saved selection after loadBusinessData (which calls setBusinessData and resets it)
+            const vehiclesList = Array.isArray(pulledOutVehicles.value) ? pulledOutVehicles.value : []
+            const restoredVehicle = vehiclesList.find(v => normalizeId(v?.vehicleId) === normalizeId(savedActiveVehicleId))
+            if (restoredVehicle) {
+              activeVehicleId.value = restoredVehicle.vehicleId
+              pulledOutVehicle.value = restoredVehicle
+            } else if (savedActiveVehicleId) {
+              activeVehicleId.value = savedActiveVehicleId
+              pulledOutVehicle.value = savedPulledOutVehicle
+            }
           } catch (error) {
           }
         }
 
-        if (selectedVehicle && (vehicleView.value === 'parts' || vehicleView.value === 'tuning')) {
+        const activeVehicle = pulledOutVehicle.value
+        if (activeVehicle && (vehicleView.value === 'parts' || vehicleView.value === 'tuning')) {
           setTimeout(async () => {
-            if (vehicleView.value === 'parts' && selectedVehicle?.vehicleId) {
+            if (vehicleView.value === 'parts' && activeVehicle?.vehicleId) {
               await initializeCartForVehicle()
-              await requestVehiclePartsTree(selectedVehicle.vehicleId)
-            } else if (vehicleView.value === 'tuning' && selectedVehicle?.vehicleId) {
+              await requestVehiclePartsTree(activeVehicle.vehicleId)
+            } else if (vehicleView.value === 'tuning' && activeVehicle?.vehicleId) {
               await initializeCartForVehicle()
-              await requestVehicleTuningData(selectedVehicle.vehicleId)
+              await requestVehicleTuningData(activeVehicle.vehicleId)
             }
           }, 100)
         }
@@ -1381,10 +1390,44 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
     if (String(data.businessId) !== String(businessId.value)) return
     const vehiclesFromData = Array.isArray(data.pulledOutVehicles) ? data.pulledOutVehicles : []
     pulledOutVehicles.value = vehiclesFromData
-    if (data.vehicleId) {
-      activeVehicleId.value = data.vehicleId
-      pulledOutVehicle.value = vehiclesFromData.find(v => normalizeId(v?.vehicleId) === normalizeId(data.vehicleId)) || null
+    
+    // For personal vehicles, onPersonalVehicleSelected already set activeVehicleId correctly
+    // Only update the vehicle list, don't overwrite activeVehicleId
+    if (data.isPersonalVehicle) {
+      // Just ensure the vehicle list is updated, but preserve activeVehicleId
+      const currentActiveId = activeVehicleId.value
+      if (currentActiveId) {
+        const currentActiveVehicle = vehiclesFromData.find(v => normalizeId(v?.vehicleId) === normalizeId(currentActiveId))
+        if (currentActiveVehicle) {
+          pulledOutVehicle.value = currentActiveVehicle
+        }
+      }
+    } else {
+      // For job vehicles, update activeVehicleId normally
+      if (data.vehicleId) {
+        const foundVehicle = vehiclesFromData.find(v => normalizeId(v?.vehicleId) === normalizeId(data.vehicleId))
+        if (foundVehicle) {
+          // Always update activeVehicleId for job vehicles when vehicleId is provided
+          activeVehicleId.value = foundVehicle.vehicleId
+          pulledOutVehicle.value = foundVehicle
+        } else {
+          // Vehicle not found in list, but still set the vehicleId
+          activeVehicleId.value = data.vehicleId
+          pulledOutVehicle.value = null
+        }
+      } else {
+        // No vehicleId provided, preserve current active if it exists in new list
+        const currentActiveId = activeVehicleId.value
+        if (currentActiveId) {
+          const currentActiveVehicle = vehiclesFromData.find(v => normalizeId(v?.vehicleId) === normalizeId(currentActiveId))
+          if (currentActiveVehicle) {
+            activeVehicleId.value = currentActiveVehicle.vehicleId
+            pulledOutVehicle.value = currentActiveVehicle
+          }
+        }
+      }
     }
+    
     businessData.value = {
       ...businessData.value,
       vehicles: data.vehicles || [],
@@ -1412,6 +1455,25 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
     }
   }
 
+  const handlePersonalVehicleSelected = (data) => {
+    if (String(data.businessId) !== String(businessId.value)) return
+    if (data.vehicle && data.vehicle.vehicleId) {
+      // Ensure the vehicle is in pulledOutVehicles list
+      const currentVehicles = Array.isArray(pulledOutVehicles.value) ? pulledOutVehicles.value : []
+      const existingVehicle = currentVehicles.find(v => normalizeId(v?.vehicleId) === normalizeId(data.vehicle.vehicleId))
+      if (existingVehicle) {
+        // Use the exact vehicleId from pulledOutVehicles to ensure consistency with sidebar
+        activeVehicleId.value = existingVehicle.vehicleId
+        pulledOutVehicle.value = existingVehicle
+      } else {
+        // Vehicle not in list yet, add it and use its vehicleId
+        pulledOutVehicles.value = [...currentVehicles, data.vehicle]
+        activeVehicleId.value = data.vehicle.vehicleId
+        pulledOutVehicle.value = data.vehicle
+      }
+    }
+  }
+
   bridge.events.on('businessComputer:onPartCartUpdated', handlePartCartUpdated)
   bridge.events.on('businessComputer:onJobsUpdated', handleJobsUpdated)
   bridge.events.on('businessComputer:onTechsUpdated', handleTechsUpdated)
@@ -1423,6 +1485,7 @@ export const useBusinessComputerStore = defineStore("businessComputer", () => {
   bridge.events.on('businessComputer:onTechAssigned', handleTechAssigned)
   bridge.events.on('businessComputer:onVehiclePulledOut', handleVehiclePulledOut)
   bridge.events.on('businessComputer:onVehiclePutAway', handleVehiclePutAway)
+  bridge.events.on('businessComputer:onPersonalVehicleSelected', handlePersonalVehicleSelected)
 
   const addPartToCart = async (part, slot) => {
     if (!businessId.value || !pulledOutVehicle.value?.vehicleId) {
