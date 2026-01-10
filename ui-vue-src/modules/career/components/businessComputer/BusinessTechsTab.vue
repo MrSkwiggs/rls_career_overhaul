@@ -24,7 +24,28 @@
               {{ managerStatusText }}
             </span>
           </span>
+          <button
+            class="manager-pause-btn"
+            :class="{ 'paused': managerPaused, 'toggling': isTogglingPause }"
+            :disabled="isTogglingPause"
+            @click.stop="handleToggleManagerPause"
+            @mousedown.stop
+            data-focusable
+            :title="managerPaused ? 'Resume Manager' : 'Pause Manager'"
+          >
+            <svg v-if="managerPaused" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="6" y="4" width="4" height="16"></rect>
+              <rect x="14" y="4" width="4" height="16"></rect>
+            </svg>
+          </button>
         </div>
+      </div>
+      <div v-if="managerCantAssignMessage" class="manager-warning-banner">
+        <span class="warning-icon">⚠</span>
+        <span class="warning-text">{{ managerCantAssignMessage }}</span>
       </div>
     </div>
 
@@ -150,6 +171,16 @@
               Hire Tech
             </button>
           </div>
+          <div v-else-if="tech.jobId" class="assign-panel">
+            <button
+              class="btn-stop"
+              @click.stop="handleStopTech(tech)"
+              @mousedown.stop
+              data-focusable
+            >
+              Stop Job
+            </button>
+          </div>
           <div v-else-if="!tech.jobId" class="assign-panel">
             <button
               class="btn-assign"
@@ -254,11 +285,17 @@ const techCapabilityTier = computed(() => {
   return firstWithTier ? firstWithTier.maxTier : null
 })
 
+const maxActiveJobs = computed(() => store.maxActiveJobs ?? 2)
+const activeJobsCount = computed(() => store.activeJobs?.length ?? 0)
+const idleTechsCount = computed(() => techList.value.filter(t => !t.jobId && !t.fired).length)
+const newJobsCount = computed(() => store.newJobs?.length ?? 0)
+
 const hasManager = computed(() => store.hasManager)
 const hasGeneralManager = computed(() => store.hasGeneralManager)
 const managerAssignmentInterval = computed(() => store.managerAssignmentInterval)
 const managerReadyToAssign = computed(() => store.managerReadyToAssign)
 const managerTimeRemainingFromStore = computed(() => store.managerTimeRemaining)
+const managerPaused = computed(() => store.managerPaused)
 const localManagerTimeRemaining = ref(null)
 
 const managerAssignmentFrequency = computed(() => {
@@ -289,6 +326,15 @@ const managerStatusText = computed(() => {
     return `Next in ${seconds}s`
   }
   return "Not ready"
+})
+
+const managerCantAssignMessage = computed(() => {
+  if (!hasManager.value || managerPaused.value) return null
+  if (!managerReadyToAssign.value && !hasGeneralManager.value) return null
+  if (idleTechsCount.value === 0) return null
+  if (newJobsCount.value === 0) return null
+  if (activeJobsCount.value < maxActiveJobs.value) return null
+  return "Manager can't assign: no free active job slots"
 })
 
 const editingTechId = ref(null)
@@ -509,6 +555,29 @@ const handleHireTech = async (tech) => {
     closeJobModal()
   }
 }
+
+const handleStopTech = async (tech) => {
+  if (!tech || !tech.jobId || tech.fired) return
+  const success = await store.stopTechFromJob(tech.id)
+  if (success) {
+    closeJobModal()
+  }
+}
+
+const isTogglingPause = ref(false)
+const handleToggleManagerPause = async () => {
+  if (!hasManager.value) return
+  if (isTogglingPause.value) return
+  
+  isTogglingPause.value = true
+  try {
+    await store.setManagerPaused(!managerPaused.value)
+  } catch (error) {
+    console.error('Error toggling manager pause:', error)
+  } finally {
+    isTogglingPause.value = false
+  }
+}
 </script>
 
 <style scoped lang="scss">
@@ -525,6 +594,33 @@ const handleHireTech = async (tech) => {
   gap: 0.75em;
 }
 
+.manager-warning-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  padding: 0.5em 1em;
+  margin-top: 0.75em;
+  border-radius: 0.75em;
+  background: rgba(231, 76, 60, 0.15);
+  border: 1px solid rgba(231, 76, 60, 0.4);
+  color: #e74c3c;
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+.warning-icon {
+  font-size: 1.2em;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+}
+
+.warning-text {
+  display: flex;
+  align-items: center;
+}
+
 .techs-summary-banner {
   display: flex;
   align-items: center;
@@ -539,6 +635,7 @@ const handleHireTech = async (tech) => {
     display: flex;
     align-items: center;
     gap: 0.75em;
+    flex: 1;
   }
 
   .banner-label {
@@ -559,6 +656,54 @@ const handleHireTech = async (tech) => {
     
     .summary-separator {
       color: rgba(255, 255, 255, 0.3);
+    }
+  }
+
+  .manager-pause-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    padding: 0.4em;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    color: rgba(255, 255, 255, 0.7);
+    min-width: 32px;
+    height: 32px;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.3);
+      color: #fff;
+    }
+
+    &:active {
+      transform: scale(0.95);
+    }
+
+    &.paused {
+      background: rgba(241, 196, 15, 0.2);
+      border-color: rgba(241, 196, 15, 0.4);
+      color: #f1c40f;
+
+      &:hover {
+        background: rgba(241, 196, 15, 0.3);
+        border-color: rgba(241, 196, 15, 0.5);
+      }
+    }
+
+    &:disabled,
+    &.toggling {
+      opacity: 0.5;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    svg {
+      width: 16px;
+      height: 16px;
     }
     
     .ready {
@@ -908,6 +1053,31 @@ const handleHireTech = async (tech) => {
   .btn-icon {
     font-size: 1.2em;
     line-height: 1;
+  }
+}
+
+.btn-stop {
+  width: 100%;
+  padding: 0.75em;
+  background: rgba(241, 196, 15, 0.1);
+  border: 1px solid rgba(241, 196, 15, 0.3);
+  border-radius: 8px;
+  color: #f1c40f;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  
+  &:hover {
+    background: rgba(241, 196, 15, 0.2);
+    transform: translateY(-1px);
+  }
+  
+  &:active {
+    transform: translateY(0);
   }
 }
 

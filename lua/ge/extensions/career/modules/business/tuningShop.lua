@@ -1239,11 +1239,15 @@ local function loadManagerTimer(businessId)
   if not businessId then
     return {
       elapsed = 0,
-      flagActive = false
+      flagActive = false,
+      paused = false
     }
   end
 
   if managerTimers[businessId] then
+    if managerTimers[businessId].paused == nil then
+      managerTimers[businessId].paused = false
+    end
     return managerTimers[businessId]
   end
 
@@ -1251,7 +1255,8 @@ local function loadManagerTimer(businessId)
   if not filePath then
     managerTimers[businessId] = {
       elapsed = 0,
-      flagActive = false
+      flagActive = false,
+      paused = false
     }
     return managerTimers[businessId]
   end
@@ -1259,7 +1264,8 @@ local function loadManagerTimer(businessId)
   local data = jsonReadFile(filePath) or {}
   managerTimers[businessId] = {
     elapsed = tonumber(data.elapsed) or 0,
-    flagActive = data.flagActive == true
+    flagActive = data.flagActive == true,
+    paused = data.paused == true
   }
   return managerTimers[businessId]
 end
@@ -1282,7 +1288,8 @@ local function saveManagerTimer(businessId, currentSavePath)
 
   local data = {
     elapsed = managerTimers[businessId].elapsed,
-    flagActive = managerTimers[businessId].flagActive
+    flagActive = managerTimers[businessId].flagActive,
+    paused = managerTimers[businessId].paused == true
   }
 
   jsonWriteFile(filePath, data, true)
@@ -1320,10 +1327,49 @@ local function getManagerTimerState(businessId)
   if not businessId then
     return {
       elapsed = 0,
-      flagActive = false
+      flagActive = false,
+      paused = false
     }
   end
-  return loadManagerTimer(businessId)
+  local state = loadManagerTimer(businessId)
+  if state.paused == nil then
+    state.paused = false
+  end
+  return state
+end
+
+local function setManagerPaused(businessId, paused)
+  businessId = normalizeBusinessId(businessId)
+  if not businessId then
+    return false
+  end
+
+  if not hasManager(businessId) then
+    return false
+  end
+
+  -- Ensure timer state is loaded into cache
+  local timerState = getManagerTimerState(businessId)
+  -- Directly modify the cached object
+  timerState.paused = paused == true
+  
+  -- Ensure it's in the cache
+  if not managerTimers[businessId] then
+    managerTimers[businessId] = timerState
+  else
+    managerTimers[businessId].paused = paused == true
+  end
+  
+  if career_saveSystem then
+    local _, currentSavePath = career_saveSystem.getCurrentSaveSlot()
+    if currentSavePath then
+      saveManagerTimer(businessId, currentSavePath)
+    end
+  end
+
+  local pausedState = paused == true
+  guihooks.trigger('tuningShopManagerUpdated', {businessId = businessId, paused = pausedState})
+  return true, pausedState
 end
 
 local function processManagerTimers(businessId, dtSim)
@@ -1340,6 +1386,11 @@ local function processManagerTimers(businessId, dtSim)
   end
 
   local timerState = getManagerTimerState(businessId)
+  
+  if timerState.paused then
+    return false
+  end
+
   local interval = getManagerAssignmentInterval(businessId)
 
   timerState.elapsed = timerState.elapsed + dtSim
@@ -2324,6 +2375,11 @@ local function processManagerAssignments(businessId)
   end
 
   local timerState = getManagerTimerState(businessId)
+  
+  if timerState.paused == true then
+    return false
+  end
+
   local isGeneralManager = hasGeneralManager(businessId)
   local flagActive = isGeneralManager or timerState.flagActive
 
@@ -3223,6 +3279,41 @@ local function ensureTabsRegistered()
   return true
 end
 
+local function getFormattedPersonalVehiclesInZone(businessId)
+  if not businessId then
+    return {}
+  end
+  
+  local businessType = "tuningShop"
+  local business = freeroam_facilities.getFacility(businessType, businessId)
+  local isOnBusinessMap = business ~= nil
+  local playerInZone = isOnBusinessMap and isPlayerInTuningShopZone(businessId) or false
+  
+  local formattedPersonalVehicles = {}
+  local personalUseUnlocked = isPersonalUseUnlocked(businessId)
+  if personalUseUnlocked and playerInZone and isOnBusinessMap then
+    local inventoryVehiclesInZone = getInventoryVehiclesInGarageZone(businessId)
+    for _, invVeh in ipairs(inventoryVehiclesInZone) do
+      local personalEntry = createPersonalVehicleEntry(businessId, invVeh.inventoryId, invVeh.inventoryVehicleData, invVeh.spawnedId)
+      if personalEntry then
+        local formatted = formatVehicleForUI(personalEntry, businessId)
+        if formatted then
+          formatted.damage = 0
+          formatted.damageLocked = false
+          formatted.damageThreshold = getDamageThreshold(businessId)
+          formatted.inGarageZone = true
+          formatted.isPersonal = true
+          formatted.inventoryId = invVeh.inventoryId
+          formatted.spawnedVehicleId = personalEntry.spawnedVehicleId
+          table.insert(formattedPersonalVehicles, formatted)
+        end
+      end
+    end
+  end
+  
+  return formattedPersonalVehicles
+end
+
 local function getUIData(businessId)
   if not businessId then
     return nil
@@ -3490,6 +3581,13 @@ local function getUIData(businessId)
       local interval = getManagerAssignmentInterval(businessId)
       return math.max(0, interval - timerState.elapsed)
     end)(),
+    managerPaused = (function()
+      if not hasManager(businessId) then
+        return false
+      end
+      local timerState = getManagerTimerState(businessId)
+      return timerState.paused == true
+    end)(),
     personalUseUnlocked = personalUseUnlocked
   }
 end
@@ -3498,6 +3596,8 @@ local function getManagerData(businessId)
   if not businessId then
     return nil
   end
+
+  local timerState = getManagerTimerState(businessId)
 
   return {
     hasManager = hasManager(businessId),
@@ -3510,17 +3610,16 @@ local function getManagerData(businessId)
       if hasGeneralManager(businessId) then
         return true
       end
-      local timerState = getManagerTimerState(businessId)
       return timerState.flagActive == true
     end)(),
     managerTimeRemaining = (function()
       if not hasManager(businessId) or hasGeneralManager(businessId) then
         return nil
       end
-      local timerState = getManagerTimerState(businessId)
       local interval = getManagerAssignmentInterval(businessId)
       return math.max(0, interval - timerState.elapsed)
-    end)()
+    end)(),
+    managerPaused = timerState.paused == true
   }
 end
 
@@ -3813,6 +3912,7 @@ local businessObject = {
   getOperatingCosts = function(businessId) return getOperatingCosts(businessId) end,
   initializeBusinessData = function(businessId) return initializeBusinessData(businessId) end,
   getUIData = function(businessId) return getUIData(businessId) end,
+  getFormattedPersonalVehiclesInZone = function(businessId) return getFormattedPersonalVehiclesInZone(businessId) end,
   getManagerData = function(businessId) return getManagerData(businessId) end,
   getMaxPulledOutVehicles = function(businessId) return getMaxPulledOutVehicles(businessId) end,
   isPlayerInBusinessZone = function(businessId) return isPlayerInTuningShopZone(businessId) end,
@@ -3868,6 +3968,7 @@ local businessObject = {
 }
 
 local function onCareerActivated()
+  managerTimers = {}
   career_modules_business_businessManager.registerBusiness("tuningShop", businessObject)
 
   career_modules_business_businessManager.registerBusinessCallback("tuningShop", {
@@ -3962,6 +4063,7 @@ local function onCareerActivated()
     loadBusinessJobs = loadBusinessJobs,
     notifyJobsUpdated = notifyJobsUpdated,
     getMaxPulledOutVehicles = getMaxPulledOutVehicles,
+    getMaxActiveJobs = getMaxActiveJobs,
     clearBusinessCachesForJob = function(businessId, jobId)
       if career_modules_business_businessComputer and career_modules_business_businessComputer.clearBusinessCachesForJob then
         career_modules_business_businessComputer.clearBusinessCachesForJob(businessId, jobId)
@@ -4030,6 +4132,7 @@ M.loadRaceData = loadRaceData
 M.initializeBusinessData = initializeBusinessData
 M.openMenu = openMenu
 M.getUIData = getUIData
+M.getFormattedPersonalVehiclesInZone = getFormattedPersonalVehiclesInZone
 M.getJobsForBusiness = getJobsForBusiness
 M.getJobsOnly = getJobsOnly
 M.getActiveJobs = getActiveJobs
@@ -4053,8 +4156,10 @@ M.assignJobToTech = tuningShopTechs.assignJobToTech
 M.isJobLockedByTech = tuningShopTechs.isJobLockedByTech
 M.fireTech = tuningShopTechs.fireTech
 M.hireTech = tuningShopTechs.hireTech
+M.stopTechFromJob = tuningShopTechs.stopTechFromJob
 M.getTechData = getTechData
 M.getManagerData = getManagerData
+M.setManagerPaused = setManagerPaused
 M.getBrandSelection = getBrandSelection
 M.setBrandSelection = setBrandSelection
 M.getRaceSelection = getRaceSelection
@@ -4079,6 +4184,7 @@ M.isSpawnedVehicleInGarageZone = isSpawnedVehicleInGarageZone
 M.isPositionInGarageZone = isPositionInGarageZone
 M.isPersonalUseUnlocked = isPersonalUseUnlocked
 M.getInventoryVehiclesInGarageZone = getInventoryVehiclesInGarageZone
+M.createPersonalVehicleEntry = createPersonalVehicleEntry
 M.selectPersonalVehicle = selectPersonalVehicle
 M.getActivePersonalVehicle = getActivePersonalVehicle
 M.clearActivePersonalVehicle = clearActivePersonalVehicle
