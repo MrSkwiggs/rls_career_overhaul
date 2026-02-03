@@ -464,7 +464,6 @@ local function onWorldReadyState(state)
   if state == 2 and career_career.isActive() then
     buildGarageSizes()
     fillGarages()
-    purchaseDefaultGarage()
   end
 end
 
