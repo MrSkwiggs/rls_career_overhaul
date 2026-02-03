@@ -879,9 +879,8 @@ local function setupInventory(levelPath)
             
             if spawnGarageId then
               freeroam_facilities.teleportToGarage(spawnGarageId, getPlayerVehicle(0))
+              career_modules_garageManager.purchaseDefaultGarage()
             end
-            
-            career_modules_garageManager.purchaseDefaultGarage()
         else
             -- spawn the tutorial vehicle
             local model, config = "covet", "vehicles/covet/covet_tutorial.pc"
