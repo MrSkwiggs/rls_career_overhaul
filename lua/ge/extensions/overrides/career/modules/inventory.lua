@@ -822,36 +822,14 @@ local function setupInventory(levelPath)
                 local model = randomVehicleConfig:match("^([^/]+)")
                 local config = '/vehicles/' .. randomVehicleConfig .. '.pc'
                 
-                -- Determine spawn position - try to spawn at starter garage if available
-                local spawnGarageId = nil
+                -- Determine spawn position - use garage location if available, otherwise fallback
+                local pos, rot = vec3(-24.026, 609.157, 75.112), quatFromDir(vec3(1, 0, 0))
                 if activeChallenge.startingGarages and #activeChallenge.startingGarages > 0 then
-                    spawnGarageId = activeChallenge.startingGarages[1]
-                else
-                    -- Use the map's starter garage
-                    local facilities = freeroam_facilities.getFacilities(levelName)
-                    if facilities and facilities.garages then
-                        for _, garage in ipairs(facilities.garages) do
-                            if garage.starterGarage then
-                                spawnGarageId = garage.id
-                                break
-                            end
-                        end
-                    end
-                end
-                
-                local pos, rot
-                if spawnGarageId then
-                    local garage = freeroam_facilities.getFacility("garage", spawnGarageId)
+                    local garage = freeroam_facilities.getFacility("garage", activeChallenge.startingGarages[1])
                     if garage and garage.spawnPoint then
                         pos = vec3(garage.spawnPoint.pos)
                         rot = quat(garage.spawnPoint.rot)
-                    else
-                        -- Fallback position
-                        pos, rot = vec3(-24.026, 609.157, 75.112), quatFromDir(vec3(1, 0, 0))
                     end
-                else
-                    -- Fallback position
-                    pos, rot = vec3(-24.026, 609.157, 75.112), quatFromDir(vec3(1, 0, 0))
                 end
                 
                 local options = {
@@ -879,15 +857,15 @@ local function setupInventory(levelPath)
             -- default placement is in front of the dealership, facing it
             -- spawn.safeTeleport(getPlayerVehicle(0), vec3(838.51,-522.42,165.75))
             -- gameplay_walk.setRot(vec3(-1,-1,0), vec3(0,0,1))
-            -- Spawn at starter garage or selected starting garage
+            -- Spawn at starter garage or selected starting garage (unless challenge prohibits it)
             local spawnGarageId = nil
             
             -- Check if we have a challenge with starting garages
             if activeChallenge and activeChallenge.startingGarages and #activeChallenge.startingGarages > 0 then
               -- Use the first selected starting garage
               spawnGarageId = activeChallenge.startingGarages[1]
-            else
-              -- Use the map's starter garage
+            elseif not activeChallenge then
+              -- Use the map's starter garage only for non-challenge careers
               local facilities = freeroam_facilities.getFacilities(levelName)
               if facilities and facilities.garages then
                 for _, garage in ipairs(facilities.garages) do
